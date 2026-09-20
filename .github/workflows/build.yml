@@ -26,10 +26,10 @@ jobs:
     - name: Compilar con PyInstaller
       run: |
         cd MiniPOS_portable
-        pyinstaller --noconsole --onefile --paths=src main.py
+        pyinstaller --noconsole --onefile --paths=src --name="miniPOS_portable" main.py
 
     - name: Subir el archivo EXE
       uses: actions/upload-artifact@v4
       with:
-        name: MiniPOS-Ejecutable
-        path: MiniPOS_portable/dist/*.exe
+        name: miniPOS_portable-v1.0
+        path: MiniPOS_portable/dist/miniPOS_portable.exe
