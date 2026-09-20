@@ -4,7 +4,7 @@ from tkinter import ttk, messagebox, filedialog
 from ttkbootstrap import Style
 import os
 import shutil
-import sys  # ✅ NUEVO: Necesario para detectar si es .exe o código fuente
+import sys
 from application.use_case.product_use_case import ProductCase
 from infrastucture.db.db_manager import DBManager
 
@@ -20,15 +20,11 @@ class MainView(tk.Tk):
 
         # ✅ SOLUCIÓN: Detectar si estamos ejecutando el .exe o el código fuente
         if getattr(sys, 'frozen', False):
-            # Si es el .exe compilado, guardar la base de datos junto al ejecutable
             base_dir = os.path.dirname(sys.executable)
         else:
-            # Si es código fuente, guardar en la raíz del proyecto
             base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
             
         self.db_path = os.path.join(base_dir, "data", "ventas.db")
-        
-        # Crear la carpeta data si no existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
         self.db_manager = DBManager(self.db_path)
@@ -38,9 +34,29 @@ class MainView(tk.Tk):
         self.load_products()
 
     def create_widgets(self):
+        # --- ✅ BARRA DE MENÚS (NUEVO) ---
+        menubar = tk.Menu(self)
+        
+        # Menú de Opciones
+        menu_opciones = tk.Menu(menubar, tearoff=0)
+        menu_opciones.add_command(label="➕ Agregar Producto", command=self.add_product_popup, accelerator="F2")
+        menu_opciones.add_separator()
+        menu_opciones.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
+        menu_opciones.add_separator()
+        menu_opciones.add_command(label="📤 Exportar Base de Datos", command=self.export_db)
+        menu_opciones.add_command(label="📥 Importar Base de Datos", command=self.import_db)
+        
+        menubar.add_cascade(label="⚙️ Opciones", menu=menu_opciones)
+        
+        # Asignar la barra de menús a la ventana principal
+        self.config(menu=menubar)
+        
+        # Atajo de teclado F2 para agregar producto
+        self.bind("<F2>", lambda event: self.add_product_popup())
+
         # --- BARRA DE BÚSQUEDA ---
         search_frame = ttk.Frame(self)
-        search_frame.pack(padx=10, pady=5, fill="x")
+        search_frame.pack(padx=10, pady=10, fill="x")
 
         ttk.Label(search_frame, text="🔍 Buscar Producto (Nombre o Código):").pack(side="left", padx=5)
         self.search_var = tk.StringVar()
@@ -75,22 +91,6 @@ class MainView(tk.Tk):
         # Vincular doble clic a la función de edición
         self.tree.bind("<Double-1>", self.edit_product_popup)
 
-        # --- FRAME PARA BOTONES INFERIORES ---
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(pady=10)
-
-        add_button = ttk.Button(btn_frame, text="➕ Agregar Producto", command=self.add_product_popup)
-        add_button.pack(side="left", padx=5)
-
-        theme_button = ttk.Button(btn_frame, text="🌓 Cambiar Tema", command=self.toggle_theme)
-        theme_button.pack(side="left", padx=5)
-
-        export_button = ttk.Button(btn_frame, text="📤 Exportar Base de Datos", command=self.export_db)
-        export_button.pack(side="left", padx=5)
-
-        import_button = ttk.Button(btn_frame, text="📥 Importar Base de Datos", command=self.import_db)
-        import_button.pack(side="left", padx=5)
-
     def toggle_theme(self):
         """Cambia entre modo oscuro y claro"""
         if self.current_theme == 'darkly':
@@ -107,7 +107,6 @@ class MainView(tk.Tk):
         
         products = self.product_use_case.list_products()
         for product in products:
-            # Buscar coincidencia en Nombre o Código de Barras
             if query in str(product.name).lower() or query in str(product.barcode).lower():
                 precio_formateado = f"${product.price:,.0f}".replace(",", ".")
                 self.tree.insert("", "end", values=(product.product_id, product.name, product.barcode, precio_formateado, product.stock))
@@ -118,7 +117,6 @@ class MainView(tk.Tk):
         products = self.product_use_case.list_products()
         for product in products:
             precio_formateado = f"${product.price:,.0f}".replace(",", ".")
-            # Insertar los valores incluyendo el código de barras
             self.tree.insert("", "end", values=(product.product_id, product.name, product.barcode, precio_formateado, product.stock))
 
     def add_product_popup(self):
@@ -131,6 +129,7 @@ class MainView(tk.Tk):
         ttk.Label(popup, text="Nombre del Producto:").pack(pady=5)
         name_entry = ttk.Entry(popup, width=30)
         name_entry.pack(pady=5)
+        name_entry.focus() # Poner el cursor aquí al abrir
 
         ttk.Label(popup, text="Código de Barras / QR (Opcional):").pack(pady=5)
         barcode_entry = ttk.Entry(popup, width=30)
@@ -250,7 +249,6 @@ class MainView(tk.Tk):
 
     # --- FUNCIONES DE EXPORTAR E IMPORTAR ---
     def export_db(self):
-        """Copia la base de datos actual a un lugar seguro elegido por el usuario"""
         archivo_destino = filedialog.asksaveasfilename(
             defaultextension=".db",
             filetypes=[("Base de Datos SQLite", "*.db"), ("Todos los archivos", "*.*")],
@@ -258,7 +256,6 @@ class MainView(tk.Tk):
         )
         if archivo_destino:
             try:
-                # Cerrar conexiones antes de copiar para evitar bloqueos
                 self.db_manager.close_connection() 
                 shutil.copy2(self.db_path, archivo_destino)
                 messagebox.showinfo("Éxito", "La base de datos ha sido exportada correctamente.")
@@ -266,7 +263,6 @@ class MainView(tk.Tk):
                 messagebox.showerror("Error", f"No se pudo exportar: {e}")
 
     def import_db(self):
-        """Reemplaza la base de datos actual con una copia de seguridad"""
         archivo_origen = filedialog.askopenfilename(
             filetypes=[("Base de Datos SQLite", "*.db"), ("Todos los archivos", "*.*")],
             title="Seleccionar copia de seguridad de la Base de Datos"
