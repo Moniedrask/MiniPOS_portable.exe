@@ -1,0 +1,35 @@
+name: Compilar EXE para Windows
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Descargar el código
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install ttkbootstrap openpyxl reportlab pyinstaller
+
+    - name: Compilar con PyInstaller
+      run: |
+        cd MiniPOS_portable
+        pyinstaller --noconsole --onefile main.py
+
+    - name: Subir el archivo EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: MiniPOS-Ejecutable
+        path: MiniPOS_portable/dist/*.exe
