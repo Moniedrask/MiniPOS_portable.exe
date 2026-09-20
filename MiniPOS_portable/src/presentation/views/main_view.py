@@ -1,7 +1,8 @@
 # src/presentation/views/main_view.py
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, filedialog
 from ttkbootstrap import Style, Toplevel
+from ttkbootstrap.dialogs import Messagebox  # ✅ Messageboxes oscuros
 import os, shutil, sys
 from application.use_case.product_use_case import ProductCase
 from infrastucture.db.db_manager import DBManager
@@ -15,7 +16,9 @@ class MainView(tk.Tk):
         self.current_theme = 'darkly'
         self.style = Style(theme=self.current_theme)
 
-        # Ruta portable
+        # ✅ Fondo oscuro para la ventana principal
+        self.configure(bg=self.style.colors.bg)
+
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -29,15 +32,26 @@ class MainView(tk.Tk):
         self.create_widgets()
         self.load_products()
         
-        # Atajo F2 para Agregar Producto
         self.bind('<F2>', lambda event: self.add_product_popup())
-        # Enfocar el campo de escaneo al iniciar
         self.after(100, lambda: self.scan_entry.focus_set())
 
     def create_widgets(self):
-        # --- MENÚ SUPERIOR DE OPCIONES ---
-        menubar = tk.Menu(self)
-        options_menu = tk.Menu(menubar, tearoff=0)
+        # --- MENÚ SUPERIOR DE OPCIONES (OSCURO) ---
+        menubar = tk.Menu(
+            self, 
+            bg=self.style.colors.bg, 
+            fg=self.style.colors.fg, 
+            activebackground=self.style.colors.selectbg, 
+            activeforeground=self.style.colors.selectfg,
+            bd=0
+        )
+        options_menu = tk.Menu(
+            menubar, tearoff=0,
+            bg=self.style.colors.bg, 
+            fg=self.style.colors.fg, 
+            activebackground=self.style.colors.selectbg, 
+            activeforeground=self.style.colors.selectfg
+        )
         options_menu.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
         options_menu.add_separator()
         options_menu.add_command(label="📤 Exportar Base de Datos", command=self.export_db)
@@ -45,28 +59,27 @@ class MainView(tk.Tk):
         menubar.add_cascade(label="Opciones", menu=options_menu)
         self.config(menu=menubar)
 
-        # --- BARRA DE ESCANEO AUTOMÁTICO (Lector QR) ---
-        scan_frame = ttk.Frame(self)
+        # --- BARRA DE ESCANEO AUTOMÁTICO ---
+        scan_frame = ttk.Frame(self, bootstyle="dark")
         scan_frame.pack(padx=10, pady=(10, 5), fill="x")
-        ttk.Label(scan_frame, text="📷 Escanear código aquí:", font=("Arial", 10, "bold")).pack(side="left", padx=5)
+        ttk.Label(scan_frame, text="📷 Escanear código aquí:", font=("Arial", 10, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
         self.scan_entry = ttk.Entry(scan_frame, textvariable=self.scan_var, width=35, font=("Arial", 11))
         self.scan_entry.pack(side="left", padx=5)
-        # Cuando el lector presiona "Enter" al final, se dispara la búsqueda
         self.scan_entry.bind("<Return>", self.lookup_barcode)
         ttk.Button(scan_frame, text="🔍 Buscar Código", command=lambda: self.lookup_barcode(None)).pack(side="left", padx=5)
 
         # --- BARRA DE BÚSQUEDA MANUAL ---
-        search_frame = ttk.Frame(self)
+        search_frame = ttk.Frame(self, bootstyle="dark")
         search_frame.pack(padx=10, pady=5, fill="x")
-        ttk.Label(search_frame, text="🔍 Búsqueda manual (Nombre o Código):").pack(side="left", padx=5)
+        ttk.Label(search_frame, text="🔍 Búsqueda manual (Nombre o Código):", bootstyle="inverse-dark").pack(side="left", padx=5)
         self.search_var = tk.StringVar()
         self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var, width=40)
         self.search_entry.pack(side="left", padx=5)
         self.search_entry.bind("<KeyRelease>", self.filter_products)
 
         # --- TABLA DE INVENTARIO ---
-        frame = ttk.Frame(self)
+        frame = ttk.Frame(self, bootstyle="dark")
         frame.pack(padx=10, pady=5, fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=("ID", "Name", "Barcode", "Price", "Stock"), show='headings')
         self.tree.heading("ID", text="ID")
@@ -83,13 +96,11 @@ class MainView(tk.Tk):
         self.tree.bind("<Double-1>", self.edit_product_popup)
 
         # --- BOTONES INFERIORES ---
-        btn_frame = ttk.Frame(self)
+        btn_frame = ttk.Frame(self, bootstyle="dark")
         btn_frame.pack(pady=10)
         ttk.Button(btn_frame, text="➕ Agregar Producto (F2)", command=self.add_product_popup).pack(side="left", padx=5)
 
-    # --- NUEVA FUNCIÓN: Detección automática del lector de códigos ---
     def lookup_barcode(self, event=None):
-        """Busca un producto por su código de barras. Si existe, lo selecciona. Si no, ofrece agregarlo."""
         codigo = self.scan_var.get().strip()
         if not codigo:
             return
@@ -102,8 +113,7 @@ class MainView(tk.Tk):
                 break
         
         if encontrado:
-            # Seleccionar y resaltar el producto en la tabla
-            self.search_var.set("")  # Limpiar la búsqueda manual
+            self.search_var.set("")
             self.load_products()
             for item in self.tree.get_children():
                 valores = self.tree.item(item, 'values')
@@ -112,20 +122,22 @@ class MainView(tk.Tk):
                     self.tree.focus(item)
                     self.tree.see(item)
                     break
-            messagebox.showinfo("Producto Encontrado", 
-                f"✅ {encontrado.name}\nPrecio: ${encontrado.price:,.0f}\nStock: {encontrado.stock}".replace(",", "."), 
-                parent=self)
-            self.scan_var.set("")  # Limpiar el campo para el siguiente escaneo
+            Messagebox.show_info(
+                f"✅ {encontrado.name}\nPrecio: ${encontrado.price:,.0f}\nStock: {encontrado.stock}".replace(",", "."),
+                "Producto Encontrado",
+                parent=self
+            )
+            self.scan_var.set("")
         else:
-            # Producto no encontrado: preguntar si desea agregarlo
-            respuesta = messagebox.askyesno("Producto No Registrado", 
-                f"⚠️ El código '{codigo}' NO está registrado en el inventario.\n\n¿Deseas agregarlo ahora?", 
-                parent=self)
-            if respuesta:
+            respuesta = Messagebox.yesno(
+                f"⚠️ El código '{codigo}' NO está registrado en el inventario.\n\n¿Deseas agregarlo ahora?",
+                "Producto No Registrado",
+                parent=self
+            )
+            if respuesta == "Yes":
                 self.add_product_popup(barcode_prefill=codigo)
             self.scan_var.set("")
         
-        # Devolver el foco al campo de escaneo
         self.scan_entry.focus_set()
 
     def toggle_theme(self):
@@ -134,6 +146,8 @@ class MainView(tk.Tk):
         else:
             self.current_theme = 'darkly'
         self.style.theme_use(self.current_theme)
+        # Reconfigurar fondo de la ventana
+        self.configure(bg=self.style.colors.bg)
 
     def filter_products(self, event=None):
         query = self.search_var.get().lower()
@@ -151,24 +165,24 @@ class MainView(tk.Tk):
             precio = f"${product.price:,.0f}".replace(",", ".")
             self.tree.insert("", "end", values=(product.product_id, product.name, product.barcode, precio, product.stock))
 
-    # --- AGREGAR PRODUCTO (con opción de pre-rellenar el código de barras) ---
+    # --- AGREGAR PRODUCTO (con enfoque en código de barras) ---
     def add_product_popup(self, barcode_prefill=""):
         popup = Toplevel(self)
         popup.title("Agregar Producto")
-        popup.geometry("350x450")
+        popup.geometry("350x480")
         popup.transient(self)
         popup.grab_set()
 
-        ttk.Label(popup, text="Nombre del Producto:").pack(pady=5)
-        name_entry = ttk.Entry(popup, width=30)
-        name_entry.pack(pady=5)
-        name_entry.focus_set()
-
-        ttk.Label(popup, text="Código de Barras / QR (Opcional):").pack(pady=5)
+        # ✅ CAMPO DE CÓDIGO DE BARRAS PRIMERO (para escaneo automático)
+        ttk.Label(popup, text="Código de Barras / QR:").pack(pady=5)
         barcode_entry = ttk.Entry(popup, width=30)
         barcode_entry.pack(pady=5)
         if barcode_prefill:
             barcode_entry.insert(0, barcode_prefill)
+
+        ttk.Label(popup, text="Nombre del Producto:").pack(pady=5)
+        name_entry = ttk.Entry(popup, width=30)
+        name_entry.pack(pady=5)
 
         ttk.Label(popup, text="Precio (ej. 15000):").pack(pady=5)
         price_entry = ttk.Entry(popup, width=30)
@@ -178,11 +192,17 @@ class MainView(tk.Tk):
         stock_entry = ttk.Entry(popup, width=30)
         stock_entry.pack(pady=5)
 
+        # ✅ Lógica de enfoque: si viene código pre-rellenado, ir al Nombre; si no, al Código
+        if barcode_prefill:
+            name_entry.focus_set()
+        else:
+            barcode_entry.focus_set()
+
         def save():
             name = name_entry.get().strip()
             barcode = barcode_entry.get().strip()
             if not name:
-                messagebox.showerror("Error", "El nombre es obligatorio", parent=popup)
+                Messagebox.show_error("El nombre es obligatorio", "Error", parent=popup)
                 return
             try:
                 precio_limpio = price_entry.get().replace("$", "").replace(".", "").strip()
@@ -190,12 +210,12 @@ class MainView(tk.Tk):
                 stock_str = stock_entry.get().strip()
                 stock = int(stock_str) if stock_str else 0
             except ValueError:
-                messagebox.showerror("Error", "Precio y Stock deben ser números", parent=popup)
+                Messagebox.show_error("Precio y Stock deben ser números", "Error", parent=popup)
                 return
             self.product_use_case.add_product(name, barcode, price, stock)
             self.load_products()
             popup.destroy()
-            self.scan_entry.focus_set()  # Devolver foco al campo de escaneo
+            self.scan_entry.focus_set()
 
         ttk.Button(popup, text="Guardar", command=save).pack(pady=15)
 
@@ -229,7 +249,7 @@ class MainView(tk.Tk):
                 new_price = float(price_entry.get().replace("$", "").replace(".", "") or 0)
                 new_stock = int(stock_entry.get() or 0)
             except ValueError:
-                messagebox.showerror("Error", "Datos inválidos", parent=popup); return
+                Messagebox.show_error("Datos inválidos", "Error", parent=popup); return
             self.product_use_case.update_product(product_id, new_name, new_barcode, new_price, new_stock)
             self.load_products(); popup.destroy()
             self.scan_entry.focus_set()
@@ -242,12 +262,12 @@ class MainView(tk.Tk):
         if archivo:
             self.db_manager.close_connection()
             shutil.copy2(self.db_path, archivo)
-            messagebox.showinfo("Éxito", "Base de datos exportada.")
+            Messagebox.show_info("Base de datos exportada correctamente.", "Éxito", parent=self)
 
     def import_db(self):
         archivo = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
-        if archivo and messagebox.askyesno("Confirmar", "¿Reemplazar datos actuales?"):
+        if archivo and Messagebox.yesno("¿Reemplazar datos actuales?", "Confirmar", parent=self) == "Yes":
             self.db_manager.close_connection()
             shutil.copy2(archivo, self.db_path)
             self.load_products()
-            messagebox.showinfo("Éxito", "Base de datos importada.")
+            Messagebox.show_info("Base de datos importada correctamente.", "Éxito", parent=self)
