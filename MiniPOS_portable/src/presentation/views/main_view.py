@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox, filedialog
 from ttkbootstrap import Style
 import os
 import shutil
+import sys  # ✅ NUEVO: Necesario para detectar si es .exe o código fuente
 from application.use_case.product_use_case import ProductCase
 from infrastucture.db.db_manager import DBManager
 
@@ -17,11 +18,17 @@ class MainView(tk.Tk):
         self.current_theme = 'darkly'
         self.style = Style(theme=self.current_theme)
 
-        # Obtener ruta absoluta de la base de datos
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.db_path = os.path.normpath(os.path.join(base_dir, "..", "..", "..", "data", "ventas.db"))
-
-        # Crear carpeta data si no existe
+        # ✅ SOLUCIÓN: Detectar si estamos ejecutando el .exe o el código fuente
+        if getattr(sys, 'frozen', False):
+            # Si es el .exe compilado, guardar la base de datos junto al ejecutable
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            # Si es código fuente, guardar en la raíz del proyecto
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            
+        self.db_path = os.path.join(base_dir, "data", "ventas.db")
+        
+        # Crear la carpeta data si no existe
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
         self.db_manager = DBManager(self.db_path)
