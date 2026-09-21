@@ -19,10 +19,14 @@ class Sale:
         self.payment_method = payment_method
         self.notes = notes
         self.items = items if items else []
-        # Atributos extra que se rellenan después
         self.customer_name = ""
         self.is_credit = 0
         self.is_paid = 1
+        self.amount_paid = 0.0
+
+    def pending(self):
+        """Monto pendiente por cobrar."""
+        return max(0.0, self.total - self.amount_paid)
 
     def __repr__(self):
         return f"<Sale #{self.sale_id} {self.date} ${self.total}>"
