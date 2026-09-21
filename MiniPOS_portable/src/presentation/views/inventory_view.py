@@ -4,7 +4,7 @@ from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
-    popup_is_open
+    popup_is_open, make_scrolled_treeview
 )
 
 
@@ -22,7 +22,6 @@ class InventoryView(ttk.Frame):
         self.create_widgets()
         self.load_products()
         self.after(300, lambda: self.scan_entry.focus_set())
-        # ✅ Chequeo diferido que espera a que la vista esté visible
         self.after(800, self._check_product_draft)
         self._keep_scanner_focused()
 
@@ -43,11 +42,9 @@ class InventoryView(ttk.Frame):
             pass
         self.after(700, self._keep_scanner_focused)
 
-    # ============ RECUPERAR BORRADOR DE PRODUCTO ============
     def _check_product_draft(self):
         if self._draft_checked:
             return
-        # ✅ Esperar a que la vista esté visible
         try:
             if not self.winfo_ismapped():
                 self.after(500, self._check_product_draft)
@@ -132,6 +129,7 @@ class InventoryView(ttk.Frame):
         ttk.Button(search_frame, text="Limpiar", command=self._clear_search,
                    bootstyle="secondary").pack(side="left", padx=5)
 
+        # ✅ Treeview con scrollbar
         frame = ttk.Frame(self, bootstyle="dark")
         frame.pack(padx=10, pady=5, fill="both", expand=True)
 
@@ -145,12 +143,19 @@ class InventoryView(ttk.Frame):
             ("Created", "Creado", 140, "center"),
             ("Updated", "Actualizado", 140, "center"),
         ]
-        self.tree = ttk.Treeview(frame, columns=[c[0] for c in self.columns], show='headings')
+
+        self.tree_frame, self.tree = make_scrolled_treeview(
+            frame,
+            columns=[c[0] for c in self.columns],
+            headings=[(c[0], c[1] + "  ⇅", c[2], c[3]) for c in self.columns],
+            bootstyle="dark")
+        self.tree_frame.pack(fill="both", expand=True)
+
+        # Reasignar los comandos de los headings para que ordenen
         for key, label, w, anchor in self.columns:
             self.tree.heading(key, text=label + "  ⇅",
                               command=lambda k=key: self.sort_by(k))
-            self.tree.column(key, width=w, anchor=anchor)
-        self.tree.pack(fill="both", expand=True)
+
         self.tree.bind("<Double-1>", self.view_product_popup)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
@@ -398,7 +403,6 @@ class InventoryView(ttk.Frame):
         else:
             barcode_entry.focus_set()
 
-        # ✅ Auto-guardado con debounce
         draft_timer = {"id": None}
 
         def collect_draft():
@@ -471,7 +475,6 @@ class InventoryView(ttk.Frame):
             except ValueError:
                 MD.show_error("Precio/Stock inválidos", "Error", parent=popup)
                 return
-            # ✅ Cancelar cualquier timer pendiente ANTES de guardar
             cancel_pending()
             try:
                 if product_id:
@@ -480,7 +483,6 @@ class InventoryView(ttk.Frame):
                 else:
                     self.product_use_case.add_product(n, b, p, s,
                                                       type_var.get(), unit_var.get())
-                # ✅ Guardado exitoso → borrar borrador
                 self.product_use_case.clear_product_draft()
             except Exception as e:
                 MD.show_error(f"Error al guardar: {e}", "Error", parent=popup)
