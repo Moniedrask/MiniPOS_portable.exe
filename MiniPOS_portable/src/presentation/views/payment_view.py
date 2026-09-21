@@ -456,7 +456,8 @@ class PaymentView(ttk.Frame):
                 except ValueError:
                     monto_abono = 0.0
             try:
-                sid, tot, display_num = self.sale_use_case.create_sale(
+                # ✅ Variable descartada con "_sid"
+                _sid, tot, display_num = self.sale_use_case.create_sale(
                     self.cart,
                     payment_method=metodo,
                     notes=notas_var.get().strip(),
