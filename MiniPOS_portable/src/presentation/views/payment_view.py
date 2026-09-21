@@ -4,7 +4,7 @@ from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
-    popup_is_open, make_scrolled_treeview, make_business_header,
+    popup_is_open, make_scrolled_treeview, get_business_display_text,
 )
 
 
@@ -28,13 +28,6 @@ class PaymentView(ttk.Frame):
 
     def _is_dark(self):
         return True
-
-    def refresh_business_header(self):
-        try:
-            if hasattr(self, "business_header") and self.business_header:
-                self.business_header["refresh"]()
-        except Exception:
-            pass
 
     def _keep_scanner_focused(self):
         try:
@@ -98,17 +91,8 @@ class PaymentView(ttk.Frame):
             pass
 
     def create_widgets(self):
-        # ✅ Encabezado del negocio
-        try:
-            bg = ttk.Style().colors.bg
-        except Exception:
-            bg = "#1a1a1a"
-        self.business_header = make_business_header(
-            self, self.db_manager, self.on_business_click, bg=bg)
-        self.business_header["frame"].pack(padx=10, pady=(8, 0), anchor="w")
-
         top = ttk.Frame(self, bootstyle="dark")
-        top.pack(padx=10, pady=(6, 5), fill="x")
+        top.pack(padx=10, pady=(10, 5), fill="x")
 
         ttk.Label(top, text="📷 Escanear:", font=("Arial", 14, "bold"),
                   bootstyle="inverse-dark").pack(side="left", padx=5)
@@ -384,14 +368,21 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("620x680")
+        pop.geometry("620x720")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
+        # ✅ Encabezado del negocio
+        texto_negocio = get_business_display_text(self.db_manager)
+        if texto_negocio:
+            tk.Label(pop, text=texto_negocio,
+                     font=("Arial", 11, "bold"),
+                     bg=bg, fg="#7dd87d").pack(pady=(8, 2))
+
         tk.Label(pop, text="💰 CONFIRMAR PAGO",
-                 font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(10, 3))
+                 font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(4, 3))
 
         total_frame = tk.Frame(pop, bg="#0a4d1f", padx=20, pady=8)
         total_frame.pack(pady=(0, 6))
