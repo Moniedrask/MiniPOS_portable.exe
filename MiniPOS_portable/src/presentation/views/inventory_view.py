@@ -17,10 +17,13 @@ class InventoryView(ttk.Frame):
         self.sort_reverse = False
         self.filtered_products = []
         self.tooltip = None
+        self._draft_checked = False
 
         self.create_widgets()
         self.load_products()
         self.after(300, lambda: self.scan_entry.focus_set())
+        # ✅ Revisar borrador de producto al iniciar
+        self.after(600, self._check_product_draft)
         self._keep_scanner_focused()
 
     def _is_dark(self):
@@ -39,6 +42,57 @@ class InventoryView(ttk.Frame):
         except Exception:
             pass
         self.after(700, self._keep_scanner_focused)
+
+    # ============ RECUPERAR BORRADOR DE PRODUCTO ============
+    def _check_product_draft(self):
+        if self._draft_checked:
+            return
+        self._draft_checked = True
+        try:
+            data, updated = self.product_use_case.load_product_draft()
+        except Exception:
+            return
+        if not data:
+            return
+        # Ignorar borradores vacíos
+        name = (data.get("name") or "").strip()
+        barcode = (data.get("barcode") or "").strip()
+        if not name and not barcode:
+            self.product_use_case.clear_product_draft()
+            return
+        try:
+            mode = data.get("mode", "create")
+            titulo = "editar" if mode == "edit" else "agregar"
+            fecha = updated or "(sin fecha)"
+            r = MD.yesno(
+                f"📝 Se encontró un producto a medio {titulo}:\n\n"
+                f"Nombre: {name or '(vacío)'}\n"
+                f"Código: {barcode or '(vacío)'}\n"
+                f"Guardado: {fecha}\n\n"
+                f"¿Deseas recuperarlo?",
+                "Recuperar borrador", parent=self)
+            if r == "Yes":
+                self._open_draft(data)
+            else:
+                self.product_use_case.clear_product_draft()
+        except Exception:
+            pass
+
+    def _open_draft(self, data):
+        """Abre el formulario con los datos del borrador."""
+        mode = data.get("mode", "create")
+        pid = data.get("product_id")
+        self.open_product_form(
+            "Editar Producto" if mode == "edit" else "Agregar Producto",
+            pid,
+            data.get("name", ""),
+            data.get("barcode", ""),
+            float(data.get("price", 0) or 0),
+            float(data.get("stock", 0) or 0),
+            data.get("type", "unidad"),
+            data.get("unit", "unidad"),
+            auto_select=False,
+            from_draft=True)
 
     def create_widgets(self):
         scan_frame = ttk.Frame(self, bootstyle="dark")
@@ -286,7 +340,7 @@ class InventoryView(ttk.Frame):
                                0, 0, "unidad", "unidad", auto_select)
 
     def open_product_form(self, title, product_id, name, barcode, price, stock,
-                          unit_type, unit, auto_select=False):
+                          unit_type, unit, auto_select=False, from_draft=False):
         popup = Toplevel(self)
         popup.title(title)
         popup.geometry("410x640")
@@ -339,6 +393,64 @@ class InventoryView(ttk.Frame):
         else:
             barcode_entry.focus_set()
 
+        # ✅ Auto-guardado con debounce
+        draft_timer = {"id": None}
+
+        def collect_draft():
+            return {
+                "mode": "edit" if product_id else "create",
+                "product_id": product_id,
+                "barcode": barcode_entry.get(),
+                "name": name_entry.get(),
+                "type": type_var.get(),
+                "unit": unit_var.get(),
+                "price": price_entry.get(),
+                "stock": stock_entry.get(),
+            }
+
+        def save_draft_now():
+            try:
+                data = collect_draft()
+                # No guardar borrador vacío
+                if not data["name"] and not data["barcode"]:
+                    return
+                self.product_use_case.save_product_draft(data)
+            except Exception:
+                pass
+
+        def schedule_save(*args):
+            if draft_timer["id"]:
+                try:
+                    popup.after_cancel(draft_timer["id"])
+                except Exception:
+                    pass
+            draft_timer["id"] = popup.after(800, save_draft_now)
+
+        # Bindear cambios
+        name_entry.bind("<KeyRelease>", schedule_save, add="+")
+        barcode_entry.bind("<KeyRelease>", schedule_save, add="+")
+        price_entry.bind("<KeyRelease>", schedule_save, add="+")
+        stock_entry.bind("<KeyRelease>", schedule_save, add="+")
+        type_var.trace_add("write", schedule_save)
+        unit_var.trace_add("write", schedule_save)
+
+        # Guardar el estado inicial si viene de borrador
+        if from_draft:
+            schedule_save()
+
+        def cerrar_sin_guardar():
+            """Cierra el popup manteniendo el borrador."""
+            if draft_timer["id"]:
+                try:
+                    popup.after_cancel(draft_timer["id"])
+                except Exception:
+                    pass
+            save_draft_now()
+            popup.destroy()
+            self.scan_entry.focus_set()
+
+        popup.protocol("WM_DELETE_WINDOW", cerrar_sin_guardar)
+
         def save():
             n = name_entry.get().strip()
             b = barcode_entry.get().strip()
@@ -353,12 +465,18 @@ class InventoryView(ttk.Frame):
             except ValueError:
                 MD.show_error("Precio/Stock inválidos", "Error", parent=popup)
                 return
-            if product_id:
-                self.product_use_case.update_product(product_id, n, b, p, s,
-                                                     type_var.get(), unit_var.get())
-            else:
-                self.product_use_case.add_product(n, b, p, s,
-                                                  type_var.get(), unit_var.get())
+            try:
+                if product_id:
+                    self.product_use_case.update_product(product_id, n, b, p, s,
+                                                         type_var.get(), unit_var.get())
+                else:
+                    self.product_use_case.add_product(n, b, p, s,
+                                                      type_var.get(), unit_var.get())
+                # ✅ Guardado exitoso → borrar borrador
+                self.product_use_case.clear_product_draft()
+            except Exception as e:
+                MD.show_error(f"Error al guardar: {e}", "Error", parent=popup)
+                return
             self.load_products()
             popup.destroy()
             self.scan_entry.focus_set()
