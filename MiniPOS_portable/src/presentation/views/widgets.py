@@ -1,5 +1,6 @@
 import tkinter as tk
 import ttkbootstrap as ttk
+from difflib import SequenceMatcher
 
 
 _popup_depth = 0
@@ -172,7 +173,140 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
 
 
 # =========================================================
-# DIÁLOGOS PERSONALIZADOS (con bloqueo anti-doble ejecución)
+# HELPER: ZONA SCROLLEABLE UNIVERSAL
+# =========================================================
+def make_scrollable(container, build_content, build_bottom=None, bg=None):
+    """
+    Convierte `container` en una zona con scroll.
+
+    - build_content(parent): construye el contenido scrolleable dentro de `parent`.
+    - build_bottom(parent): construye los botones fijos abajo (opcional).
+    - bg: color de fondo (por defecto, el del tema).
+
+    Devuelve un dict con:
+        - canvas, inner, scrollbar, bottom, bind_wheel_recursive
+    """
+    apply_dark_red_scrollbar_style()
+    if bg is None:
+        try:
+            bg = ttk.Style().colors.bg
+        except Exception:
+            bg = "#1a1a1a"
+
+    result = {"canvas": None, "inner": None, "scrollbar": None, "bottom": None}
+
+    # 1. Botones fijos abajo (PRIORIDAD: se empaquetan primero)
+    if build_bottom is not None:
+        bottom_frame = tk.Frame(container, bg=bg)
+        bottom_frame.pack(side="bottom", fill="x")
+        try:
+            build_bottom(bottom_frame)
+        except Exception:
+            pass
+        result["bottom"] = bottom_frame
+
+    # 2. Scrollbar a la derecha
+    scrollbar = ttk.Scrollbar(container, orient="vertical",
+                              style="DarkRed.Vertical.TScrollbar")
+    scrollbar.pack(side="right", fill="y")
+
+    # 3. Canvas
+    canvas = tk.Canvas(container, bg=bg, highlightthickness=0)
+    canvas.pack(side="left", fill="both", expand=True)
+
+    # 4. Frame interior
+    inner = tk.Frame(canvas, bg=bg)
+    inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.config(command=canvas.yview)
+
+    def _on_inner_config(e):
+        try:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        except Exception:
+            pass
+
+    def _on_canvas_config(e):
+        try:
+            canvas.itemconfig(inner_id, width=e.width)
+        except Exception:
+            pass
+
+    inner.bind("<Configure>", _on_inner_config)
+    canvas.bind("<Configure>", _on_canvas_config)
+
+    # 5. Rueda del ratón global
+    def _on_mousewheel(e):
+        try:
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        except Exception:
+            pass
+
+    def bind_wheel_recursive(widget):
+        try:
+            widget.bind("<MouseWheel>", _on_mousewheel, add="+")
+        except Exception:
+            pass
+        for child in widget.winfo_children():
+            bind_wheel_recursive(child)
+
+    container.bind("<MouseWheel>", _on_mousewheel)
+    canvas.bind("<MouseWheel>", _on_mousewheel)
+    inner.bind("<MouseWheel>", _on_mousewheel)
+
+    result["canvas"] = canvas
+    result["inner"] = inner
+    result["scrollbar"] = scrollbar
+    result["bind_wheel_recursive"] = bind_wheel_recursive
+
+    # 6. Construir contenido
+    try:
+        build_content(inner)
+    except Exception:
+        pass
+
+    # 7. Aplicar rueda del ratón a todos los hijos
+    try:
+        container.update_idletasks()
+        bind_wheel_recursive(inner)
+        if result["bottom"] is not None:
+            bind_wheel_recursive(result["bottom"])
+    except Exception:
+        pass
+
+    return result
+
+
+# =========================================================
+# AGRUPACIÓN DE PRODUCTOS: búsqueda de similares
+# =========================================================
+def find_similar_products(name, products, threshold=0.5):
+    """
+    Devuelve lista de (product, score) ordenada por score descendente.
+    score va de 0 a 1.
+    """
+    if not name or not str(name).strip():
+        return []
+    name_norm = str(name).strip().lower()
+    results = []
+    for p in products:
+        p_name_norm = str(getattr(p, "name", "") or "").strip().lower()
+        if not p_name_norm:
+            continue
+        # Comparación por ratio de similitud
+        ratio = SequenceMatcher(None, name_norm, p_name_norm).ratio()
+        # Bonus si uno contiene al otro
+        if name_norm in p_name_norm or p_name_norm in name_norm:
+            ratio = max(ratio, 0.75)
+        if ratio >= threshold:
+            results.append((p, ratio))
+    results.sort(key=lambda x: -x[1])
+    return results
+
+
+# =========================================================
+# DIÁLOGOS PERSONALIZADOS
 # =========================================================
 def _custom_dialog(parent, title, message, buttons, kind="info",
                    is_dark=True, default_button=0):
@@ -201,7 +335,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
              bg=bg, fg=fg, wraplength=460, justify="center").pack(padx=25, pady=10)
 
     result = {"idx": None}
-    # ✅ Flag para evitar doble ejecución
     state = {"closing": False}
 
     bf = tk.Frame(pop, bg=bg)
@@ -241,7 +374,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
 
-    # ✅ Bindings con "break" y verificación de estado
     def on_enter(e):
         if state["closing"]:
             return "break"
@@ -254,7 +386,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
     def on_escape(e):
         if state["closing"]:
             return "break"
-        # Escape cierra sin resultado definido (equivale a "No")
         try:
             pop.destroy()
         except Exception:
@@ -329,7 +460,7 @@ class MD:
 
 
 # =========================================================
-# BARRA DE MENÚS OSCURA
+# BARRA DE MENÚS
 # =========================================================
 class DarkMenuBar(ttk.Frame):
     def __init__(self, parent, is_dark_func):
