@@ -28,6 +28,7 @@ class DBManager:
         self._check_barcode_column()
         self._check_unit_columns()
         self._check_timestamp_columns()
+        self._check_group_column()
         self._check_sales_tables()
         self._check_credit_columns()
         self._check_payment_column()
@@ -43,7 +44,8 @@ class DBManager:
             name TEXT NOT NULL, barcode TEXT DEFAULT '',
             price REAL NOT NULL, stock REAL NOT NULL DEFAULT 0,
             unit_type TEXT DEFAULT 'unidad', unit TEXT DEFAULT 'unidad',
-            created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '')''')
+            created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '',
+            group_name TEXT DEFAULT '')''')
         conn.commit()
         conn.close()
 
@@ -78,6 +80,15 @@ class DBManager:
         if 'updated_at' not in cols:
             cur.execute("ALTER TABLE products ADD COLUMN updated_at TEXT DEFAULT ''")
             cur.execute("UPDATE products SET updated_at = ? WHERE updated_at = '' OR updated_at IS NULL", (now,))
+            self.conn.commit()
+
+    def _check_group_column(self):
+        """Agrega columna group_name para agrupar productos similares."""
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(products)")
+        cols = [c[1] for c in cur.fetchall()]
+        if 'group_name' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN group_name TEXT DEFAULT ''")
             self.conn.commit()
 
     def _check_sales_tables(self):
@@ -119,7 +130,6 @@ class DBManager:
             self.conn.commit()
 
     def _check_display_offset_column(self):
-        """✅ NUEVO: columna para reiniciar el número visual de venta sin borrar datos."""
         cur = self.conn.cursor()
         cur.execute("PRAGMA table_info(sales)")
         cols = [c[1] for c in cur.fetchall()]
@@ -145,7 +155,6 @@ class DBManager:
             updated_at TEXT NOT NULL)''')
         self.conn.commit()
 
-    # ---- Utilidades de settings ----
     def get_setting(self, key, default=None):
         conn = self.get_connection()
         cur = conn.cursor()
