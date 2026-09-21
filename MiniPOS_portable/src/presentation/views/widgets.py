@@ -9,30 +9,40 @@ def apply_titlebar_theme(window, is_dark):
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         v = ctypes.c_int(1 if is_dark else 0)
         for a in (20, 19):
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, a, ctypes.byref(v), ctypes.sizeof(v))
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, a, ctypes.byref(v), ctypes.sizeof(v))
     except Exception:
         pass
 
 
 def center_window(win):
     win.update_idletasks()
-    w, h = win.winfo_width(), win.winfo_height()
-    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    x, y = (sw - w) // 2, (sh - h) // 2
-    win.geometry(f"+{x}+{y}")
+    w = win.winfo_width()
+    h = win.winfo_height()
+    if w <= 1 or h <= 1:
+        w = win.winfo_reqwidth()
+        h = win.winfo_reqheight()
+    sw = win.winfo_screenwidth()
+    sh = win.winfo_screenheight()
+    x = (sw - w) // 2
+    y = (sh - h) // 2
+    win.geometry(f"{w}x{h}+{x}+{y}")
 
 
 def show_popup_smooth(popup, is_dark):
-    """Muestra un popup ya construido sin parpadeo en la barra de título."""
-    popup.withdraw()
+    """Muestra un popup sin parpadeo: aplica tema ANTES de mostrarlo."""
     popup.update_idletasks()
-    apply_titlebar_theme(popup, is_dark)
     center_window(popup)
+    apply_titlebar_theme(popup, is_dark)
     popup.deiconify()
+    popup.lift()
+    try:
+        popup.focus_force()
+    except Exception:
+        pass
 
 
 def get_menu_font():
-    """Devuelve la fuente actual de los menús para que escalen con el tamaño."""
     try:
         import tkinter.font as tkfont
         f = tkfont.nametofont("TkMenuFont")
@@ -41,6 +51,128 @@ def get_menu_font():
         return ("Arial", 11)
 
 
+# =========================================================
+# DIÁLOGOS PERSONALIZADOS EN ESPAÑOL
+# =========================================================
+def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
+    """Muestra un diálogo con botones personalizados. Devuelve el índice elegido o None."""
+    if parent is None:
+        return None
+    try:
+        root = parent.winfo_toplevel()
+    except Exception:
+        root = parent
+
+    pop = tk.Toplevel(root)
+    pop.title(title)
+    pop.transient(root)
+    pop.withdraw()
+
+    try:
+        pop.grab_set()
+    except Exception:
+        pass
+
+    icons = {"info": "ℹ️", "warning": "⚠️", "error": "❌", "question": "❓"}
+    ttk.Label(pop, text=f"{icons.get(kind, '')}  {title}",
+              font=("Arial", 13, "bold")).pack(pady=(20, 10), padx=20)
+
+    ttk.Label(pop, text=message, font=("Arial", 11),
+              wraplength=460, justify="center").pack(padx=25, pady=10)
+
+    result = {"idx": None}
+
+    bf = ttk.Frame(pop)
+    bf.pack(pady=(10, 20))
+
+    def make_cb(i):
+        def cb():
+            result["idx"] = i
+            pop.destroy()
+        return cb
+
+    for i, b in enumerate(buttons):
+        if i == 0:
+            style = "DarkGreen.TButton"
+        elif b.lower() in ("no", "cancelar"):
+            style = "danger.TButton"
+        else:
+            style = "secondary.TButton"
+        ttk.Button(bf, text=b, command=make_cb(i), style=style,
+                   width=12).pack(side="left", padx=8)
+
+    pop.update_idletasks()
+    w = max(420, pop.winfo_reqwidth())
+    h = pop.winfo_reqheight()
+    pop.geometry(f"{w}x{h}")
+    show_popup_smooth(pop, is_dark)
+
+    try:
+        root.wait_window(pop)
+    except Exception:
+        pass
+    return result["idx"]
+
+
+class MD:
+    """Reemplazo de Messagebox con botones en español y modo oscuro."""
+
+    _is_dark = True
+
+    @classmethod
+    def set_dark(cls, is_dark):
+        cls._is_dark = is_dark
+
+    @classmethod
+    def show_info(cls, message, title="Información", parent=None):
+        _custom_dialog(parent, title, message, ["Bien"], "info", cls._is_dark)
+
+    @classmethod
+    def show_warning(cls, message, title="Advertencia", parent=None):
+        _custom_dialog(parent, title, message, ["Bien"], "warning", cls._is_dark)
+
+    @classmethod
+    def show_error(cls, message, title="Error", parent=None):
+        _custom_dialog(parent, title, message, ["Bien"], "error", cls._is_dark)
+
+    @classmethod
+    def yesno(cls, message, title="Confirmar", parent=None):
+        idx = _custom_dialog(parent, title, message, ["Sí", "No"],
+                             "question", cls._is_dark)
+        return "Yes" if idx == 0 else "No"
+
+
+# =========================================================
+# BARRA DE MENÚS OSCURA PERSONALIZADA
+# =========================================================
+class DarkMenuBar(ttk.Frame):
+    """Menú superior oscuro sin la franja blanca nativa de Windows."""
+
+    def __init__(self, parent, is_dark_func):
+        super().__init__(parent, bootstyle="dark")
+        self.is_dark_func = is_dark_func
+        self.menus = []
+
+    def add_menu(self, label, build_fn):
+        mb = ttk.Menubutton(self, text=label, bootstyle="dark")
+        style = ttk.Style()
+        menu = tk.Menu(
+            mb, tearoff=0,
+            bg=style.colors.bg, fg=style.colors.fg,
+            activebackground=style.colors.selectbg,
+            activeforeground=style.colors.selectfg,
+            bd=1, relief="solid",
+            font=get_menu_font())
+        build_fn(menu)
+        mb.configure(menu=menu)
+        mb.pack(side="left", padx=2, pady=2)
+        self.menus.append((mb, menu))
+        return mb
+
+
+# =========================================================
+# AUTOCOMPLETADO ENTRY CON LISTBOX OSCURO
+# =========================================================
 class AutoCompleteEntry(ttk.Entry):
     """Entry con autocompletado en un Toplevel-Listbox que NO roba el foco."""
 
@@ -83,6 +215,7 @@ class AutoCompleteEntry(ttk.Entry):
         self._show(filtered)
 
     def _show(self, values):
+        style = ttk.Style()
         if self.popup is None:
             self.popup = tk.Toplevel(self)
             self.popup.wm_overrideredirect(True)
@@ -90,24 +223,40 @@ class AutoCompleteEntry(ttk.Entry):
                 self.popup.attributes('-topmost', True)
             except Exception:
                 pass
-            self.listbox = tk.Listbox(self.popup, activestyle='none',
-                                      exportselection=False,
-                                      font=("Arial", 11),
-                                      borderwidth=1, relief="solid")
+            self.popup.configure(bg=style.colors.bg)
+            # ✅ Listbox oscuro coherente con el tema
+            self.listbox = tk.Listbox(
+                self.popup,
+                activestyle='none',
+                exportselection=False,
+                bg=style.colors.bg,
+                fg=style.colors.fg,
+                selectbackground="#0a4d1f",
+                selectforeground="#ffffff",
+                font=("Arial", 11),
+                borderwidth=0,
+                relief="flat",
+                highlightthickness=0)
             self.listbox.pack(fill='both', expand=True)
             self.listbox.bind('<<ListboxSelect>>', self._on_select)
             self.listbox.bind('<Return>', self._on_select)
             self.listbox.bind('<Escape>', lambda e: (self._hide(), "break"))
             self.listbox.bind('<Double-Button-1>', self._on_select)
+        else:
+            # Actualizar colores si cambió el tema
+            self.listbox.configure(
+                bg=style.colors.bg, fg=style.colors.fg)
+
         self.listbox.delete(0, tk.END)
         for v in values:
             self.listbox.insert(tk.END, v)
+
         self.update_idletasks()
         x = self.winfo_rootx()
         y = self.winfo_rooty() + self.winfo_height()
         w = self.winfo_width()
-        item_h = 20
-        h = min(len(values) * item_h + 4, 300)
+        item_h = 22
+        h = min(len(values) * item_h + 6, 300)
         self.popup.geometry(f"{w}x{h}+{x}+{y}")
         self.popup.deiconify()
         self.popup.lift()
@@ -161,7 +310,3 @@ class AutoCompleteEntry(ttk.Entry):
                 self._hide()
         except Exception:
             self._hide()
-
-    def refresh_values(self):
-        """Llamar cuando cambie la lista de valores disponibles."""
-        pass
