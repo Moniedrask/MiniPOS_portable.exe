@@ -19,6 +19,10 @@ class Sale:
         self.payment_method = payment_method
         self.notes = notes
         self.items = items if items else []
+        # Atributos extra que se rellenan después
+        self.customer_name = ""
+        self.is_credit = 0
+        self.is_paid = 1
 
     def __repr__(self):
         return f"<Sale #{self.sale_id} {self.date} ${self.total}>"
