@@ -3,6 +3,7 @@ import ttkbootstrap as ttk
 
 
 def apply_titlebar_theme(window, is_dark):
+    """Solo se usa en la ventana principal, una vez al arrancar."""
     try:
         import ctypes
         window.update_idletasks()
@@ -29,15 +30,14 @@ def center_window(win):
     win.geometry(f"{w}x{h}+{x}+{y}")
 
 
-def show_popup_smooth(popup, is_dark):
+def show_popup_smooth(popup, is_dark=None):
+    """Muestra un popup SIN tocar la barra de título (evita parpadeo)."""
     try:
         style = ttk.Style()
         popup.configure(bg=style.colors.bg)
     except Exception:
         pass
-    popup.update_idletasks()
     center_window(popup)
-    apply_titlebar_theme(popup, is_dark)
     popup.deiconify()
     popup.lift()
     try:
@@ -75,10 +75,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     pop.transient(root)
     pop.withdraw()
     pop.configure(bg=bg)
-    try:
-        pop.grab_set()
-    except Exception:
-        pass
 
     icons = {"info": "ℹ️", "warning": "⚠️", "error": "❌", "question": "❓"}
 
@@ -111,12 +107,21 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     w = max(420, pop.winfo_reqwidth())
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
-    show_popup_smooth(pop, is_dark)
+    show_popup_smooth(pop)
 
     try:
         root.wait_window(pop)
     except Exception:
         pass
+
+    # ✅ Devolver foco a la ventana que lo abrió
+    try:
+        if parent and parent.winfo_exists():
+            parent.grab_set()
+            parent.focus_force()
+    except Exception:
+        pass
+
     return result["idx"]
 
 
@@ -177,15 +182,9 @@ class DarkMenuBar(ttk.Frame):
 
 
 # =========================================================
-# TOOLTIP GENÉRICO CON MARQUESINA
+# TOOLTIP CON MARQUESINA
 # =========================================================
 class HoverTooltip:
-    """
-    Muestra un tooltip con el texto completo cuando el mouse se posa
-    sobre una celda/ítem truncado. Si el texto es muy largo, hace
-    efecto marquesina (se mueve de izquierda a derecha).
-    """
-
     def __init__(self, widget, font_size=11, delay=350):
         self.widget = widget
         self.font_size = font_size
@@ -197,6 +196,7 @@ class HoverTooltip:
         self.current_key = None
         self._pending_x = 0
         self._pending_y = 0
+        self._last_text = None
         try:
             import tkinter.font as tkfont
             self.font = tkfont.Font(family="Arial", size=font_size)
@@ -206,9 +206,7 @@ class HoverTooltip:
         widget.bind("<Leave>", self._hide, add="+")
         widget.bind("<Button>", self._hide, add="+")
 
-    # ---- Subclases sobrescriben estos métodos ----
     def _identify(self, event):
-        """Devuelve (key, text, is_truncated)."""
         return None, None, False
 
     def _on_motion(self, event):
@@ -217,6 +215,7 @@ class HoverTooltip:
             return
         self._hide()
         self.current_key = key
+        self._last_text = text
         if not truncated or not text:
             return
         self._pending_x = event.x_root
@@ -225,13 +224,9 @@ class HoverTooltip:
 
     def _deferred_show(self):
         self.show_timer = None
-        if not self.current_key:
+        if not self._last_text:
             return
-        # Volver a identificar por si cambió
-        # (aquí guardamos el último texto en self._last_text)
-        # Simplificamos: guardamos el texto al identificar
-        if hasattr(self, "_last_text") and self._last_text:
-            self._show(self._pending_x, self._pending_y, self._last_text)
+        self._show(self._pending_x, self._pending_y, self._last_text)
 
     def _show(self, x, y, text):
         style = ttk.Style()
@@ -252,7 +247,6 @@ class HoverTooltip:
             highlightthickness=0)
         self.label.pack()
         self.tip.update_idletasks()
-        # Ajustar para que no se salga de la pantalla
         tw = self.tip.winfo_reqwidth()
         th = self.tip.winfo_reqheight()
         sw = self.tip.winfo_screenwidth()
@@ -260,9 +254,7 @@ class HoverTooltip:
         px = min(x + 15, sw - tw - 10)
         py = min(y + 15, sh - th - 10)
         self.tip.geometry(f"+{max(px, 0)}+{max(py, 0)}")
-        self._text = text
         self._offset = 0
-        # Si es muy largo, efecto marquesina
         if len(text) > 45:
             self._padded = text + "        "
             self._marquee()
@@ -301,8 +293,6 @@ class HoverTooltip:
 
 
 class TreeviewTooltip(HoverTooltip):
-    """Tooltip para Treeview: detecta celdas truncadas."""
-
     def _identify(self, event):
         row = self.widget.identify_row(event.y)
         col = self.widget.identify_column(event.x)
@@ -315,27 +305,19 @@ class TreeviewTooltip(HoverTooltip):
             if col_idx >= len(vals):
                 return key, None, False
             text = str(vals[col_idx])
-        except Exception:
-            return key, None, False
-        # Calcular ancho de la columna
-        try:
             col_id = self.widget["columns"][col_idx]
             col_width = self.widget.column(col_id, "width")
         except Exception:
             return key, None, False
-        # Medir el texto
         if self.font:
             text_width = self.font.measure(text)
         else:
             text_width = len(text) * self.font_size * 0.65
         truncated = (text_width > col_width - 8) and len(text) > 6
-        self._last_text = text
         return key, text, truncated
 
 
 class ListboxTooltip(HoverTooltip):
-    """Tooltip para Listbox: detecta ítems truncados."""
-
     def _identify(self, event):
         try:
             idx = self.widget.nearest(event.y)
@@ -353,12 +335,11 @@ class ListboxTooltip(HoverTooltip):
         else:
             text_width = len(text) * self.font_size * 0.65
         truncated = (text_width > lb_width - 10) and len(text) > 6
-        self._last_text = text
         return idx, text, truncated
 
 
 # =========================================================
-# AUTOCOMPLETADO ENTRY CON LISTBOX OSCURO + TOOLTIP
+# AUTOCOMPLETADO ENTRY
 # =========================================================
 class AutoCompleteEntry(ttk.Entry):
     def __init__(self, parent, values_getter, on_select, width=40, font=None, **kwargs):
@@ -426,7 +407,6 @@ class AutoCompleteEntry(ttk.Entry):
             self.listbox.bind('<Return>', self._on_select)
             self.listbox.bind('<Escape>', lambda e: (self._hide(), "break"))
             self.listbox.bind('<Double-Button-1>', self._on_select)
-            # ✅ Tooltip en el listbox para nombres largos
             self._listbox_tooltip = ListboxTooltip(self.listbox, font_size=11)
         else:
             self.listbox.configure(bg=style.colors.bg, fg=style.colors.fg)
