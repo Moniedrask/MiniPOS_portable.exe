@@ -114,7 +114,6 @@ class PaymentView(ttk.Frame):
         ttk.Button(top, text="Agregar", command=self.add_by_search,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
-        # ✅ Treeview con scrollbar
         cart_frame = ttk.Frame(self, bootstyle="dark")
         cart_frame.pack(padx=10, pady=5, fill="both", expand=True)
 
@@ -359,6 +358,7 @@ class PaymentView(ttk.Frame):
                 pass
 
     def _pay_internal(self):
+        """Popup de cobro COMPACTO con scroll si crece la fuente."""
         if not self.cart:
             MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
             return
@@ -366,35 +366,69 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("640x720")
+        # ✅ Tamaño compacto, ajustado a la pantalla
+        screen_h = pop.winfo_screenheight()
+        pop_h = min(620, screen_h - 100)
+        pop.geometry(f"640x{pop_h}")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        header = tk.Frame(pop, bg=bg)
-        header.pack(fill="x", pady=(10, 5))
-        tk.Label(header, text="💰 CONFIRMAR PAGO", font=("Arial", 15, "bold"),
-                 bg=bg, fg=fg).pack()
+        # ✅ Contenedor principal con scroll (por si la fuente crece)
+        main_canvas = tk.Canvas(pop, bg=bg, highlightthickness=0)
+        main_scroll = ttk.Scrollbar(pop, orient="vertical", command=main_canvas.yview)
+        inner = tk.Frame(main_canvas, bg=bg)
 
-        total_frame = tk.Frame(pop, bg="#0a4d1f", padx=15, pady=8)
-        total_frame.pack(pady=(0, 8))
-        tk.Label(total_frame, text="TOTAL A PAGAR", font=("Arial", 10, "bold"),
+        main_canvas.configure(yscrollcommand=main_scroll.set)
+        main_scroll.pack(side="right", fill="y")
+        main_canvas.pack(side="left", fill="both", expand=True)
+
+        main_canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_config(event):
+            main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+            # Ajustar el ancho del inner al ancho del canvas
+            main_canvas.itemconfig(1, width=main_canvas.winfo_width())
+
+        inner.bind("<Configure>", _on_inner_config)
+        main_canvas.bind("<Configure>", lambda e: main_canvas.itemconfig(1, width=e.width))
+
+        # Rueda del ratón
+        def _on_mousewheel(event):
+            try:
+                main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        pop.bind("<MouseWheel>", _on_mousewheel)
+        inner.bind("<MouseWheel>", _on_mousewheel)
+        main_canvas.bind("<MouseWheel>", _on_mousewheel)
+
+        # ---- Contenido dentro de `inner` ----
+        # Encabezado
+        tk.Label(inner, text="💰 CONFIRMAR PAGO", font=("Arial", 14, "bold"),
+                 bg=bg, fg=fg).pack(pady=(10, 3))
+
+        total_frame = tk.Frame(inner, bg="#0a4d1f", padx=15, pady=5)
+        total_frame.pack(pady=(0, 6))
+        tk.Label(total_frame, text="TOTAL A PAGAR", font=("Arial", 9, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
         tk.Label(total_frame, text=f"${total:,.0f}".replace(",", "."),
-                 font=("Arial", 26, "bold"),
+                 font=("Arial", 22, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
 
-        row1 = tk.Frame(pop, bg=bg)
-        row1.pack(fill="x", padx=20, pady=(5, 2))
+        # Cliente
+        row1 = tk.Frame(inner, bg=bg)
+        row1.pack(fill="x", padx=20, pady=(4, 2))
         tk.Label(row1, text="Cliente:", font=("Arial", 10),
                  bg=bg, fg=fg).pack(side="left", padx=(0, 5))
         nombre_var = tk.StringVar()
         ttk.Entry(row1, textvariable=nombre_var, width=30,
                   font=("Arial", 11)).pack(side="left", fill="x", expand=True)
 
-        row2 = tk.Frame(pop, bg=bg)
-        row2.pack(fill="x", padx=20, pady=(5, 2))
+        # Método
+        row2 = tk.Frame(inner, bg=bg)
+        row2.pack(fill="x", padx=20, pady=(4, 2))
         tk.Label(row2, text="Método:", font=("Arial", 10),
                  bg=bg, fg=fg).pack(side="left", padx=(0, 5))
         metodo_var = tk.StringVar(value="Efectivo")
@@ -402,42 +436,45 @@ class PaymentView(ttk.Frame):
         metodos_frame.pack(side="left")
         for m in ["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]:
             ttk.Radiobutton(metodos_frame, text=m, variable=metodo_var,
-                            value=m, bootstyle="info").pack(side="left", padx=4)
+                            value=m, bootstyle="info").pack(side="left", padx=3)
 
-        deuda_lbl = tk.Label(pop, text="", font=("Arial", 10, "bold"),
-                             bg=bg, fg="#ffd166", wraplength=600, justify="center")
-        deuda_lbl.pack(pady=4, padx=10)
+        # Aviso
+        deuda_lbl = tk.Label(inner, text="", font=("Arial", 10, "bold"),
+                             bg=bg, fg="#ffd166", wraplength=560, justify="center")
+        deuda_lbl.pack(pady=3, padx=10)
 
-        abono_frame = tk.Frame(pop, bg=bg)
+        # Abono
+        abono_frame = tk.Frame(inner, bg=bg)
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar(value="")
 
         chk_abono = ttk.Checkbutton(
-            abono_frame,
-            text="💵 Abonar",
-            variable=abono_var,
-            bootstyle="success-round-toggle")
+            abono_frame, text="💵 Abonar",
+            variable=abono_var, bootstyle="success-round-toggle")
         chk_abono.pack(side="left", padx=5)
 
         tk.Label(abono_frame, text="Monto:", bg=bg, fg=fg,
                  font=("Arial", 10)).pack(side="left", padx=5)
-        ent_abono = ttk.Entry(abono_frame, textvariable=abono_monto_var,
-                              width=12, font=("Arial", 12), justify="center")
-        ent_abono.pack(side="left", padx=5)
+        ttk.Entry(abono_frame, textvariable=abono_monto_var,
+                  width=12, font=("Arial", 12), justify="center").pack(side="left", padx=5)
 
-        saldo_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
-                             bg=bg, fg="#a8e6a8", wraplength=600, justify="center")
-        saldo_lbl.pack(pady=4, padx=10)
+        # Saldo
+        saldo_lbl = tk.Label(inner, text="", font=("Arial", 11, "bold"),
+                             bg=bg, fg="#a8e6a8", wraplength=560, justify="center")
+        saldo_lbl.pack(pady=3, padx=10)
 
-        row3 = tk.Frame(pop, bg=bg)
-        row3.pack(fill="x", padx=20, pady=(5, 2))
+        # Notas
+        row3 = tk.Frame(inner, bg=bg)
+        row3.pack(fill="x", padx=20, pady=(4, 2))
         tk.Label(row3, text="Notas:", font=("Arial", 10),
                  bg=bg, fg=fg).pack(side="left", padx=(0, 5))
         notas_var = tk.StringVar()
         ttk.Entry(row3, textvariable=notas_var, width=40,
                   font=("Arial", 11)).pack(side="left", fill="x", expand=True)
 
-        tk.Frame(pop, bg=bg).pack(fill="both", expand=True)
+        # ---- Botones FUERA del canvas (siempre visibles) ----
+        bf_outer = tk.Frame(pop, bg=bg)
+        bf_outer.pack(side="bottom", pady=10)
 
         def confirmar():
             nombre = nombre_var.get().strip()
@@ -481,11 +518,9 @@ class PaymentView(ttk.Frame):
             except Exception as e:
                 MD.show_error(f"Error: {e}", "Error", parent=pop)
 
-        bf = tk.Frame(pop, bg=bg)
-        bf.pack(pady=12)
-        ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
-                   style="DarkGreen.TButton").pack(side="left", padx=10, ipady=8, ipadx=15)
-        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=8)
+        ttk.Button(bf_outer, text="✅ Confirmar Pago", command=confirmar,
+                   style="DarkGreen.TButton").pack(side="left", padx=10, ipady=6, ipadx=15)
+        ttk.Button(bf_outer, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=6)
 
         def refresh_ui(*args):
             nombre = nombre_var.get().strip()
@@ -522,7 +557,7 @@ class PaymentView(ttk.Frame):
                         text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
 
             if deuda > 0 or es_fiado:
-                abono_frame.pack(pady=4)
+                abono_frame.pack(pady=3)
             else:
                 abono_frame.pack_forget()
                 abono_var.set(False)
