@@ -10,7 +10,10 @@ from datetime import datetime
 from application.use_case.product_use_case import ProductCase
 from application.use_case.sale_use_case import SaleCase
 from infrastucture.db.db_manager import DBManager
-from presentation.views.payment_view import PaymentView, center_window, apply_titlebar_theme
+from presentation.views.widgets import (
+    apply_titlebar_theme, center_window, show_popup_smooth, get_menu_font
+)
+from presentation.views.payment_view import PaymentView
 from presentation.views.inventory_view import InventoryView
 
 
@@ -36,7 +39,8 @@ class MainView(tk.Tk):
         self.configure(bg=self.style.colors.bg)
         self.is_fullscreen = False
 
-        # Rutas
+        self._setup_dark_green_style()
+
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -48,7 +52,6 @@ class MainView(tk.Tk):
         self.product_use_case = ProductCase(self.db_manager)
         self.sale_use_case = SaleCase(self.db_manager)
 
-        # ✅ Contraseña de inicio
         if not self._check_startup_password():
             self.destroy()
             return
@@ -62,6 +65,26 @@ class MainView(tk.Tk):
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
+    # =========== ESTILO VERDE OSCURO GLOBAL ===========
+    def _setup_dark_green_style(self):
+        """Define un estilo de botón verde oscuro con letra clara."""
+        try:
+            self.style.configure(
+                "DarkGreen.TButton",
+                background="#0a4d1f",
+                foreground="#c8e6c9",
+                borderwidth=0,
+                focuscolor="#0a4d1f",
+                padding=8,
+                font=("Arial", 11, "bold"))
+            self.style.map(
+                "DarkGreen.TButton",
+                background=[("active", "#083d18"), ("pressed", "#062e12"),
+                            ("disabled", "#555555")],
+                foreground=[("active", "#ffffff"), ("disabled", "#999999")])
+        except Exception:
+            pass
+
     # =========== CONTRASEÑA ===========
     def _check_startup_password(self):
         pwd = self.db_manager.get_setting("startup_password", "")
@@ -74,6 +97,8 @@ class MainView(tk.Tk):
         pop.transient(self)
         pop.grab_set()
         pop.protocol("WM_DELETE_WINDOW", lambda: self._cancel_login(pop))
+        pop.withdraw()
+
         ttk.Label(pop, text="🔒 Contraseña requerida",
                   font=("Arial", 14, "bold")).pack(pady=15)
         v = tk.StringVar()
@@ -92,10 +117,9 @@ class MainView(tk.Tk):
                 v.set("")
 
         ttk.Button(pop, text="Ingresar", command=verificar,
-                   bootstyle="success").pack(pady=10)
+                   style="DarkGreen.TButton").pack(pady=10)
         e.bind("<Return>", lambda e: verificar())
-        pop.after(100, lambda: center_window(pop))
-        pop.after(200, lambda: apply_titlebar_theme(pop, self.current_theme == 'darkly'))
+        show_popup_smooth(pop, self.current_theme == 'darkly')
         self.wait_window(pop)
         if resultado["ok"]:
             self.deiconify()
@@ -117,6 +141,8 @@ class MainView(tk.Tk):
         pop.geometry("400x400")
         pop.transient(self)
         pop.grab_set()
+        pop.withdraw()
+
         ttk.Label(pop, text="🔐 Cambiar contraseña",
                   font=("Arial", 14, "bold")).pack(pady=15)
         ttk.Label(pop, text="Contraseña actual:").pack()
@@ -154,8 +180,8 @@ class MainView(tk.Tk):
             pop.destroy()
 
         ttk.Button(pop, text="Guardar", command=aplicar,
-                   bootstyle="success").pack(pady=12)
-        pop.after(100, lambda: center_window(pop))
+                   style="DarkGreen.TButton").pack(pady=12)
+        show_popup_smooth(pop, self.current_theme == 'darkly')
 
     def _setup_password_first_time(self):
         pop = Toplevel(self)
@@ -163,6 +189,7 @@ class MainView(tk.Tk):
         pop.geometry("380x280")
         pop.transient(self)
         pop.grab_set()
+        pop.withdraw()
         ttk.Label(pop, text="🔐 Crear contraseña de inicio",
                   font=("Arial", 14, "bold")).pack(pady=15)
         ttk.Label(pop, text="Nueva contraseña (mín. 4 caracteres):").pack()
@@ -186,8 +213,8 @@ class MainView(tk.Tk):
             pop.destroy()
 
         ttk.Button(pop, text="Guardar", command=guardar,
-                   bootstyle="success").pack(pady=12)
-        pop.after(100, lambda: center_window(pop))
+                   style="DarkGreen.TButton").pack(pady=12)
+        show_popup_smooth(pop, self.current_theme == 'darkly')
 
     # =========== TAMAÑO DE FUENTE ===========
     def _apply_font_size(self):
@@ -198,12 +225,17 @@ class MainView(tk.Tk):
             except Exception:
                 pass
         self.font_size = size
-        # ✅ Ajustar altura de filas de Treeview para que el texto no se corte
         self._update_tree_rowheights(size)
+        # Reaplicar estilo verde oscuro con nuevo tamaño
+        self._setup_dark_green_style()
+        # Reconfigurar botones con tamaño de fuente
+        try:
+            self.style.configure("DarkGreen.TButton", font=("Arial", size, "bold"))
+        except Exception:
+            pass
 
     def _update_tree_rowheights(self, size):
-        """Ajusta la altura de fila de todas las tablas para que el texto no se corte."""
-        row_height = size + 14  # Altura de fila proporcional al tamaño de letra
+        row_height = size + 14
         try:
             self.style.configure("Treeview", rowheight=row_height, font=("Arial", size))
             self.style.configure("Treeview.Heading", font=("Arial", size, "bold"))
@@ -215,7 +247,6 @@ class MainView(tk.Tk):
         self.db_manager.set_setting("font_size", str(new))
         self.font_size = new
         self._apply_font_size()
-        # Forzar refresco de las tablas para que tomen la nueva altura
         try:
             self.payment_view.refresh_cart()
         except Exception:
@@ -231,7 +262,6 @@ class MainView(tk.Tk):
                           bg=self.style.colors.bg, fg=self.style.colors.fg,
                           activebackground=self.style.colors.selectbg,
                           activeforeground=self.style.colors.selectfg, bd=0)
-
         om = tk.Menu(menubar, tearoff=0,
                      bg=self.style.colors.bg, fg=self.style.colors.fg,
                      activebackground=self.style.colors.selectbg,
@@ -278,10 +308,10 @@ class MainView(tk.Tk):
 
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(10, 0))
-        self.btn_pagos = ttk.Button(tabs, text="🛒  PAGOS", bootstyle="success",
+        self.btn_pagos = ttk.Button(tabs, text="🛒  PAGOS", style="DarkGreen.TButton",
                                     command=lambda: self.show_page("pagos"), width=20)
         self.btn_pagos.pack(side="left", padx=3, pady=3, ipady=8)
-        self.btn_inv = ttk.Button(tabs, text="📦  INVENTARIO", bootstyle="secondary",
+        self.btn_inv = ttk.Button(tabs, text="📦  INVENTARIO", style="DarkGreen.TButton",
                                   command=lambda: self.show_page("inventario"), width=20)
         self.btn_inv.pack(side="left", padx=3, pady=3, ipady=8)
 
@@ -302,14 +332,14 @@ class MainView(tk.Tk):
             w.pack_forget()
         if page == "pagos":
             self.payment_view.pack(fill="both", expand=True)
-            self.btn_pagos.configure(bootstyle="success")
+            self.btn_pagos.configure(style="DarkGreen.TButton")
             self.btn_inv.configure(bootstyle="secondary")
             self.current_page = "pagos"
         else:
             self.inventory_view.load_products()
             self.inventory_view.pack(fill="both", expand=True)
             self.btn_pagos.configure(bootstyle="secondary")
-            self.btn_inv.configure(bootstyle="success")
+            self.btn_inv.configure(style="DarkGreen.TButton")
             self.current_page = "inventario"
 
     def toggle_fullscreen(self):
@@ -320,8 +350,8 @@ class MainView(tk.Tk):
         self.current_theme = 'flatly' if self.current_theme == 'darkly' else 'darkly'
         self.style.theme_use(self.current_theme)
         self.configure(bg=self.style.colors.bg)
+        self._setup_dark_green_style()
         apply_titlebar_theme(self, self.current_theme == 'darkly')
-        # Reaplicar tamaño de fuente porque al cambiar tema se pierden los estilos
         self._apply_font_size()
 
     # =========== RESUMEN DE VENTAS ===========
@@ -331,6 +361,7 @@ class MainView(tk.Tk):
         win.geometry("1000x650")
         win.transient(self)
         win.grab_set()
+        win.withdraw()
         ttk.Label(win, text="📊 RESUMEN DE VENTAS",
                   font=("Arial", 18, "bold")).pack(pady=15)
         s = self.sale_use_case.get_summary()
@@ -398,8 +429,7 @@ class MainView(tk.Tk):
 
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
-        win.after(100, lambda: center_window(win))
-        win.after(200, lambda: apply_titlebar_theme(win, self.current_theme == 'darkly'))
+        show_popup_smooth(win, self.current_theme == 'darkly')
 
     def _ask_password_1234(self, parent):
         pop = Toplevel(parent)
@@ -407,6 +437,7 @@ class MainView(tk.Tk):
         pop.geometry("340x200")
         pop.transient(parent)
         pop.grab_set()
+        pop.withdraw()
         ttk.Label(pop, text="🔒 Contraseña de administrador:",
                   font=("Arial", 12, "bold")).pack(pady=20)
         v = tk.StringVar()
@@ -425,56 +456,179 @@ class MainView(tk.Tk):
                 v.set("")
 
         ttk.Button(pop, text="Aceptar", command=ver,
-                   bootstyle="success").pack(pady=15)
+                   style="DarkGreen.TButton").pack(pady=15)
         e.bind("<Return>", lambda e: ver())
-        pop.after(100, lambda: center_window(pop))
+        show_popup_smooth(pop, self.current_theme == 'darkly')
         parent.wait_window(pop)
         return ok["v"]
 
+    # =========== FIADOS AGRUPADOS CON ABONO ===========
     def show_credit_sales(self):
         win = Toplevel(self)
         win.title("Fiados - Cuentas por cobrar")
-        win.geometry("900x600")
+        win.geometry("1050x680")
         win.transient(self)
         win.grab_set()
+        win.withdraw()
+
         ttk.Label(win, text="💳 CUENTAS POR COBRAR (FIADOS)",
                   font=("Arial", 18, "bold")).pack(pady=15)
-        tree = ttk.Treeview(win,
-                            columns=("ID", "Fecha", "Cliente", "Total", "Estado"),
+
+        # --- RESUMEN SUPERIOR ---
+        resumen_lbl = ttk.Label(win, text="", font=("Arial", 12, "bold"))
+        resumen_lbl.pack(pady=5)
+
+        # --- TABLA PRINCIPAL ---
+        frame = ttk.Frame(win)
+        frame.pack(fill="both", expand=True, padx=15, pady=10)
+
+        tree = ttk.Treeview(frame,
+                            columns=("Cliente", "Fecha", "Total", "Abonado", "Pendiente", "Estado"),
                             show='headings', height=15)
-        for c, t, w in [("ID", "#", 50), ("Fecha", "Fecha", 150),
-                        ("Cliente", "Cliente", 250), ("Total", "Total", 120),
-                        ("Estado", "Estado", 120)]:
+        for c, t, w in [("Cliente", "Cliente", 200), ("Fecha", "Fecha", 150),
+                        ("Total", "Total", 110), ("Abonado", "Abonado", 110),
+                        ("Pendiente", "Pendiente", 110), ("Estado", "Estado", 110)]:
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="center")
-        tree.pack(fill="both", expand=True, padx=15, pady=10)
+        tree.pack(fill="both", expand=True)
+
+        # Guardar referencia a los sales por iid
+        sales_map = {}
 
         def recargar():
             for r in tree.get_children():
                 tree.delete(r)
-            for s_ in self.sale_use_case.get_credit_sales(only_unpaid=True):
-                tree.insert("", "end", values=(
-                    s_.sale_id, s_.date, s_.customer_name or "-",
+            sales_map.clear()
+            ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
+            # Agrupar por nombre: primero los que tienen nombre, luego los sin nombre
+            ventas.sort(key=lambda s: (s.customer_name or "zzz_sin_nombre").lower())
+            total_pend = 0.0
+            clientes = set()
+            for s_ in ventas:
+                cliente = s_.customer_name if s_.customer_name else "(sin nombre)"
+                pendiente = s_.pending()
+                total_pend += pendiente
+                if s_.customer_name:
+                    clientes.add(s_.customer_name)
+                estado = "✅ Pagado" if s_.is_paid else "💳 Pendiente"
+                iid = tree.insert("", "end", values=(
+                    cliente, s_.date,
                     f"${s_.total:,.0f}".replace(",", "."),
-                    "💳 Pendiente" if not s_.is_paid else "✅ Pagado"))
+                    f"${s_.amount_paid:,.0f}".replace(",", "."),
+                    f"${pendiente:,.0f}".replace(",", "."),
+                    estado))
+                sales_map[iid] = s_.sale_id
+            resumen_lbl.configure(
+                text=f"📋 {len(ventas)} fiados pendientes   |   "
+                     f"👥 {len(clientes)} clientes   |   "
+                     f"💰 Total por cobrar: ${total_pend:,.0f}".replace(",", "."))
 
         recargar()
+
+        def abonar():
+            sel = tree.selection()
+            if not sel:
+                Messagebox.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                return
+            sid = sales_map.get(sel[0])
+            if not sid:
+                return
+            # Buscar la venta para saber pendiente
+            venta = None
+            for v in self.sale_use_case.get_credit_sales(only_unpaid=True):
+                if v.sale_id == sid:
+                    venta = v
+                    break
+            if not venta:
+                return
+            pendiente = venta.pending()
+            if pendiente <= 0:
+                Messagebox.show_info("Esta venta ya está pagada.", "OK", parent=win)
+                return
+            self._abonar_dialog(win, sid, venta, pendiente, recargar)
 
         def marcar_pagado():
             sel = tree.selection()
             if not sel:
                 return
-            sid = int(tree.item(sel[0], 'values')[0])
-            if Messagebox.yesno(f"¿Marcar la venta #{sid} como PAGADA?",
+            sid = sales_map.get(sel[0])
+            if not sid:
+                return
+            if Messagebox.yesno(f"¿Marcar la venta #{sid} como PAGADA por completo?",
                                 "Confirmar", parent=win) == "Yes":
                 self.sale_use_case.mark_as_paid(sid)
                 recargar()
                 Messagebox.show_info("Marcada como pagada.", "OK", parent=win)
 
-        ttk.Button(win, text="✅ Marcar como pagada",
-                   command=marcar_pagado, bootstyle="success").pack(pady=10)
-        win.after(100, lambda: center_window(win))
-        win.after(200, lambda: apply_titlebar_theme(win, self.current_theme == 'darkly'))
+        bf = ttk.Frame(win)
+        bf.pack(pady=10)
+        ttk.Button(bf, text="💵 Abonar", command=abonar,
+                   style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="✅ Marcar como pagado",
+                   command=marcar_pagado,
+                   style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="🔄 Refrescar", command=recargar,
+                   bootstyle="secondary").pack(side="left", padx=5)
+
+        show_popup_smooth(win, self.current_theme == 'darkly')
+
+    def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
+        pop = Toplevel(parent)
+        pop.title(f"Abonar a venta #{sale_id}")
+        pop.geometry("420x340")
+        pop.transient(parent)
+        pop.grab_set()
+        pop.withdraw()
+
+        ttk.Label(pop, text="💵 Registrar Abono",
+                  font=("Arial", 16, "bold")).pack(pady=15)
+        cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
+        ttk.Label(pop, text=f"Cliente: {cliente}", font=("Arial", 12)).pack(pady=5)
+        ttk.Label(pop, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
+                  font=("Arial", 12)).pack(pady=3)
+        ttk.Label(pop, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
+                  font=("Arial", 12)).pack(pady=3)
+        ttk.Label(pop, text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
+                  font=("Arial", 14, "bold"),
+                  background="#0a4d1f", foreground="#a8e6a8",
+                  padding=8).pack(pady=10)
+
+        ttk.Label(pop, text="Monto del abono:").pack(pady=(10, 3))
+        monto_var = tk.StringVar()
+        e = ttk.Entry(pop, textvariable=monto_var, width=20,
+                      font=("Arial", 16), justify="center")
+        e.pack(pady=5)
+        e.focus_set()
+
+        def aplicar():
+            try:
+                monto = float(monto_var.get().replace("$", "").replace(".", "").replace(",", "."))
+                if monto <= 0:
+                    raise ValueError
+            except ValueError:
+                Messagebox.show_error("Monto inválido", "Error", parent=pop)
+                return
+            if monto > pendiente + 0.01:
+                if Messagebox.yesno(
+                        f"El monto ingresado (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
+                        f"¿Registrar solo ${pendiente:,.0f}?".replace(",", "."),
+                        "Confirmar", parent=pop) != "Yes":
+                    return
+                monto = pendiente
+            ok, _ = self.sale_use_case.add_payment(sale_id, monto)
+            if ok:
+                pop.destroy()
+                Messagebox.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
+                                     "OK", parent=parent)
+                on_done()
+
+        e.bind("<Return>", lambda e: aplicar())
+        bf = ttk.Frame(pop)
+        bf.pack(pady=15)
+        ttk.Button(bf, text="Registrar abono", command=aplicar,
+                   style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=5)
+        show_popup_smooth(pop, self.current_theme == 'darkly')
 
     # =========== AUTO-INICIO ===========
     def _get_startup_bat_path(self):
@@ -518,8 +672,7 @@ class MainView(tk.Tk):
             return
         total_dia = sum(s.total for s in sales)
         total_prod = sum(i.quantity for s in sales for i in s.items)
-        L = ["=" * 60,
-             "      REPORTE DE VENTAS DEL DÍA",
+        L = ["=" * 60, "      REPORTE DE VENTAS DEL DÍA",
              f"      Fecha: {hoy}",
              f"      Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
              "=" * 60, ""]
@@ -537,8 +690,7 @@ class MainView(tk.Tk):
         L += ["=" * 60,
               f"TOTAL DEL DÍA:      ${total_dia:>12,.0f}".replace(",", "."),
               f"VENTAS REALIZADAS:  {len(sales)}",
-              f"PRODUCTOS VENDIDOS: {total_prod:g}",
-              "=" * 60]
+              f"PRODUCTOS VENDIDOS: {total_prod:g}", "=" * 60]
         try:
             with open(arch, "w", encoding="utf-8") as f:
                 f.write("\n".join(L))
