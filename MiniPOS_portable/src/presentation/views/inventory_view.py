@@ -29,7 +29,6 @@ class InventoryView(ttk.Frame):
         self.after(700, self._keep_scanner_focused)
 
     def create_widgets(self):
-        # --- ESCANEO ---
         scan_frame = ttk.Frame(self, bootstyle="dark")
         scan_frame.pack(padx=10, pady=(15, 5), fill="x")
         ttk.Label(scan_frame, text="📷 Escanear código:",
@@ -41,7 +40,6 @@ class InventoryView(ttk.Frame):
         ttk.Button(scan_frame, text="🔍 Buscar Código",
                    command=lambda: self.lookup_barcode(None)).pack(side="left", padx=5)
 
-        # --- BÚSQUEDA MANUAL CON AUTOCOMPLETAR ---
         search_frame = ttk.Frame(self, bootstyle="dark")
         search_frame.pack(padx=10, pady=5, fill="x")
         ttk.Label(search_frame, text="🔍 Búsqueda (autocompleta):",
@@ -56,7 +54,6 @@ class InventoryView(ttk.Frame):
         ttk.Button(search_frame, text="Limpiar", command=self._clear_search,
                    bootstyle="secondary").pack(side="left", padx=5)
 
-        # --- TABLA CON COLUMNAS ORDENABLES ---
         frame = ttk.Frame(self, bootstyle="dark")
         frame.pack(padx=10, pady=5, fill="both", expand=True)
 
@@ -79,7 +76,6 @@ class InventoryView(ttk.Frame):
         self.tree.bind("<Double-1>", self.view_product_popup)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
-        # --- BOTONES ---
         btn_frame = ttk.Frame(self, bootstyle="dark")
         btn_frame.pack(pady=10)
         ttk.Button(btn_frame, text="➕ Agregar Producto (F2)",
