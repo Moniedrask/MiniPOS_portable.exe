@@ -22,8 +22,8 @@ class InventoryView(ttk.Frame):
         self.create_widgets()
         self.load_products()
         self.after(300, lambda: self.scan_entry.focus_set())
-        # ✅ Revisar borrador de producto al iniciar
-        self.after(600, self._check_product_draft)
+        # ✅ Chequeo diferido que espera a que la vista esté visible
+        self.after(800, self._check_product_draft)
         self._keep_scanner_focused()
 
     def _is_dark(self):
@@ -47,6 +47,13 @@ class InventoryView(ttk.Frame):
     def _check_product_draft(self):
         if self._draft_checked:
             return
+        # ✅ Esperar a que la vista esté visible
+        try:
+            if not self.winfo_ismapped():
+                self.after(500, self._check_product_draft)
+                return
+        except Exception:
+            pass
         self._draft_checked = True
         try:
             data, updated = self.product_use_case.load_product_draft()
@@ -54,7 +61,6 @@ class InventoryView(ttk.Frame):
             return
         if not data:
             return
-        # Ignorar borradores vacíos
         name = (data.get("name") or "").strip()
         barcode = (data.get("barcode") or "").strip()
         if not name and not barcode:
@@ -79,7 +85,6 @@ class InventoryView(ttk.Frame):
             pass
 
     def _open_draft(self, data):
-        """Abre el formulario con los datos del borrador."""
         mode = data.get("mode", "create")
         pid = data.get("product_id")
         self.open_product_form(
@@ -409,9 +414,9 @@ class InventoryView(ttk.Frame):
             }
 
         def save_draft_now():
+            draft_timer["id"] = None
             try:
                 data = collect_draft()
-                # No guardar borrador vacío
                 if not data["name"] and not data["barcode"]:
                     return
                 self.product_use_case.save_product_draft(data)
@@ -426,7 +431,14 @@ class InventoryView(ttk.Frame):
                     pass
             draft_timer["id"] = popup.after(800, save_draft_now)
 
-        # Bindear cambios
+        def cancel_pending():
+            if draft_timer["id"]:
+                try:
+                    popup.after_cancel(draft_timer["id"])
+                except Exception:
+                    pass
+                draft_timer["id"] = None
+
         name_entry.bind("<KeyRelease>", schedule_save, add="+")
         barcode_entry.bind("<KeyRelease>", schedule_save, add="+")
         price_entry.bind("<KeyRelease>", schedule_save, add="+")
@@ -434,17 +446,11 @@ class InventoryView(ttk.Frame):
         type_var.trace_add("write", schedule_save)
         unit_var.trace_add("write", schedule_save)
 
-        # Guardar el estado inicial si viene de borrador
         if from_draft:
             schedule_save()
 
         def cerrar_sin_guardar():
-            """Cierra el popup manteniendo el borrador."""
-            if draft_timer["id"]:
-                try:
-                    popup.after_cancel(draft_timer["id"])
-                except Exception:
-                    pass
+            cancel_pending()
             save_draft_now()
             popup.destroy()
             self.scan_entry.focus_set()
@@ -465,6 +471,8 @@ class InventoryView(ttk.Frame):
             except ValueError:
                 MD.show_error("Precio/Stock inválidos", "Error", parent=popup)
                 return
+            # ✅ Cancelar cualquier timer pendiente ANTES de guardar
+            cancel_pending()
             try:
                 if product_id:
                     self.product_use_case.update_product(product_id, n, b, p, s,
