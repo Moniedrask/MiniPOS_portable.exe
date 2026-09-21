@@ -16,7 +16,8 @@ class SaleCase:
         cur.execute(
             "INSERT INTO sales (date, total, payment_method, notes, customer_name, is_credit, is_paid) "
             "VALUES (?,?,?,?,?,?,?)",
-            (now, total, payment_method, notes, customer_name, 1 if is_credit else 0, is_paid))
+            (now, total, payment_method, notes, customer_name,
+             1 if is_credit else 0, is_paid))
         sale_id = cur.lastrowid
         for it in items:
             sub = it["quantity"] * it["unit_price"]
@@ -32,7 +33,8 @@ class SaleCase:
         return sale_id, total
 
     def _rows_to_sales(self, rows):
-        conn = self.db.get_connection(); cur = conn.cursor()
+        conn = self.db.get_connection()
+        cur = conn.cursor()
         sales = []
         for s in rows:
             cur.execute("SELECT * FROM sale_items WHERE sale_id = ?", (s["sale_id"],))
@@ -41,7 +43,6 @@ class SaleCase:
                      for r in cur.fetchall()]
             sale = Sale(s["sale_id"], s["date"], s["total"],
                         s["payment_method"], s["notes"], items)
-            # Atributos extra
             sale.customer_name = s["customer_name"] if "customer_name" in s.keys() else ""
             sale.is_credit = s["is_credit"] if "is_credit" in s.keys() else 0
             sale.is_paid = s["is_paid"] if "is_paid" in s.keys() else 1
@@ -78,7 +79,8 @@ class SaleCase:
 
     def delete_sale(self, sale_id):
         """Elimina una venta y restaura el stock de los productos."""
-        conn = self.db.get_connection(); cur = conn.cursor()
+        conn = self.db.get_connection()
+        cur = conn.cursor()
         cur.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,))
         items = cur.fetchall()
         for it in items:
@@ -90,7 +92,6 @@ class SaleCase:
         conn.commit()
 
     def get_summary(self):
-        """Resumen general de ventas."""
         cur = self.db.get_connection().cursor()
         hoy = datetime.now().strftime("%Y-%m-%d")
         mes = datetime.now().strftime("%Y-%m")
