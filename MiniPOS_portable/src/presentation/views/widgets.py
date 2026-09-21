@@ -126,7 +126,6 @@ def get_menu_font():
 # SCROLLBARS ROJO OSCURO
 # =========================================================
 def apply_dark_red_scrollbar_style():
-    """Aplica el estilo rojo oscuro a las scrollbars ttk."""
     try:
         style = ttk.Style()
         style.configure("DarkRed.Vertical.TScrollbar",
@@ -173,7 +172,7 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
 
 
 # =========================================================
-# DIÁLOGOS PERSONALIZADOS
+# DIÁLOGOS PERSONALIZADOS (con bloqueo anti-doble ejecución)
 # =========================================================
 def _custom_dialog(parent, title, message, buttons, kind="info",
                    is_dark=True, default_button=0):
@@ -202,15 +201,27 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
              bg=bg, fg=fg, wraplength=460, justify="center").pack(padx=25, pady=10)
 
     result = {"idx": None}
+    # ✅ Flag para evitar doble ejecución
+    state = {"closing": False}
+
     bf = tk.Frame(pop, bg=bg)
     bf.pack(pady=(10, 20))
 
     btn_widgets = []
 
+    def close_with(i):
+        if state["closing"]:
+            return
+        state["closing"] = True
+        result["idx"] = i
+        try:
+            pop.destroy()
+        except Exception:
+            pass
+
     def make_cb(i):
         def cb():
-            result["idx"] = i
-            pop.destroy()
+            close_with(i)
         return cb
 
     for i, b in enumerate(buttons):
@@ -230,17 +241,25 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
 
+    # ✅ Bindings con "break" y verificación de estado
     def on_enter(e):
+        if state["closing"]:
+            return "break"
         try:
             btn_widgets[default_button].invoke()
         except Exception:
             pass
+        return "break"
 
     def on_escape(e):
+        if state["closing"]:
+            return "break"
+        # Escape cierra sin resultado definido (equivale a "No")
         try:
             pop.destroy()
         except Exception:
             pass
+        return "break"
 
     pop.bind("<Return>", on_enter)
     pop.bind("<KP_Enter>", on_enter)
@@ -256,7 +275,7 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
 
     def set_focus():
         try:
-            if btn_widgets and pop.winfo_exists():
+            if not state["closing"] and btn_widgets and pop.winfo_exists():
                 btn_widgets[default_button].focus_set()
         except Exception:
             pass
@@ -497,7 +516,7 @@ class ListboxTooltip(HoverTooltip):
 
 
 # =========================================================
-# AUTOCOMPLETADO ENTRY (con scrollbar rojo oscuro)
+# AUTOCOMPLETADO ENTRY
 # =========================================================
 class AutoCompleteEntry(ttk.Entry):
     def __init__(self, parent, values_getter, on_select, width=40, font=None, **kwargs):
@@ -552,7 +571,6 @@ class AutoCompleteEntry(ttk.Entry):
             container = tk.Frame(self.popup, bg=style.colors.bg)
             container.pack(fill='both', expand=True)
 
-            # ✅ Scrollbar ROJO OSCURO
             sb = tk.Scrollbar(container, orient="vertical",
                               bg="#5c1a1a",
                               troughcolor="#1a0505",
