@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, font as tkfont
 import ttkbootstrap as ttk
-from ttkbootstrap import Style, Toplevel
+from ttkbootstrap import Style
 import os
 import shutil
 import sys
@@ -65,7 +65,7 @@ class MainView(tk.Tk):
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
-    # =========== ESTILO VERDE OSCURO GLOBAL ===========
+    # =========== ESTILO VERDE OSCURO ===========
     def _setup_dark_green_style(self):
         try:
             self.style.configure(
@@ -87,7 +87,6 @@ class MainView(tk.Tk):
         if not pwd:
             return True
         self.withdraw()
-
         pop = tk.Toplevel(self)
         pop.title("MiniPOS - Iniciar sesión")
         pop.geometry("380x230")
@@ -95,7 +94,6 @@ class MainView(tk.Tk):
         pop.grab_set()
         pop.protocol("WM_DELETE_WINDOW", lambda: self._cancel_login(pop))
         pop.withdraw()
-
         ttk.Label(pop, text="🔒 Contraseña requerida",
                   font=("Arial", 14, "bold")).pack(pady=15)
         v = tk.StringVar()
@@ -139,7 +137,6 @@ class MainView(tk.Tk):
         pop.transient(self)
         pop.grab_set()
         pop.withdraw()
-
         ttk.Label(pop, text="🔐 Cambiar contraseña",
                   font=("Arial", 14, "bold")).pack(pady=15)
         ttk.Label(pop, text="Contraseña actual:").pack()
@@ -252,7 +249,6 @@ class MainView(tk.Tk):
 
     # =========== UI ===========
     def create_widgets(self):
-        # ✅ Menú superior oscuro personalizado
         self.menubar = DarkMenuBar(self, lambda: self.current_theme == 'darkly')
         self.menubar.pack(fill="x", side="top")
 
@@ -294,14 +290,13 @@ class MainView(tk.Tk):
             menu.add_command(label="📥 Importar Base de Datos", command=self.import_db)
 
         def build_ventas(menu):
-            menu.add_command(label="📊 Resumen de Ventas", command=self.show_sales_summary)
-            menu.add_command(label="💳 Fiados (cuentas por cobrar)",
+            menu.add_command(label="📊 Resumen de Ventas (agrupado)", command=self.show_sales_summary)
+            menu.add_command(label="💳 Fiados (agrupado por cliente)",
                              command=self.show_credit_sales)
 
         self.menubar.add_menu("Opciones", build_opciones)
         self.menubar.add_menu("Ventas", build_ventas)
 
-        # --- Pestañas ---
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(10, 0))
         self.btn_pagos = ttk.Button(tabs, text="🛒  PAGOS", style="DarkGreen.TButton",
@@ -350,19 +345,21 @@ class MainView(tk.Tk):
         apply_titlebar_theme(self, self.current_theme == 'darkly')
         self._apply_font_size()
 
-    # =========== RESUMEN DE VENTAS ===========
+    # =========== RESUMEN DE VENTAS (AGRUPADO) ===========
     def show_sales_summary(self):
         win = tk.Toplevel(self)
         win.title("Resumen de Ventas")
-        win.geometry("1000x650")
+        win.geometry("1150x720")
         win.transient(self)
         win.grab_set()
         win.withdraw()
-        ttk.Label(win, text="📊 RESUMEN DE VENTAS",
+
+        ttk.Label(win, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
                   font=("Arial", 18, "bold")).pack(pady=15)
+
         s = self.sale_use_case.get_summary()
         cards = ttk.Frame(win)
-        cards.pack(pady=10)
+        cards.pack(pady=5)
         for i, (titulo, (cnt, tot), style_) in enumerate([
                 ("HOY", s["hoy"], "info"),
                 ("MES", s["mes"], "primary"),
@@ -378,51 +375,128 @@ class MainView(tk.Tk):
                       font=("Arial", 16, "bold"),
                       bootstyle=f"inverse-{style_}").pack()
 
-        ttk.Label(win, text="Últimas ventas (Selecciona una y presiona Ctrl+F12 para eliminarla):",
-                  font=("Arial", 10, "italic")).pack(pady=10)
+        # Filtro rápido
+        filt_frame = ttk.Frame(win)
+        filt_frame.pack(pady=5)
+        filtro_var = tk.StringVar(value="all")
+        for val, txt in [("all", "Todas"), ("today", "Hoy"), ("month", "Este mes")]:
+            ttk.Radiobutton(filt_frame, text=txt, variable=filtro_var, value=val,
+                            command=lambda: recargar()).pack(side="left", padx=8)
+
+        ttk.Label(win, text="Ventas agrupadas por cliente "
+                            "(Selecciona una fila y Ctrl+F12 para eliminar la venta más reciente)",
+                  font=("Arial", 10, "italic")).pack(pady=5)
 
         tree = ttk.Treeview(win,
-                            columns=("ID", "Fecha", "Cliente", "Método", "Total", "Estado"),
-                            show='headings', height=15)
-        for c, t, w in [("ID", "#", 50), ("Fecha", "Fecha", 150),
-                        ("Cliente", "Cliente", 200), ("Método", "Método", 120),
-                        ("Total", "Total", 120), ("Estado", "Estado", 100)]:
+                            columns=("Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
+                            show='headings', height=14)
+        for c, t, w in [("Cliente", "Cliente", 260), ("Ventas", "# Ventas", 90),
+                        ("Total", "Total", 140), ("Pagado", "Pagado", 140),
+                        ("Pendiente", "Pendiente", 140)]:
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="center")
         tree.pack(fill="both", expand=True, padx=15, pady=10)
 
-        sales = self.sale_use_case.get_all_sales(limit=300)
-        for s_ in sales:
-            estado = "✅ Pagado"
-            if s_.is_credit:
-                estado = "💳 Fiado" if not s_.is_paid else "✅ Fiado pagado"
-            tree.insert("", "end", values=(
-                s_.sale_id, s_.date, s_.customer_name or "-",
-                s_.payment_method,
-                f"${s_.total:,.0f}".replace(",", "."), estado))
+        grupos_map = {}
+
+        def recargar():
+            for r in tree.get_children():
+                tree.delete(r)
+            grupos_map.clear()
+            filtro = filtro_var.get()
+            if filtro == "today":
+                sales = self.sale_use_case.get_sales_by_day(datetime.now().strftime("%Y-%m-%d"))
+            elif filtro == "month":
+                sales = self.sale_use_case.get_sales_by_month(datetime.now().strftime("%Y-%m"))
+            else:
+                sales = self.sale_use_case.get_all_sales(limit=1000)
+            grupos = self.sale_use_case.group_sales_by_customer(sales)
+            for g in grupos:
+                iid = tree.insert("", "end", values=(
+                    g["customer_name"],
+                    g["count"],
+                    f"${g['total']:,.0f}".replace(",", "."),
+                    f"${g['paid']:,.0f}".replace(",", "."),
+                    f"${g['pending']:,.0f}".replace(",", ".")))
+                grupos_map[iid] = g
+
+        recargar()
+
+        def ver_detalle():
+            sel = tree.selection()
+            if not sel:
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                return
+            g = grupos_map.get(sel[0])
+            if not g:
+                return
+            det = tk.Toplevel(win)
+            det.title(f"Detalle - {g['customer_name']}")
+            det.geometry("900x520")
+            det.transient(win)
+            det.grab_set()
+            det.withdraw()
+            ttk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
+                      font=("Arial", 14, "bold")).pack(pady=10)
+            ttk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
+                                f"Pagado: ${g['paid']:,.0f}   |   "
+                                f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                      font=("Arial", 11)).pack(pady=5)
+            t2 = ttk.Treeview(det,
+                              columns=("ID", "Fecha", "Método", "Total", "Estado"),
+                              show='headings', height=12)
+            for c, t_, w in [("ID", "#", 60), ("Fecha", "Fecha", 160),
+                             ("Método", "Método", 120), ("Total", "Total", 120),
+                             ("Estado", "Estado", 130)]:
+                t2.heading(c, text=t_)
+                t2.column(c, width=w, anchor="center")
+            t2.pack(fill="both", expand=True, padx=15, pady=10)
+            for sale in sorted(g["sales"], key=lambda x: x.date):
+                estado = "✅ Pagado"
+                if sale.is_credit:
+                    estado = "💳 Fiado" if not sale.is_paid else "✅ Fiado pagado"
+                t2.insert("", "end", values=(
+                    sale.sale_id, sale.date, sale.payment_method,
+                    f"${sale.total:,.0f}".replace(",", "."), estado))
+            ttk.Button(det, text="Cerrar", command=det.destroy).pack(pady=10)
+            show_popup_smooth(det, self.current_theme == 'darkly')
 
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona una venta primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
-            vals = tree.item(sel[0], 'values')
-            sid = int(vals[0])
-            if MD.yesno(f"⚠️ ¿Eliminar la venta #{sid}?\n\nEsto restaurará el stock.",
-                        "Confirmar eliminación", parent=win) != "Yes":
+            g = grupos_map.get(sel[0])
+            if not g or not g["sales"]:
+                return
+            # Eliminar la venta más reciente del cliente
+            venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
+            sid = venta_reciente.sale_id
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar la venta más reciente de '{g['customer_name']}'?\n\n"
+                    f"Venta #{sid} - ${venta_reciente.total:,.0f}\n"
+                    f"Esto restaurará el stock.".replace(",", "."),
+                    "Confirmar eliminación", parent=win) != "Yes":
                 return
             pw = self._ask_password_1234(win)
             if not pw:
                 return
             self.sale_use_case.delete_sale(sid)
             MD.show_info(f"Venta #{sid} eliminada y stock restaurado.", "Listo", parent=win)
-            win.destroy()
-            self.show_sales_summary()
+            recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
 
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
+
+        bf = ttk.Frame(win)
+        bf.pack(pady=10)
+        ttk.Button(bf, text="📋 Ver detalle", command=ver_detalle,
+                   bootstyle="info").pack(side="left", padx=5)
+        ttk.Button(bf, text="🔄 Refrescar", command=recargar,
+                   bootstyle="secondary").pack(side="left", padx=5)
+
         show_popup_smooth(win, self.current_theme == 'darkly')
 
     def _ask_password_1234(self, parent):
@@ -456,16 +530,16 @@ class MainView(tk.Tk):
         parent.wait_window(pop)
         return ok["v"]
 
-    # =========== FIADOS ===========
+    # =========== FIADOS (AGRUPADO POR CLIENTE) ===========
     def show_credit_sales(self):
         win = tk.Toplevel(self)
         win.title("Fiados - Cuentas por cobrar")
-        win.geometry("1150x720")
+        win.geometry("1100x700")
         win.transient(self)
         win.grab_set()
         win.withdraw()
 
-        ttk.Label(win, text="💳 CUENTAS POR COBRAR (FIADOS)",
+        ttk.Label(win, text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
                   font=("Arial", 18, "bold")).pack(pady=15)
 
         resumen_lbl = ttk.Label(win, text="", font=("Arial", 12, "bold"))
@@ -475,154 +549,135 @@ class MainView(tk.Tk):
         frame.pack(fill="both", expand=True, padx=15, pady=10)
 
         tree = ttk.Treeview(frame,
-                            columns=("Cliente", "Fecha", "Productos", "Total",
-                                     "Abonado", "Pendiente", "Estado"),
+                            columns=("Cliente", "Fiados", "Total", "Abonado", "Pendiente"),
                             show='headings', height=15)
-        for c, t, w in [("Cliente", "Cliente", 180), ("Fecha", "Fecha", 140),
-                        ("Productos", "Productos fiados", 280),
-                        ("Total", "Total", 90), ("Abonado", "Abonado", 90),
-                        ("Pendiente", "Pendiente", 100), ("Estado", "Estado", 100)]:
+        for c, t, w in [("Cliente", "Cliente", 260), ("Fiados", "# Fiados", 90),
+                        ("Total", "Total fiado", 150), ("Abonado", "Abonado", 150),
+                        ("Pendiente", "Pendiente", 150)]:
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="center")
         tree.pack(fill="both", expand=True)
 
-        sales_map = {}
+        grupos_map = {}
 
         def recargar():
             for r in tree.get_children():
                 tree.delete(r)
-            sales_map.clear()
+            grupos_map.clear()
             ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
-            ventas.sort(key=lambda s: (s.customer_name or "zzz_sin_nombre").lower())
-            total_pend = 0.0
-            clientes = {}
-            for s_ in ventas:
-                cliente = s_.customer_name if s_.customer_name else "(sin nombre)"
-                pendiente = s_.pending()
-                total_pend += pendiente
-                if s_.customer_name:
-                    clientes[s_.customer_name] = clientes.get(s_.customer_name, 0) + pendiente
-                # Resumen de productos de esta venta
-                resumen_items = ", ".join(
-                    f"{it.quantity:g}x {it.product_name[:18]}"
-                    for it in s_.items[:3])
-                if len(s_.items) > 3:
-                    resumen_items += f" (+{len(s_.items) - 3} más)"
-                estado = "✅ Pagado" if s_.is_paid else "💳 Pendiente"
+            # Solo quedan los que tienen pendiente > 0
+            ventas = [v for v in ventas if v.pending() > 0.01]
+            grupos = self.sale_use_case.group_sales_by_customer(ventas)
+            total_global = 0.0
+            for g in grupos:
+                total_global += g["pending"]
                 iid = tree.insert("", "end", values=(
-                    cliente, s_.date, resumen_items,
-                    f"${s_.total:,.0f}".replace(",", "."),
-                    f"${s_.amount_paid:,.0f}".replace(",", "."),
-                    f"${pendiente:,.0f}".replace(",", "."),
-                    estado))
-                sales_map[iid] = s_.sale_id
-
-            # Resumen agrupado por cliente
-            if clientes:
-                texto_clientes = "  |  ".join(
-                    f"{k}: ${v:,.0f}".replace(",", ".")
-                    for k, v in list(clientes.items())[:5])
-                if len(clientes) > 5:
-                    texto_clientes += f"  (+{len(clientes) - 5} más)"
-                resumen_lbl.configure(
-                    text=f"📋 {len(ventas)} fiados   |   💰 Total: ${total_pend:,.0f}\n"
-                         f"👥 Por cliente: {texto_clientes}".replace(",", "."))
-            else:
-                resumen_lbl.configure(text="")
+                    g["customer_name"],
+                    g["count"],
+                    f"${g['total']:,.0f}".replace(",", "."),
+                    f"${g['paid']:,.0f}".replace(",", "."),
+                    f"${g['pending']:,.0f}".replace(",", ".")))
+                grupos_map[iid] = g
+            resumen_lbl.configure(
+                text=f"👥 {len(grupos)} clientes con deuda   |   "
+                     f"💰 Total por cobrar: ${total_global:,.0f}".replace(",", "."))
 
         recargar()
 
-        def ver_productos():
+        def ver_detalle():
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
-            sid = sales_map.get(sel[0])
-            venta = None
-            for v in self.sale_use_case.get_credit_sales(only_unpaid=False):
-                if v.sale_id == sid:
-                    venta = v
-                    break
-            if not venta:
+            g = grupos_map.get(sel[0])
+            if not g:
                 return
-            detail_win = tk.Toplevel(win)
-            detail_win.title(f"Productos fiados - Venta #{sid}")
-            detail_win.geometry("600x480")
-            detail_win.transient(win)
-            detail_win.grab_set()
-            detail_win.withdraw()
-            cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
-            ttk.Label(detail_win, text=f"💳 Fiado a: {cliente}",
+            det = tk.Toplevel(win)
+            det.title(f"Fiados de {g['customer_name']}")
+            det.geometry("900x520")
+            det.transient(win)
+            det.grab_set()
+            det.withdraw()
+            ttk.Label(det, text=f"👤 {g['customer_name']}",
                       font=("Arial", 14, "bold")).pack(pady=10)
-            ttk.Label(detail_win, text=f"Fecha: {venta.date}",
-                      font=("Arial", 11)).pack(pady=3)
-            t2 = ttk.Treeview(detail_win,
-                              columns=("Prod", "Qty", "Unit", "Sub"),
-                              show='headings', height=10)
-            for c, t_, w in [("Prod", "Producto", 220), ("Qty", "Cant.", 70),
-                             ("Unit", "P. Unit.", 100), ("Sub", "Subtotal", 110)]:
+            ttk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
+                                f"Abonado: ${g['paid']:,.0f}   |   "
+                                f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                      font=("Arial", 11)).pack(pady=5)
+            t2 = ttk.Treeview(det,
+                              columns=("ID", "Fecha", "Productos", "Total", "Abonado", "Pendiente"),
+                              show='headings', height=12)
+            for c, t_, w in [("ID", "#", 50), ("Fecha", "Fecha", 130),
+                             ("Productos", "Productos", 260), ("Total", "Total", 90),
+                             ("Abonado", "Abonado", 90), ("Pendiente", "Pendiente", 100)]:
                 t2.heading(c, text=t_)
                 t2.column(c, width=w, anchor="center")
             t2.pack(fill="both", expand=True, padx=15, pady=10)
-            for it in venta.items:
+            for sale in sorted(g["sales"], key=lambda x: x.date):
+                resumen_items = ", ".join(
+                    f"{it.quantity:g}x {it.product_name[:18]}"
+                    for it in sale.items[:3])
+                if len(sale.items) > 3:
+                    resumen_items += f" (+{len(sale.items) - 3} más)"
                 t2.insert("", "end", values=(
-                    it.product_name, f"{it.quantity:g}",
-                    f"${it.unit_price:,.0f}".replace(",", "."),
-                    f"${it.subtotal:,.0f}".replace(",", ".")))
-            total_f = ttk.Label(detail_win,
-                                text=f"Total: ${venta.total:,.0f}   |   "
-                                     f"Abonado: ${venta.amount_paid:,.0f}   |   "
-                                     f"Pendiente: ${venta.pending():,.0f}".replace(",", "."),
-                                font=("Arial", 12, "bold"))
-            total_f.pack(pady=10)
-            ttk.Button(detail_win, text="Cerrar",
-                       command=detail_win.destroy).pack(pady=10)
-            show_popup_smooth(detail_win, self.current_theme == 'darkly')
+                    sale.sale_id, sale.date, resumen_items,
+                    f"${sale.total:,.0f}".replace(",", "."),
+                    f"${sale.amount_paid:,.0f}".replace(",", "."),
+                    f"${sale.pending():,.0f}".replace(",", ".")))
+            ttk.Button(det, text="Cerrar", command=det.destroy).pack(pady=10)
+            show_popup_smooth(det, self.current_theme == 'darkly')
 
         def abonar():
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
-            sid = sales_map.get(sel[0])
-            if not sid:
+            g = grupos_map.get(sel[0])
+            if not g:
                 return
-            venta = None
-            for v in self.sale_use_case.get_credit_sales(only_unpaid=True):
-                if v.sale_id == sid:
-                    venta = v
-                    break
-            if not venta:
+            # Elegir la venta más antigua pendiente
+            ventas_pend = [v for v in g["sales"] if v.pending() > 0.01]
+            if not ventas_pend:
+                MD.show_info("Este cliente no tiene deudas pendientes.", "Listo", parent=win)
                 return
+            venta = sorted(ventas_pend, key=lambda x: x.sale_id)[0]
             pendiente = venta.pending()
-            if pendiente <= 0:
-                MD.show_info("Esta venta ya está pagada.", "Listo", parent=win)
-                return
-            self._abonar_dialog(win, sid, venta, pendiente, recargar)
+            self._abonar_dialog(win, venta.sale_id, venta, pendiente, recargar)
 
         def marcar_pagado():
             sel = tree.selection()
             if not sel:
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
-            sid = sales_map.get(sel[0])
-            if not sid:
+            g = grupos_map.get(sel[0])
+            if not g:
                 return
-            if MD.yesno(f"¿Marcar la venta #{sid} como PAGADA por completo?",
-                        "Confirmar", parent=win) == "Yes":
-                self.sale_use_case.mark_as_paid(sid)
-                recargar()
-                MD.show_info("Marcada como pagada.", "Listo", parent=win)
+            if MD.yesno(
+                    f"¿Marcar TODOS los fiados pendientes de '{g['customer_name']}' como PAGADOS?\n"
+                    f"Total a marcar: ${g['pending']:,.0f}".replace(",", "."),
+                    "Confirmar", parent=win) != "Yes":
+                return
+            for v in g["sales"]:
+                if v.pending() > 0.01:
+                    self.sale_use_case.mark_as_paid(v.sale_id)
+            recargar()
+            MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
 
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
-            sid = sales_map.get(sel[0])
-            if not sid:
+            g = grupos_map.get(sel[0])
+            if not g or not g["sales"]:
                 return
-            if MD.yesno(f"⚠️ ¿Eliminar el fiado #{sid}?\n\nEsto restaurará el stock.",
-                        "Confirmar eliminación", parent=win) != "Yes":
+            venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
+            sid = venta_reciente.sale_id
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar el fiado más reciente de '{g['customer_name']}'?\n\n"
+                    f"Venta #{sid} - ${venta_reciente.total:,.0f}\n"
+                    f"Esto restaurará el stock.".replace(",", "."),
+                    "Confirmar eliminación", parent=win) != "Yes":
                 return
             pw = self._ask_password_1234(win)
             if not pw:
@@ -638,15 +693,12 @@ class MainView(tk.Tk):
 
         bf = ttk.Frame(win)
         bf.pack(pady=10)
-        ttk.Button(bf, text="📋 Ver productos",
-                   command=ver_productos,
+        ttk.Button(bf, text="📋 Ver detalle", command=ver_detalle,
                    bootstyle="info").pack(side="left", padx=5)
-        ttk.Button(bf, text="💵 Abonar",
-                   command=abonar,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="✅ Marcar como pagado",
-                   command=marcar_pagado,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="💵 Abonar (venta más antigua)",
+                   command=abonar, style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="✅ Marcar todo pagado",
+                   command=marcar_pagado, style="DarkGreen.TButton").pack(side="left", padx=5)
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
