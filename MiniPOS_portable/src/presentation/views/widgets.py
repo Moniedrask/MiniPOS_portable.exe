@@ -3,7 +3,7 @@ import ttkbootstrap as ttk
 
 
 # =========================================================
-# CONTADOR GLOBAL DE POPUPS (clave para no romper el foco)
+# CONTADOR GLOBAL DE POPUPS
 # =========================================================
 _popup_depth = 0
 
@@ -91,7 +91,6 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    # Reaplicar tema en la barra de título (a veces Windows tarda)
     popup.after(80, lambda: force_dark_titlebar(popup))
     popup.after(160, lambda: force_dark_titlebar(popup))
 
@@ -158,7 +157,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
 
-    # ✅ grab_set ANTES de mostrar
     try:
         pop.grab_set()
     except Exception:
@@ -171,7 +169,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     except Exception:
         pass
 
-    # ✅ Restaurar grab al padre SOLO si existe y no hay otro popup abierto
     try:
         if not popup_is_open() and parent and parent.winfo_exists():
             parent_tl = parent.winfo_toplevel()
