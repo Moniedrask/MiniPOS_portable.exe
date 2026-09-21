@@ -699,3 +699,9 @@ class MainView(tk.Tk):
         self.style.theme_use(self.current_theme)
         self.configure(bg=self.style.colors.bg)
         self._setup_dark_green_style()
+        apply_titlebar_theme(self, self.current_theme == 'darkly')
+        self._apply_font_size()
+
+    # ... [resto de show_sales_summary, show_credit_sales, _abonar_dialog, 
+    #      _ask_password_1234, auto-inicio, reportes, exportar/importar
+    #      IGUAL QUE EN EL ÚLTIMO main_view.py que te pasé]
