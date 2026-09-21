@@ -5,7 +5,7 @@ from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
     popup_is_open, make_scrolled_treeview, make_scrollable,
-    find_similar_products, make_business_header,
+    find_similar_products,
 )
 
 
@@ -28,13 +28,6 @@ class InventoryView(ttk.Frame):
         self.after(300, lambda: self.scan_entry.focus_set())
         self.after(800, self._check_product_draft)
         self._keep_scanner_focused()
-
-    def refresh_business_header(self):
-        try:
-            if hasattr(self, "business_header") and self.business_header:
-                self.business_header["refresh"]()
-        except Exception:
-            pass
 
     def _is_dark(self):
         return True
@@ -109,16 +102,8 @@ class InventoryView(ttk.Frame):
             group_name=data.get("group_name", ""))
 
     def create_widgets(self):
-        try:
-            bg = ttk.Style().colors.bg
-        except Exception:
-            bg = "#1a1a1a"
-        self.business_header = make_business_header(
-            self, self.db_manager, self.on_business_click, bg=bg)
-        self.business_header["frame"].pack(padx=10, pady=(8, 0), anchor="w")
-
         scan_frame = ttk.Frame(self, bootstyle="dark")
-        scan_frame.pack(padx=10, pady=(6, 3), fill="x")
+        scan_frame.pack(padx=10, pady=(10, 3), fill="x")
         ttk.Label(scan_frame, text="📷 Escanear código:",
                   font=("Arial", 11, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
