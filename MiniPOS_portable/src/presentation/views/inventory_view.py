@@ -99,7 +99,6 @@ class InventoryView(ttk.Frame):
             group_name=data.get("group_name", ""))
 
     def create_widgets(self):
-        # ---- Barra de escaneo ----
         scan_frame = ttk.Frame(self, bootstyle="dark")
         scan_frame.pack(padx=10, pady=(10, 3), fill="x")
         ttk.Label(scan_frame, text="📷 Escanear código:",
@@ -113,7 +112,6 @@ class InventoryView(ttk.Frame):
                    command=lambda: self.lookup_barcode(None),
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
-        # ---- Búsqueda ----
         search_frame = ttk.Frame(self, bootstyle="dark")
         search_frame.pack(padx=10, pady=3, fill="x")
         ttk.Label(search_frame, text="🔍 Búsqueda (autocompleta):",
@@ -133,14 +131,12 @@ class InventoryView(ttk.Frame):
         ttk.Button(search_frame, text="Limpiar", command=self._clear_search,
                    bootstyle="secondary").pack(side="left", padx=5)
 
-        # ---- Botones inferiores (primero en empacar, side="bottom") ----
         btn_frame = ttk.Frame(self, bootstyle="dark")
         btn_frame.pack(side="bottom", pady=6, fill="x")
         ttk.Button(btn_frame, text="➕ Agregar Producto (F2)",
                    command=self.add_product_popup,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
-        # ---- Tabla ----
         frame = ttk.Frame(self, bootstyle="dark")
         frame.pack(padx=10, pady=3, fill="both", expand=True)
 
@@ -277,7 +273,6 @@ class InventoryView(ttk.Frame):
             menu.grab_release()
 
     def group_from_item(self, item):
-        """Abre el popup de agrupación usando el nombre de este producto."""
         try:
             vals = self.tree.item(item, 'values')
             name = vals[1]
@@ -316,11 +311,9 @@ class InventoryView(ttk.Frame):
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # Título
         tk.Label(popup, text="📋 DETALLE DEL PRODUCTO",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
 
-        # Contenido scrolleable
         container = tk.Frame(popup, bg=bg)
         container.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -393,56 +386,48 @@ class InventoryView(ttk.Frame):
                                0, 0, "unidad", "unidad", auto_select)
 
     # =========================================================
-    # FORMULARIO DE PRODUCTO (con scroll + agrupación)
+    # FORMULARIO DE PRODUCTO
     # =========================================================
     def open_product_form(self, title, product_id, name, barcode, price, stock,
                           unit_type, unit, auto_select=False, from_draft=False,
                           group_name=""):
         popup = Toplevel(self)
         popup.title(title)
-        # Tamaño compacto pero con espacio suficiente
         popup.geometry("500x720")
         popup.transient(self.winfo_toplevel())
         popup.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # Referencias compartidas entre build_content y build_bottom
         refs = {}
         state = {
             "draft_timer": None,
-            "pending_group_ids": [],   # IDs a agrupar al guardar (si es nuevo)
+            "pending_group_ids": [],
         }
 
-        # ----- CONTENIDO -----
         def build_content(parent):
-            # Código de Barras
             ttk.Label(parent, text="Código de Barras / QR:").pack(pady=(10, 3))
             barcode_entry = ttk.Entry(parent, width=42)
             barcode_entry.pack(pady=3)
             if barcode:
                 barcode_entry.insert(0, barcode)
 
-            # Nombre
             ttk.Label(parent, text="Nombre del Producto:").pack(pady=(10, 3))
             name_entry = ttk.Entry(parent, width=42)
             name_entry.pack(pady=3)
             if name:
                 name_entry.insert(0, name)
 
-            # Aviso de similares (debajo del nombre)
             similar_lbl = tk.Label(parent, text="", font=("Arial", 9, "italic"),
                                    bg=bg, fg="#a8e6a8", cursor="hand2")
             similar_lbl.pack(pady=2)
 
-            # Grupo
             ttk.Label(parent, text="Grupo (opcional, para agrupar similares):").pack(pady=(10, 3))
             group_entry = ttk.Entry(parent, width=42)
             group_entry.pack(pady=3)
             if group_name:
                 group_entry.insert(0, group_name)
 
-            # Tipo de venta
             ttk.Label(parent, text="Tipo de venta:",
                       font=("Arial", 10, "bold")).pack(pady=(10, 3))
             type_var = tk.StringVar(value=unit_type)
@@ -455,28 +440,24 @@ class InventoryView(ttk.Frame):
                                 command=lambda: self._refresh_unit_options(unit_var, unit_combo, type_var)
                                 ).pack(side="left", padx=5)
 
-            # Unidad
             ttk.Label(parent, text="Unidad de medida:").pack(pady=(10, 3))
             unit_var = tk.StringVar(value=unit)
             unit_combo = ttk.Combobox(parent, textvariable=unit_var, state="readonly", width=15)
             unit_combo.pack(pady=3)
             self._refresh_unit_options(unit_var, unit_combo, type_var)
 
-            # Precio
             ttk.Label(parent, text="Precio por unidad:").pack(pady=(10, 3))
             price_entry = ttk.Entry(parent, width=42)
             price_entry.pack(pady=3)
             if price:
                 price_entry.insert(0, str(int(price)))
 
-            # Stock
             ttk.Label(parent, text="Stock (acepta decimales):").pack(pady=(10, 3))
             stock_entry = ttk.Entry(parent, width=42)
             stock_entry.pack(pady=3)
             if stock:
                 stock_entry.insert(0, f"{stock:g}")
 
-            # Guardar referencias
             refs["barcode_entry"] = barcode_entry
             refs["name_entry"] = name_entry
             refs["similar_lbl"] = similar_lbl
@@ -487,13 +468,11 @@ class InventoryView(ttk.Frame):
             refs["price_entry"] = price_entry
             refs["stock_entry"] = stock_entry
 
-            # Foco inicial
             if barcode:
                 name_entry.focus_set()
             else:
                 barcode_entry.focus_set()
 
-        # ----- BOTONES -----
         def build_bottom(parent):
             bf = tk.Frame(parent, bg=bg)
             bf.pack(pady=10, fill="x")
@@ -511,14 +490,12 @@ class InventoryView(ttk.Frame):
                     on_apply=lambda ids, group: _apply_group_from_form(ids, group))
 
             def _apply_group_from_form(ids, group):
-                # Auto-rellenar el campo grupo
                 try:
                     if group:
                         refs["group_entry"].delete(0, tk.END)
                         refs["group_entry"].insert(0, group)
                 except Exception:
                     pass
-                # Guardar los IDs pendientes
                 state["pending_group_ids"] = list(ids) if ids else []
                 try:
                     MD.show_info(
@@ -537,7 +514,6 @@ class InventoryView(ttk.Frame):
             ttk.Button(bf, text="Cancelar",
                        command=lambda: _cancel()).pack(side="right", padx=4)
 
-        # ----- AUTOSAVE DEL BORRADOR -----
         def collect_draft():
             return {
                 "mode": "edit" if product_id else "create",
@@ -577,7 +553,6 @@ class InventoryView(ttk.Frame):
                     pass
                 state["draft_timer"] = None
 
-        # ----- DETECCIÓN DE SIMILARES -----
         def update_similar_label():
             try:
                 n = refs["name_entry"].get().strip()
@@ -586,22 +561,18 @@ class InventoryView(ttk.Frame):
                     return
                 products = self.product_use_case.list_products()
                 similares = find_similar_products(n, products, threshold=0.55)
-                # Excluir el propio producto si estamos editando
                 if product_id:
                     similares = [(p, s) for p, s in similares if p.product_id != product_id]
                 if similares:
                     refs["similar_lbl"].configure(
                         text=f"🔗 Se encontraron {len(similares)} similares. Clic aquí para agrupar.")
-                    refs["similar_lbl"]._similar_list = similares
                 else:
                     refs["similar_lbl"].configure(text="")
             except Exception:
                 pass
 
-        # El label de similares abre el popup al hacer clic
         def on_similar_click(event):
             try:
-                similar_lbl = refs["similar_lbl"]
                 n = refs["name_entry"].get().strip()
                 if not n:
                     return
@@ -613,7 +584,6 @@ class InventoryView(ttk.Frame):
             except Exception:
                 pass
 
-        # ----- GUARDAR -----
         def save():
             n = refs["name_entry"].get().strip()
             b = refs["barcode_entry"].get().strip()
@@ -634,20 +604,16 @@ class InventoryView(ttk.Frame):
 
             try:
                 if product_id:
-                    # Editar
                     self.product_use_case.update_product(
                         product_id, n, b, p, s,
                         refs["type_var"].get(), refs["unit_var"].get(), g)
-                    # Aplicar grupo a los pendientes
                     if state["pending_group_ids"]:
                         self.product_use_case.set_group_name(
                             state["pending_group_ids"], g)
                 else:
-                    # Crear nuevo
                     new_pid = self.product_use_case.add_product(
                         n, b, p, s,
                         refs["type_var"].get(), refs["unit_var"].get(), g)
-                    # Aplicar grupo a los pendientes (incluyendo el nuevo)
                     if state["pending_group_ids"] or g:
                         ids = list(state["pending_group_ids"])
                         if g and new_pid not in ids:
@@ -678,12 +644,10 @@ class InventoryView(ttk.Frame):
             popup.destroy()
             self.scan_entry.focus_set()
 
-        # ----- CONSTRUIR TODO -----
         container = tk.Frame(popup, bg=bg)
         container.pack(fill="both", expand=True)
         make_scrollable(container, build_content, build_bottom, bg=bg)
 
-        # Bindings después de construir
         try:
             refs["name_entry"].bind("<KeyRelease>", schedule_save, add="+")
             refs["name_entry"].bind("<KeyRelease>", lambda e: update_similar_label(), add="+")
@@ -694,7 +658,6 @@ class InventoryView(ttk.Frame):
             refs["type_var"].trace_add("write", schedule_save)
             refs["unit_var"].trace_add("write", schedule_save)
 
-            # Clic en el label de similares
             refs["similar_lbl"].bind("<Button-1>", on_similar_click)
 
             popup.protocol("WM_DELETE_WINDOW", _cancel)
@@ -713,15 +676,10 @@ class InventoryView(ttk.Frame):
             pass
 
     # =========================================================
-    # POPUP DE SIMILARES (con checkboxes)
+    # POPUP DE SIMILARES
     # =========================================================
     def _open_similar_dialog(self, base_name, current_product_id,
                              parent_toplevel, on_apply):
-        """
-        Abre un popup con los productos similares a `base_name`.
-        El usuario marca los que quiere agrupar y presiona "Agrupar".
-        Llama a on_apply(ids_seleccionados, group_name).
-        """
         try:
             products = self.product_use_case.list_products()
             similares = find_similar_products(base_name, products, threshold=0.45)
@@ -744,14 +702,12 @@ class InventoryView(ttk.Frame):
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # Título
         tk.Label(dialog, text="🔗 PRODUCTOS SIMILARES",
                  font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=(12, 4))
         tk.Label(dialog,
                  text=f"Producto base: {base_name}",
                  font=("Arial", 10, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
 
-        # Sugerencia de nombre de grupo
         sugerencia = self._suggest_group_name(similares, base_name)
         tk.Label(dialog, text="Nombre del grupo:",
                  font=("Arial", 10, "bold"), bg=bg, fg=fg).pack(pady=(8, 2))
@@ -763,7 +719,6 @@ class InventoryView(ttk.Frame):
         tk.Label(dialog, text="Marca los productos que quieras agrupar:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(8, 2))
 
-        # Treeview con los similares
         frame = ttk.Frame(dialog, bootstyle="dark")
         frame.pack(fill="both", expand=True, padx=12, pady=4)
 
@@ -779,7 +734,6 @@ class InventoryView(ttk.Frame):
             bootstyle="dark")
         tree_frame.pack(fill="both", expand=True)
 
-        # Cargar similares
         marcados = set()
         item_to_pid = {}
 
@@ -842,7 +796,6 @@ class InventoryView(ttk.Frame):
 
         tree.bind("<Button-1>", on_click, add="+")
 
-        # Rueda del ratón en el diálogo
         def _on_mousewheel(event):
             try:
                 tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -850,7 +803,6 @@ class InventoryView(ttk.Frame):
                 pass
         tree.bind("<MouseWheel>", _on_mousewheel)
 
-        # Botones
         def aplicar():
             if not marcados:
                 MD.show_warning("Marca al menos un producto.",
@@ -890,12 +842,10 @@ class InventoryView(ttk.Frame):
         dialog.after(100, lambda: group_entry.focus_set() if dialog.winfo_exists() else None)
 
     def _suggest_group_name(self, similares, base_name):
-        """Sugiere un nombre de grupo basado en los similares."""
         try:
             names = [p.name for p, _ in similares] + [base_name]
             if not names:
                 return base_name
-            # Tomar el nombre más corto
             candidatos = sorted(names, key=lambda x: len(x))
             return candidatos[0]
         except Exception:
