@@ -359,7 +359,7 @@ class PaymentView(ttk.Frame):
                 pass
 
     def _pay_internal(self):
-        """Popup de cobro compacto, sin canvas, con abono sobre los botones."""
+        """Popup de cobro compacto, abono justo encima de los botones."""
         if not self.cart:
             MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
             return
@@ -367,20 +367,19 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        # ✅ Más ancho pero compacto verticalmente
         pop.geometry("620x680")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # ===== 1. Título =====
+        # ===== Título =====
         tk.Label(pop, text="💰 CONFIRMAR PAGO",
                  font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(10, 3))
 
-        # ===== 2. Total (verde) =====
+        # ===== Total (verde) =====
         total_frame = tk.Frame(pop, bg="#0a4d1f", padx=20, pady=8)
-        total_frame.pack(pady=(0, 8))
+        total_frame.pack(pady=(0, 6))
         tk.Label(total_frame, text="TOTAL A PAGAR",
                  font=("Arial", 9, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
@@ -388,20 +387,19 @@ class PaymentView(ttk.Frame):
                  font=("Arial", 24, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
 
-        # ===== 3. Cliente =====
+        # ===== Cliente =====
         tk.Label(pop, text="Nombre del cliente (opcional):",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(3, 2))
         nombre_var = tk.StringVar()
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
-        # ===== 4. Método de pago =====
+        # ===== Método =====
         tk.Label(pop, text="Método de pago:",
-                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(5, 2))
+                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
         metodo_var = tk.StringVar(value="Efectivo")
         mf = tk.Frame(pop, bg=bg)
         mf.pack(pady=2)
-        # 2 filas: 3 en la primera, 2 en la segunda
         for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
             r = i // 3
             c = i % 3
@@ -409,13 +407,33 @@ class PaymentView(ttk.Frame):
                             bootstyle="info").grid(row=r, column=c,
                                                     padx=6, pady=1, sticky="w")
 
-        # ===== 5. Aviso deuda =====
+        # ===== Aviso deuda =====
         deuda_lbl = tk.Label(pop, text="", font=("Arial", 10, "bold"),
-                             bg=bg, fg="#ffd166", wraplength=560, justify="center")
+                             bg=bg, fg="#ffd166", wraplength=580, justify="center")
         deuda_lbl.pack(pady=3, padx=10)
 
-        # ===== 6. ABONO (encima de los botones) =====
-        abono_frame = tk.Frame(pop, bg=bg)
+        # ===== Notas =====
+        tk.Label(pop, text="Notas (opcional):",
+                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
+        notas_var = tk.StringVar()
+        ttk.Entry(pop, textvariable=notas_var, width=40,
+                  font=("Arial", 11)).pack(pady=3, padx=20)
+
+        # ===== CONTENEDOR INFERIOR (de abajo hacia arriba) =====
+        # Orden visual: abono (arriba), saldo (medio), botones (abajo)
+        bottom_container = tk.Frame(pop, bg=bg)
+        bottom_container.pack(side="bottom", fill="x", pady=8)
+
+        # 1) Botones (los primeros en packear van al fondo)
+        bf = tk.Frame(bottom_container, bg=bg)
+        bf.pack(side="bottom", pady=4)
+
+        # 2) Saldo (se empaquetará antes de abono con side="bottom")
+        saldo_lbl = tk.Label(bottom_container, text="", font=("Arial", 11, "bold"),
+                             bg=bg, fg="#a8e6a8", wraplength=580, justify="center")
+
+        # 3) Abono (arriba de todo del contenedor)
+        abono_frame = tk.Frame(bottom_container, bg=bg)
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar(value="")
 
@@ -430,21 +448,7 @@ class PaymentView(ttk.Frame):
                               width=12, font=("Arial", 11), justify="center")
         ent_abono.pack(side="left", padx=5)
 
-        # ===== 7. Saldo en tiempo real =====
-        saldo_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
-                             bg=bg, fg="#a8e6a8", wraplength=560, justify="center")
-
-        # ===== 8. Notas =====
-        tk.Label(pop, text="Notas (opcional):",
-                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(5, 2))
-        notas_var = tk.StringVar()
-        ttk.Entry(pop, textvariable=notas_var, width=40,
-                  font=("Arial", 11)).pack(pady=3, padx=20)
-
-        # ===== 9. Botones (con abono justo encima) =====
-        bf = tk.Frame(pop, bg=bg)
-        bf.pack(side="bottom", pady=10)
-
+        # ===== Función confirmar (debe definirse antes de botones) =====
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -492,14 +496,17 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="Cancelar",
                    command=pop.destroy).pack(side="left", padx=8, ipady=8)
 
+        # ===== Actualización en tiempo real =====
         def refresh_ui(*args):
             nombre = nombre_var.get().strip()
             es_fiado = (metodo_var.get() == "Fiado")
 
+            # Limpiar widgets del contenedor inferior
+            abono_frame.pack_forget()
+            saldo_lbl.pack_forget()
+
             if not nombre:
                 deuda_lbl.configure(text="")
-                abono_frame.pack_forget()
-                saldo_lbl.pack_forget()
                 return
 
             try:
@@ -526,14 +533,14 @@ class PaymentView(ttk.Frame):
                     deuda_lbl.configure(
                         text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
 
-            if deuda > 0 or es_fiado:
-                abono_frame.pack(pady=4)
-            else:
-                abono_frame.pack_forget()
-                abono_var.set(False)
-                abono_monto_var.set("")
-                saldo_lbl.pack_forget()
+            if not (deuda > 0 or es_fiado):
                 return
+
+            # Mostrar abono y saldo
+            # Orden de empaquetado (bottom-up): saldo primero, abono después
+            # Resultado visual (top-down): abono, saldo, bf
+            saldo_lbl.pack(side="bottom", pady=2)
+            abono_frame.pack(side="bottom", pady=4)
 
             try:
                 monto = 0.0
@@ -563,9 +570,8 @@ class PaymentView(ttk.Frame):
                     else:
                         saldo_lbl.configure(
                             text=f"💵 Deuda anterior: ${deuda:,.0f}".replace(",", "."))
-                saldo_lbl.pack(pady=3)
             except Exception:
-                saldo_lbl.pack_forget()
+                saldo_lbl.configure(text="")
 
         nombre_var.trace_add("write", refresh_ui)
         metodo_var.trace_add("write", refresh_ui)
