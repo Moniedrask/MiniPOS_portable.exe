@@ -89,6 +89,7 @@ class PaymentView(ttk.Frame):
         tf.pack(side="left")
         ttk.Label(tf, text="TOTAL A PAGAR:", font=("Arial", 14, "bold"),
                   bootstyle="inverse-dark").pack(anchor="w")
+        # ✅ ttk.Label SÍ acepta padding
         self.total_label = ttk.Label(tf, text="$0", font=("Arial", 36, "bold"),
                                      background="#0a4d1f", foreground="#a8e6a8",
                                      anchor="center", padding=10)
@@ -291,7 +292,6 @@ class PaymentView(ttk.Frame):
 
     # ============ COBRAR ============
     def pay(self):
-        # ✅ Defensivo: cualquier error se muestra al usuario
         try:
             self._pay_internal()
         except Exception as e:
@@ -320,10 +320,11 @@ class PaymentView(ttk.Frame):
                  bg=bg, fg=fg).pack(pady=15)
         tk.Label(pop, text="TOTAL A PAGAR", font=("Arial", 14),
                  bg=bg, fg=fg).pack()
+        # ✅ tk.Label NO acepta padding → usar padx y pady
         tk.Label(pop, text=f"${total:,.0f}".replace(",", "."),
                  font=("Arial", 40, "bold"),
                  background="#0a4d1f", foreground="#a8e6a8",
-                 anchor="center", padding=15).pack(pady=10)
+                 anchor="center", padx=20, pady=15).pack(pady=10)
 
         tk.Label(pop, text="Nombre del cliente (opcional):",
                  font=("Arial", 11), bg=bg, fg=fg).pack(pady=(15, 3))
@@ -470,7 +471,6 @@ class PaymentView(ttk.Frame):
                    style="DarkGreen.TButton").pack(side="left", padx=10, ipady=10, ipadx=20)
         ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
 
-        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
         try:
             pop.grab_set()
