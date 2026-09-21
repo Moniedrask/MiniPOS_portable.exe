@@ -43,69 +43,40 @@ def apply_titlebar_theme(window, is_dark=True):
 
 
 def auto_resize_popup(win, margin=10):
-    """
-    ✅ NUEVO: Ajusta el popup al tamaño de la pantalla con margen de seguridad.
-    - 10px a los lados
-    - 40px arriba (barra de título de Windows)
-    - 40px abajo (barra de tareas de Windows)
-    """
     try:
         win.update_idletasks()
-
-        # Tamaño actual (según geometry)
-        geo = win.geometry()  # "WxH+X+Y"
+        geo = win.geometry()
         try:
             size = geo.split("+")[0]
             if "x" in size:
                 cw, ch = size.split("x")
-                cw = int(cw)
-                ch = int(ch)
+                cw = int(cw); ch = int(ch)
             else:
-                cw = win.winfo_width()
-                ch = win.winfo_height()
+                cw = win.winfo_width(); ch = win.winfo_height()
         except Exception:
-            cw = win.winfo_width()
-            ch = win.winfo_height()
-
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-
+            cw = win.winfo_width(); ch = win.winfo_height()
+        sw = win.winfo_screenwidth(); sh = win.winfo_screenheight()
         max_w = sw - margin * 2
-        max_h = sh - margin * 2 - 40  # extra por barra de título/tareas
-
-        w = min(cw, max_w)
-        h = min(ch, max_h)
-
-        # Si el tamaño actual ya cabe, no tocar nada
+        max_h = sh - margin * 2 - 40
+        w = min(cw, max_w); h = min(ch, max_h)
         if cw <= max_w and ch <= max_h:
             return
-
         x = (sw - w) // 2
         y = max(margin, (sh - h) // 2 - 20)
-
         win.geometry(f"{w}x{h}+{x}+{y}")
     except Exception:
         pass
 
 
 def center_window(win):
-    """Centra la ventana y la ajusta si excede la pantalla."""
     try:
         win.update_idletasks()
-        w = win.winfo_width()
-        h = win.winfo_height()
+        w = win.winfo_width(); h = win.winfo_height()
         if w <= 1 or h <= 1:
-            w = win.winfo_reqwidth()
-            h = win.winfo_reqheight()
-
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-
-        max_w = sw - 20
-        max_h = sh - 80
-        w = min(w, max_w)
-        h = min(h, max_h)
-
+            w = win.winfo_reqwidth(); h = win.winfo_reqheight()
+        sw = win.winfo_screenwidth(); sh = win.winfo_screenheight()
+        max_w = sw - 20; max_h = sh - 80
+        w = min(w, max_w); h = min(h, max_h)
         x = (sw - w) // 2
         y = max(0, (sh - h) // 2 - 20)
         win.geometry(f"{w}x{h}+{x}+{y}")
@@ -130,7 +101,6 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    # ✅ Ajustar antes de mostrar
     auto_resize_popup(popup)
 
     try:
@@ -142,7 +112,6 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    # ✅ Reajustar después de que el contenido real se dibuja
     popup.after(80, lambda: auto_resize_popup(popup) if popup.winfo_exists() else None)
     popup.after(250, lambda: auto_resize_popup(popup) if popup.winfo_exists() else None)
 
@@ -182,6 +151,96 @@ def get_menu_font():
         return (f.cget("family"), f.cget("size"))
     except Exception:
         return ("Arial", 11)
+
+
+# =========================================================
+# INFORMACIÓN DEL NEGOCIO
+# =========================================================
+def get_business_info(db_manager):
+    if db_manager is None:
+        return {"type": "", "name": "", "owner": "", "place": "",
+                "phone": "", "employees": "", "notes": ""}
+    try:
+        return {
+            "type": db_manager.get_setting("biz_type", "") or "",
+            "name": db_manager.get_setting("biz_name", "") or "",
+            "owner": db_manager.get_setting("biz_owner", "") or "",
+            "place": db_manager.get_setting("biz_place", "") or "",
+            "phone": db_manager.get_setting("biz_phone", "") or "",
+            "employees": db_manager.get_setting("biz_employees", "") or "",
+            "notes": db_manager.get_setting("biz_notes", "") or "",
+        }
+    except Exception:
+        return {"type": "", "name": "", "owner": "", "place": "",
+                "phone": "", "employees": "", "notes": ""}
+
+
+def save_business_info(db_manager, data):
+    if db_manager is None:
+        return
+    for k in ("type", "name", "owner", "place", "phone", "employees", "notes"):
+        try:
+            db_manager.set_setting(f"biz_{k}", str(data.get(k, "") or ""))
+        except Exception:
+            pass
+
+
+def make_business_header(parent, db_manager, on_click, bg=None):
+    """
+    Crea un header con formato: 'tipo, nombre' clickeable.
+    tipo va en gris, nombre en verde subrayado (como link).
+    Devuelve dict con widgets + función refresh().
+    """
+    if bg is None:
+        try:
+            bg = ttk.Style().colors.bg
+        except Exception:
+            bg = "#1a1a1a"
+
+    frame = tk.Frame(parent, bg=bg)
+
+    tipo_lbl = tk.Label(frame, text="", font=("Arial", 13), bg=bg, fg="#888888")
+    tipo_lbl.pack(side="left")
+
+    coma_lbl = tk.Label(frame, text="", font=("Arial", 13), bg=bg, fg="#888888")
+    coma_lbl.pack(side="left")
+
+    nombre_lbl = tk.Label(frame, text="", font=("Arial", 13, "underline"),
+                          bg=bg, fg="#7dd87d", cursor="hand2")
+    nombre_lbl.pack(side="left")
+
+    nombre_lbl.bind("<Button-1>", lambda e: on_click() if on_click else None)
+
+    def refresh():
+        info = get_business_info(db_manager)
+        tipo = (info.get("type") or "").strip()
+        nombre = (info.get("name") or "").strip()
+        if tipo and nombre:
+            tipo_lbl.configure(text=tipo)
+            coma_lbl.configure(text=", ")
+            nombre_lbl.configure(text=nombre)
+        elif nombre:
+            tipo_lbl.configure(text="")
+            coma_lbl.configure(text="")
+            nombre_lbl.configure(text=nombre)
+        elif tipo:
+            tipo_lbl.configure(text=tipo)
+            coma_lbl.configure(text="")
+            nombre_lbl.configure(text="")
+        else:
+            tipo_lbl.configure(text="")
+            coma_lbl.configure(text="")
+            nombre_lbl.configure(text="⚙️ Configurar negocio")
+
+    refresh()
+
+    return {
+        "frame": frame,
+        "tipo_lbl": tipo_lbl,
+        "coma_lbl": coma_lbl,
+        "nombre_lbl": nombre_lbl,
+        "refresh": refresh,
+    }
 
 
 # =========================================================
@@ -234,13 +293,9 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
 
 
 # =========================================================
-# HELPER: ZONA SCROLLEABLE UNIVERSAL
+# HELPER: ZONA SCROLLEABLE
 # =========================================================
 def make_scrollable(container, build_content, build_bottom=None, bg=None):
-    """
-    Convierte `container` en una zona con scroll.
-    Los widgets con scroll propio (Treeview/Listbox/Text) se saltan.
-    """
     apply_dark_red_scrollbar_style()
     if bg is None:
         try:
@@ -250,7 +305,6 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
 
     result = {"canvas": None, "inner": None, "scrollbar": None, "bottom": None}
 
-    # 1. Botones fijos abajo (PRIORIDAD)
     if build_bottom is not None:
         bottom_frame = tk.Frame(container, bg=bg)
         bottom_frame.pack(side="bottom", fill="x", pady=4)
@@ -260,16 +314,13 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
             pass
         result["bottom"] = bottom_frame
 
-    # 2. Scrollbar
     scrollbar = ttk.Scrollbar(container, orient="vertical",
                               style="DarkRed.Vertical.TScrollbar")
     scrollbar.pack(side="right", fill="y")
 
-    # 3. Canvas
     canvas = tk.Canvas(container, bg=bg, highlightthickness=0)
     canvas.pack(side="left", fill="both", expand=True)
 
-    # 4. Frame interior
     inner = tk.Frame(canvas, bg=bg)
     inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
 
@@ -291,7 +342,6 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     inner.bind("<Configure>", _on_inner_config)
     canvas.bind("<Configure>", _on_canvas_config)
 
-    # 5. Rueda del ratón global (evitando widgets con scroll propio)
     def _on_mousewheel(e):
         try:
             canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
@@ -316,13 +366,11 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     result["scrollbar"] = scrollbar
     result["bind_wheel_recursive"] = bind_wheel_recursive
 
-    # 6. Construir contenido
     try:
         build_content(inner)
     except Exception:
         pass
 
-    # 7. Aplicar rueda a los hijos + forzar recálculo
     def _recalcular():
         try:
             container.update_idletasks()
@@ -335,7 +383,6 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
 
     try:
         _recalcular()
-        # ✅ Reintentar después de que el layout se asiente
         container.after(100, _recalcular)
         container.after(300, _recalcular)
     except Exception:
@@ -806,7 +853,6 @@ class AutoCompleteEntry(ttk.Entry):
         item_h = 22
         h = min(len(values) * item_h + 6, 300)
 
-        # ✅ Asegurar que el dropdown no se salga de la pantalla
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         if x + w > sw - 10:
