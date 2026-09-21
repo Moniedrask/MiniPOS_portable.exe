@@ -105,17 +105,21 @@ class DBManager:
             key TEXT PRIMARY KEY, value TEXT DEFAULT '')''')
         self.conn.commit()
 
-    # ---- Utilidades de settings ----
+    # ---- Utilidades de settings (CORREGIDAS) ----
     def get_setting(self, key, default=None):
-        cur = self.conn.cursor()
+        # ✅ Asegurar que la conexión exista antes de usarla
+        conn = self.get_connection()
+        cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
         row = cur.fetchone()
         return row["value"] if row else default
 
     def set_setting(self, key, value):
-        cur = self.conn.cursor()
+        # ✅ Asegurar que la conexión exista antes de usarla
+        conn = self.get_connection()
+        cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, str(value)))
-        self.conn.commit()
+        conn.commit()
 
     def get_connection(self):
         if not self.conn:
