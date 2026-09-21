@@ -3,7 +3,8 @@ import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip
+    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
+    popup_is_open
 )
 
 
@@ -23,13 +24,18 @@ class InventoryView(ttk.Frame):
         self._keep_scanner_focused()
 
     def _is_dark(self):
-        return self.get_theme() == 'darkly'
+        return True
 
     def _keep_scanner_focused(self):
         try:
-            fw = self.focus_get()
-            if fw is not None and not isinstance(fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
-                self.scan_entry.focus_set()
+            if not popup_is_open():
+                fw = self.focus_get()
+                if fw is not None and not isinstance(fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
+                    try:
+                        if fw.winfo_toplevel() is self.winfo_toplevel():
+                            self.scan_entry.focus_set()
+                    except Exception:
+                        pass
         except Exception:
             pass
         self.after(700, self._keep_scanner_focused)
@@ -89,7 +95,6 @@ class InventoryView(ttk.Frame):
         self.tree.bind("<Double-1>", self.view_product_popup)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
-        # ✅ Tooltip para nombres largos en la tabla
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
         btn_frame = ttk.Frame(self, bootstyle="dark")
@@ -98,7 +103,6 @@ class InventoryView(ttk.Frame):
                    command=self.add_product_popup,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
-    # ============ AUTOCOMPLETAR ============
     def _get_product_labels(self):
         vals = []
         for p in self.product_use_case.list_products():
@@ -117,7 +121,6 @@ class InventoryView(ttk.Frame):
         self.load_products()
         self.scan_entry.focus_set()
 
-    # ============ ORDENAR ============
     def sort_by(self, col):
         if self.sort_col == col:
             self.sort_reverse = not self.sort_reverse
@@ -178,7 +181,6 @@ class InventoryView(ttk.Frame):
             p.product_id, p.name, p.barcode, precio, p.unit,
             f"{p.stock:g}", p.created_at or "-", p.updated_at or "-"))
 
-    # ============ CONTEXTO / DETALLE ============
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
         if not item:
@@ -214,7 +216,6 @@ class InventoryView(ttk.Frame):
         popup.title("Detalle del Producto")
         popup.geometry("440x540")
         popup.transient(self.winfo_toplevel())
-        popup.grab_set()
         popup.withdraw()
 
         header = ttk.Frame(popup, bootstyle="dark")
@@ -245,7 +246,11 @@ class InventoryView(ttk.Frame):
         ttk.Button(bf, text="🗑",
                    command=lambda: [popup.destroy(), self.confirm_delete(sel[0])],
                    bootstyle="danger", width=3).pack(side="left", padx=15)
-        show_popup_smooth(popup, self._is_dark())
+        try:
+            popup.grab_set()
+        except Exception:
+            pass
+        show_popup_smooth(popup)
 
     def confirm_delete(self, item):
         vals = self.tree.item(item, 'values')
@@ -286,7 +291,6 @@ class InventoryView(ttk.Frame):
         popup.title(title)
         popup.geometry("410x640")
         popup.transient(self.winfo_toplevel())
-        popup.grab_set()
         popup.withdraw()
 
         ttk.Label(popup, text="Código de Barras / QR:").pack(pady=5)
@@ -368,7 +372,11 @@ class InventoryView(ttk.Frame):
 
         ttk.Button(popup, text="Guardar", command=save,
                    style="DarkGreen.TButton").pack(pady=20)
-        show_popup_smooth(popup, self._is_dark())
+        try:
+            popup.grab_set()
+        except Exception:
+            pass
+        show_popup_smooth(popup)
 
     def _refresh_unit_options(self, unit_var, combo, type_var):
         t = type_var.get()
@@ -382,7 +390,6 @@ class InventoryView(ttk.Frame):
         if unit_var.get() not in opciones:
             unit_var.set(opciones[0])
 
-    # ============ ESCANEO ============
     def lookup_barcode(self, event=None):
         codigo = self.scan_var.get().strip()
         if not codigo:
