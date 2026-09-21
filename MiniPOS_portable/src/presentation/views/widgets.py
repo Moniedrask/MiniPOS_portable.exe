@@ -30,7 +30,12 @@ def center_window(win):
 
 
 def show_popup_smooth(popup, is_dark):
-    """Muestra un popup sin parpadeo: aplica tema ANTES de mostrarlo."""
+    """Muestra un popup sin parpadeo y con fondo correcto."""
+    try:
+        style = ttk.Style()
+        popup.configure(bg=style.colors.bg)
+    except Exception:
+        pass
     popup.update_idletasks()
     center_window(popup)
     apply_titlebar_theme(popup, is_dark)
@@ -52,10 +57,9 @@ def get_menu_font():
 
 
 # =========================================================
-# DIÁLOGOS PERSONALIZADOS EN ESPAÑOL
+# DIÁLOGOS PERSONALIZADOS (con fondo oscuro correcto)
 # =========================================================
 def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
-    """Muestra un diálogo con botones personalizados. Devuelve el índice elegido o None."""
     if parent is None:
         return None
     try:
@@ -63,26 +67,35 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     except Exception:
         root = parent
 
+    style = ttk.Style()
+    bg = style.colors.bg
+    fg = style.colors.fg
+
     pop = tk.Toplevel(root)
     pop.title(title)
     pop.transient(root)
     pop.withdraw()
-
+    pop.configure(bg=bg)
     try:
         pop.grab_set()
     except Exception:
         pass
 
     icons = {"info": "ℹ️", "warning": "⚠️", "error": "❌", "question": "❓"}
-    ttk.Label(pop, text=f"{icons.get(kind, '')}  {title}",
-              font=("Arial", 13, "bold")).pack(pady=(20, 10), padx=20)
 
-    ttk.Label(pop, text=message, font=("Arial", 11),
-              wraplength=460, justify="center").pack(padx=25, pady=10)
+    header = tk.Label(pop, text=f"{icons.get(kind, '')}  {title}",
+                      font=("Arial", 13, "bold"),
+                      bg=bg, fg=fg)
+    header.pack(pady=(20, 10), padx=20)
+
+    msg_lbl = tk.Label(pop, text=message, font=("Arial", 11),
+                       bg=bg, fg=fg,
+                       wraplength=460, justify="center")
+    msg_lbl.pack(padx=25, pady=10)
 
     result = {"idx": None}
 
-    bf = ttk.Frame(pop)
+    bf = tk.Frame(pop, bg=bg)
     bf.pack(pady=(10, 20))
 
     def make_cb(i):
@@ -93,13 +106,13 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
 
     for i, b in enumerate(buttons):
         if i == 0:
-            style = "DarkGreen.TButton"
+            btn_style = "DarkGreen.TButton"
         elif b.lower() in ("no", "cancelar"):
-            style = "danger.TButton"
+            btn_style = "danger.TButton"
         else:
-            style = "secondary.TButton"
-        ttk.Button(bf, text=b, command=make_cb(i), style=style,
-                   width=12).pack(side="left", padx=8)
+            btn_style = "secondary.TButton"
+        ttk.Button(bf, text=b, command=make_cb(i),
+                   style=btn_style, width=12).pack(side="left", padx=8)
 
     pop.update_idletasks()
     w = max(420, pop.winfo_reqwidth())
@@ -115,7 +128,7 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
 
 
 class MD:
-    """Reemplazo de Messagebox con botones en español y modo oscuro."""
+    """Messagebox con botones en español, fondo oscuro."""
 
     _is_dark = True
 
@@ -143,18 +156,22 @@ class MD:
 
 
 # =========================================================
-# BARRA DE MENÚS OSCURA PERSONALIZADA
+# BARRA DE MENÚS OSCURA Y COMPACTA
 # =========================================================
 class DarkMenuBar(ttk.Frame):
-    """Menú superior oscuro sin la franja blanca nativa de Windows."""
-
     def __init__(self, parent, is_dark_func):
         super().__init__(parent, bootstyle="dark")
         self.is_dark_func = is_dark_func
         self.menus = []
 
     def add_menu(self, label, build_fn):
-        mb = ttk.Menubutton(self, text=label, bootstyle="dark")
+        # ✅ Botón compacto (padding reducido y fuente pequeña)
+        mb = ttk.Menubutton(self, text=label, bootstyle="dark",
+                            padding=(6, 1))
+        try:
+            mb.configure(width=10)
+        except Exception:
+            pass
         style = ttk.Style()
         menu = tk.Menu(
             mb, tearoff=0,
@@ -165,7 +182,7 @@ class DarkMenuBar(ttk.Frame):
             font=get_menu_font())
         build_fn(menu)
         mb.configure(menu=menu)
-        mb.pack(side="left", padx=2, pady=2)
+        mb.pack(side="left", padx=2, pady=1)
         self.menus.append((mb, menu))
         return mb
 
@@ -174,8 +191,6 @@ class DarkMenuBar(ttk.Frame):
 # AUTOCOMPLETADO ENTRY CON LISTBOX OSCURO
 # =========================================================
 class AutoCompleteEntry(ttk.Entry):
-    """Entry con autocompletado en un Toplevel-Listbox que NO roba el foco."""
-
     def __init__(self, parent, values_getter, on_select, width=40, font=None, **kwargs):
         if font is None:
             font = ("Arial", 11)
@@ -191,7 +206,6 @@ class AutoCompleteEntry(ttk.Entry):
         self.bind('<FocusOut>', self._on_focus_out)
         self.bind('<Return>', self._on_return)
 
-    # --- Manejo de teclas ---
     def _on_key(self, event):
         if event.keysym in ('Down', 'Up', 'Return', 'Escape', 'Tab',
                             'Shift_L', 'Shift_R', 'Control_L', 'Control_R',
@@ -224,7 +238,6 @@ class AutoCompleteEntry(ttk.Entry):
             except Exception:
                 pass
             self.popup.configure(bg=style.colors.bg)
-            # ✅ Listbox oscuro coherente con el tema
             self.listbox = tk.Listbox(
                 self.popup,
                 activestyle='none',
@@ -243,9 +256,7 @@ class AutoCompleteEntry(ttk.Entry):
             self.listbox.bind('<Escape>', lambda e: (self._hide(), "break"))
             self.listbox.bind('<Double-Button-1>', self._on_select)
         else:
-            # Actualizar colores si cambió el tema
-            self.listbox.configure(
-                bg=style.colors.bg, fg=style.colors.fg)
+            self.listbox.configure(bg=style.colors.bg, fg=style.colors.fg)
 
         self.listbox.delete(0, tk.END)
         for v in values:
