@@ -2,6 +2,7 @@ import sqlite3
 from sqlite3 import Connection
 import os
 from typing import Optional
+from datetime import datetime
 
 
 class DBManager:
@@ -19,6 +20,7 @@ class DBManager:
         self.conn.row_factory = sqlite3.Row
         self._check_barcode_column()
         self._check_unit_columns()
+        self._check_timestamp_columns()
         self._check_sales_tables()
         self._check_credit_columns()
         self._check_settings_table()
@@ -30,7 +32,8 @@ class DBManager:
             product_id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL, barcode TEXT DEFAULT '',
             price REAL NOT NULL, stock REAL NOT NULL DEFAULT 0,
-            unit_type TEXT DEFAULT 'unidad', unit TEXT DEFAULT 'unidad')''')
+            unit_type TEXT DEFAULT 'unidad', unit TEXT DEFAULT 'unidad',
+            created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '')''')
         conn.commit(); conn.close()
 
     def _check_barcode_column(self):
@@ -50,6 +53,21 @@ class DBManager:
             self.conn.commit()
         if 'unit' not in cols:
             cur.execute("ALTER TABLE products ADD COLUMN unit TEXT DEFAULT 'unidad'")
+            self.conn.commit()
+
+    def _check_timestamp_columns(self):
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(products)")
+        cols = [c[1] for c in cur.fetchall()]
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if 'created_at' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN created_at TEXT DEFAULT ''")
+            # Rellenar registros antiguos con la fecha actual
+            cur.execute("UPDATE products SET created_at = ? WHERE created_at = '' OR created_at IS NULL", (now,))
+            self.conn.commit()
+        if 'updated_at' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN updated_at TEXT DEFAULT ''")
+            cur.execute("UPDATE products SET updated_at = ? WHERE updated_at = '' OR updated_at IS NULL", (now,))
             self.conn.commit()
 
     def _check_sales_tables(self):
@@ -72,14 +90,11 @@ class DBManager:
         cur.execute("PRAGMA table_info(sales)")
         cols = [c[1] for c in cur.fetchall()]
         if 'customer_name' not in cols:
-            cur.execute("ALTER TABLE sales ADD COLUMN customer_name TEXT DEFAULT ''")
-            self.conn.commit()
+            cur.execute("ALTER TABLE sales ADD COLUMN customer_name TEXT DEFAULT ''"); self.conn.commit()
         if 'is_credit' not in cols:
-            cur.execute("ALTER TABLE sales ADD COLUMN is_credit INTEGER DEFAULT 0")
-            self.conn.commit()
+            cur.execute("ALTER TABLE sales ADD COLUMN is_credit INTEGER DEFAULT 0"); self.conn.commit()
         if 'is_paid' not in cols:
-            cur.execute("ALTER TABLE sales ADD COLUMN is_paid INTEGER DEFAULT 1")
-            self.conn.commit()
+            cur.execute("ALTER TABLE sales ADD COLUMN is_paid INTEGER DEFAULT 1"); self.conn.commit()
 
     def _check_settings_table(self):
         cur = self.conn.cursor()
@@ -87,7 +102,6 @@ class DBManager:
             key TEXT PRIMARY KEY, value TEXT DEFAULT '')''')
         self.conn.commit()
 
-    # ---- Utilidades de settings ----
     def get_setting(self, key, default=None):
         cur = self.conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
