@@ -3,7 +3,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry, MD
+    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip
 )
 
 
@@ -15,6 +15,7 @@ class InventoryView(ttk.Frame):
         self.sort_col = None
         self.sort_reverse = False
         self.filtered_products = []
+        self.tooltip = None
 
         self.create_widgets()
         self.load_products()
@@ -87,6 +88,9 @@ class InventoryView(ttk.Frame):
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", self.view_product_popup)
         self.tree.bind("<Button-3>", self.show_context_menu)
+
+        # ✅ Tooltip para nombres largos en la tabla
+        self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
         btn_frame = ttk.Frame(self, bootstyle="dark")
         btn_frame.pack(pady=10)
