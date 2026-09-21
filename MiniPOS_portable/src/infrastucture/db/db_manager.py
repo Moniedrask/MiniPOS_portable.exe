@@ -34,7 +34,8 @@ class DBManager:
             price REAL NOT NULL, stock REAL NOT NULL DEFAULT 0,
             unit_type TEXT DEFAULT 'unidad', unit TEXT DEFAULT 'unidad',
             created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '')''')
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
     def _check_barcode_column(self):
         cur = self.conn.cursor()
@@ -62,7 +63,6 @@ class DBManager:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if 'created_at' not in cols:
             cur.execute("ALTER TABLE products ADD COLUMN created_at TEXT DEFAULT ''")
-            # Rellenar registros antiguos con la fecha actual
             cur.execute("UPDATE products SET created_at = ? WHERE created_at = '' OR created_at IS NULL", (now,))
             self.conn.commit()
         if 'updated_at' not in cols:
@@ -90,11 +90,14 @@ class DBManager:
         cur.execute("PRAGMA table_info(sales)")
         cols = [c[1] for c in cur.fetchall()]
         if 'customer_name' not in cols:
-            cur.execute("ALTER TABLE sales ADD COLUMN customer_name TEXT DEFAULT ''"); self.conn.commit()
+            cur.execute("ALTER TABLE sales ADD COLUMN customer_name TEXT DEFAULT ''")
+            self.conn.commit()
         if 'is_credit' not in cols:
-            cur.execute("ALTER TABLE sales ADD COLUMN is_credit INTEGER DEFAULT 0"); self.conn.commit()
+            cur.execute("ALTER TABLE sales ADD COLUMN is_credit INTEGER DEFAULT 0")
+            self.conn.commit()
         if 'is_paid' not in cols:
-            cur.execute("ALTER TABLE sales ADD COLUMN is_paid INTEGER DEFAULT 1"); self.conn.commit()
+            cur.execute("ALTER TABLE sales ADD COLUMN is_paid INTEGER DEFAULT 1")
+            self.conn.commit()
 
     def _check_settings_table(self):
         cur = self.conn.cursor()
@@ -102,6 +105,7 @@ class DBManager:
             key TEXT PRIMARY KEY, value TEXT DEFAULT '')''')
         self.conn.commit()
 
+    # ---- Utilidades de settings ----
     def get_setting(self, key, default=None):
         cur = self.conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
