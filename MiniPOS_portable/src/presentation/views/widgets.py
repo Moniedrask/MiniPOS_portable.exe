@@ -2,18 +2,28 @@ import tkinter as tk
 import ttkbootstrap as ttk
 
 
-def apply_titlebar_theme(window, is_dark):
-    """Solo se usa en la ventana principal, una vez al arrancar."""
+def force_dark_titlebar(win):
+    """Fuerza modo oscuro en la barra de título (Windows 10/11)."""
     try:
         import ctypes
-        window.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
-        v = ctypes.c_int(1 if is_dark else 0)
+        win.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        if not hwnd:
+            hwnd = win.winfo_id()
+        v = ctypes.c_int(1)
         for a in (20, 19):
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, a, ctypes.byref(v), ctypes.sizeof(v))
+            try:
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, a, ctypes.byref(v), ctypes.sizeof(v))
+            except Exception:
+                pass
+        return True
     except Exception:
-        pass
+        return False
+
+
+def apply_titlebar_theme(window, is_dark=True):
+    force_dark_titlebar(window)
 
 
 def center_window(win):
@@ -30,8 +40,38 @@ def center_window(win):
     win.geometry(f"{w}x{h}+{x}+{y}")
 
 
-def show_popup_smooth(popup, is_dark=None):
-    """Muestra un popup SIN tocar la barra de título (evita parpadeo)."""
+def force_focus(win):
+    """Fuerza el foco, trae al frente y bloquea interacción con otras ventanas."""
+    try:
+        win.lift()
+        win.focus_force()
+    except Exception:
+        pass
+    try:
+        win.grab_set()
+    except Exception:
+        pass
+    try:
+        win.attributes('-topmost', True)
+    except Exception:
+        pass
+    def quitar_topmost():
+        try:
+            if win.winfo_exists():
+                win.attributes('-topmost', False)
+                win.lift()
+                win.focus_force()
+        except Exception:
+            pass
+    win.after(150, quitar_topmost)
+
+
+def show_popup_smooth(popup, is_dark=True):
+    """Muestra un popup sin parpadeo y en modo oscuro forzado."""
+    try:
+        popup.attributes('-alpha', 0)
+    except Exception:
+        pass
     try:
         style = ttk.Style()
         popup.configure(bg=style.colors.bg)
@@ -39,11 +79,15 @@ def show_popup_smooth(popup, is_dark=None):
         pass
     center_window(popup)
     popup.deiconify()
-    popup.lift()
+    popup.update_idletasks()
+    force_dark_titlebar(popup)
     try:
-        popup.focus_force()
+        popup.attributes('-alpha', 1)
     except Exception:
         pass
+    force_focus(popup)
+    popup.after(80, lambda: force_dark_titlebar(popup))
+    popup.after(160, lambda: force_dark_titlebar(popup))
 
 
 def get_menu_font():
@@ -114,11 +158,9 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     except Exception:
         pass
 
-    # ✅ Devolver foco a la ventana que lo abrió
     try:
         if parent and parent.winfo_exists():
-            parent.grab_set()
-            parent.focus_force()
+            force_focus(parent)
     except Exception:
         pass
 
