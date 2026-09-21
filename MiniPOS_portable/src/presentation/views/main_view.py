@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import filedialog, font as tkfont
 import ttkbootstrap as ttk
 from ttkbootstrap import Style, Toplevel
-from ttkbootstrap.dialogs import Messagebox
 import os
 import shutil
 import sys
@@ -11,7 +10,8 @@ from application.use_case.product_use_case import ProductCase
 from application.use_case.sale_use_case import SaleCase
 from infrastucture.db.db_manager import DBManager
 from presentation.views.widgets import (
-    apply_titlebar_theme, center_window, show_popup_smooth, get_menu_font
+    apply_titlebar_theme, center_window, show_popup_smooth,
+    get_menu_font, DarkMenuBar, MD
 )
 from presentation.views.payment_view import PaymentView
 from presentation.views.inventory_view import InventoryView
@@ -67,16 +67,12 @@ class MainView(tk.Tk):
 
     # =========== ESTILO VERDE OSCURO GLOBAL ===========
     def _setup_dark_green_style(self):
-        """Define un estilo de botón verde oscuro con letra clara."""
         try:
             self.style.configure(
                 "DarkGreen.TButton",
-                background="#0a4d1f",
-                foreground="#c8e6c9",
-                borderwidth=0,
-                focuscolor="#0a4d1f",
-                padding=8,
-                font=("Arial", 11, "bold"))
+                background="#0a4d1f", foreground="#c8e6c9",
+                borderwidth=0, focuscolor="#0a4d1f",
+                padding=8, font=("Arial", 11, "bold"))
             self.style.map(
                 "DarkGreen.TButton",
                 background=[("active", "#083d18"), ("pressed", "#062e12"),
@@ -91,7 +87,8 @@ class MainView(tk.Tk):
         if not pwd:
             return True
         self.withdraw()
-        pop = Toplevel(self)
+
+        pop = tk.Toplevel(self)
         pop.title("MiniPOS - Iniciar sesión")
         pop.geometry("380x230")
         pop.transient(self)
@@ -113,7 +110,7 @@ class MainView(tk.Tk):
                 resultado["ok"] = True
                 pop.destroy()
             else:
-                Messagebox.show_error("Contraseña incorrecta", "Error", parent=pop)
+                MD.show_error("Contraseña incorrecta", "Error", parent=pop)
                 v.set("")
 
         ttk.Button(pop, text="Ingresar", command=verificar,
@@ -131,12 +128,12 @@ class MainView(tk.Tk):
 
     def _change_password(self):
         if not is_admin():
-            Messagebox.show_warning(
+            MD.show_warning(
                 "Debes ejecutar la app COMO ADMINISTRADOR\npara cambiar la contraseña.",
                 "Permisos insuficientes", parent=self)
             return
         actual = self.db_manager.get_setting("startup_password", "")
-        pop = Toplevel(self)
+        pop = tk.Toplevel(self)
         pop.title("Cambiar contraseña")
         pop.geometry("400x400")
         pop.transient(self)
@@ -162,21 +159,21 @@ class MainView(tk.Tk):
         def aplicar():
             if vaciar.get():
                 self.db_manager.set_setting("startup_password", "")
-                Messagebox.show_info("Contraseña eliminada.", "OK", parent=pop)
+                MD.show_info("Contraseña eliminada.", "Listo", parent=pop)
                 pop.destroy()
                 return
             if e1.get() != actual:
-                Messagebox.show_error("La contraseña actual no coincide.", "Error", parent=pop)
+                MD.show_error("La contraseña actual no coincide.", "Error", parent=pop)
                 return
             if len(e2.get()) < 4:
-                Messagebox.show_error("La nueva contraseña debe tener al menos 4 caracteres.",
-                                      "Error", parent=pop)
+                MD.show_error("La nueva contraseña debe tener al menos 4 caracteres.",
+                              "Error", parent=pop)
                 return
             if e2.get() != e3.get():
-                Messagebox.show_error("Las contraseñas nuevas no coinciden.", "Error", parent=pop)
+                MD.show_error("Las contraseñas nuevas no coinciden.", "Error", parent=pop)
                 return
             self.db_manager.set_setting("startup_password", e2.get())
-            Messagebox.show_info("Contraseña cambiada.", "OK", parent=pop)
+            MD.show_info("Contraseña cambiada.", "Listo", parent=pop)
             pop.destroy()
 
         ttk.Button(pop, text="Guardar", command=aplicar,
@@ -184,7 +181,7 @@ class MainView(tk.Tk):
         show_popup_smooth(pop, self.current_theme == 'darkly')
 
     def _setup_password_first_time(self):
-        pop = Toplevel(self)
+        pop = tk.Toplevel(self)
         pop.title("Configurar contraseña")
         pop.geometry("380x280")
         pop.transient(self)
@@ -202,14 +199,13 @@ class MainView(tk.Tk):
 
         def guardar():
             if len(e1.get()) < 4:
-                Messagebox.show_error("Mínimo 4 caracteres.", "Error", parent=pop)
+                MD.show_error("Mínimo 4 caracteres.", "Error", parent=pop)
                 return
             if e1.get() != e2.get():
-                Messagebox.show_error("No coinciden.", "Error", parent=pop)
+                MD.show_error("No coinciden.", "Error", parent=pop)
                 return
             self.db_manager.set_setting("startup_password", e1.get())
-            Messagebox.show_info("Contraseña activada. Se pedirá al iniciar.",
-                                 "OK", parent=pop)
+            MD.show_info("Contraseña activada. Se pedirá al iniciar.", "Listo", parent=pop)
             pop.destroy()
 
         ttk.Button(pop, text="Guardar", command=guardar,
@@ -226,9 +222,7 @@ class MainView(tk.Tk):
                 pass
         self.font_size = size
         self._update_tree_rowheights(size)
-        # Reaplicar estilo verde oscuro con nuevo tamaño
         self._setup_dark_green_style()
-        # Reconfigurar botones con tamaño de fuente
         try:
             self.style.configure("DarkGreen.TButton", font=("Arial", size, "bold"))
         except Exception:
@@ -258,54 +252,56 @@ class MainView(tk.Tk):
 
     # =========== UI ===========
     def create_widgets(self):
-        menubar = tk.Menu(self,
-                          bg=self.style.colors.bg, fg=self.style.colors.fg,
-                          activebackground=self.style.colors.selectbg,
-                          activeforeground=self.style.colors.selectfg, bd=0)
-        om = tk.Menu(menubar, tearoff=0,
-                     bg=self.style.colors.bg, fg=self.style.colors.fg,
-                     activebackground=self.style.colors.selectbg,
-                     activeforeground=self.style.colors.selectfg)
-        om.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
-        om.add_separator()
-        fm = tk.Menu(om, tearoff=0,
-                     bg=self.style.colors.bg, fg=self.style.colors.fg,
-                     activebackground=self.style.colors.selectbg,
-                     activeforeground=self.style.colors.selectfg)
-        fm.add_command(label="➕ Aumentar letra", command=lambda: self._change_font_size(1))
-        fm.add_command(label="➖ Reducir letra", command=lambda: self._change_font_size(-1))
-        om.add_cascade(label="🔤 Tamaño de letra", menu=fm)
-        pm = tk.Menu(om, tearoff=0,
-                     bg=self.style.colors.bg, fg=self.style.colors.fg,
-                     activebackground=self.style.colors.selectbg,
-                     activeforeground=self.style.colors.selectfg)
-        pm.add_command(label="🆕 Activar/Crear contraseña",
-                       command=self._setup_password_first_time)
-        pm.add_command(label="🔐 Cambiar contraseña (admin)",
-                       command=self._change_password)
-        om.add_cascade(label="🔑 Contraseña de inicio", menu=pm)
-        om.add_separator()
-        self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
-        om.add_checkbutton(label="🚀 Iniciar con Windows",
-                           variable=self.autostart_var,
-                           command=self.toggle_autostart)
-        om.add_separator()
-        om.add_command(label="📄 Reporte del Día (TXT)", command=self.generate_daily_report)
-        om.add_command(label="📊 Reporte del Mes (Excel)", command=self.generate_monthly_report)
-        om.add_separator()
-        om.add_command(label="📤 Exportar Base de Datos", command=self.export_db)
-        om.add_command(label="📥 Importar Base de Datos", command=self.import_db)
-        menubar.add_cascade(label="Opciones", menu=om)
+        # ✅ Menú superior oscuro personalizado
+        self.menubar = DarkMenuBar(self, lambda: self.current_theme == 'darkly')
+        self.menubar.pack(fill="x", side="top")
 
-        vm = tk.Menu(menubar, tearoff=0,
-                     bg=self.style.colors.bg, fg=self.style.colors.fg,
-                     activebackground=self.style.colors.selectbg,
-                     activeforeground=self.style.colors.selectfg)
-        vm.add_command(label="📊 Resumen de Ventas", command=self.show_sales_summary)
-        vm.add_command(label="💳 Fiados (cuentas por cobrar)", command=self.show_credit_sales)
-        menubar.add_cascade(label="Ventas", menu=vm)
-        self.config(menu=menubar)
+        def build_opciones(menu):
+            menu.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
+            menu.add_separator()
+            sub_font = tk.Menu(menu, tearoff=0,
+                               bg=self.style.colors.bg, fg=self.style.colors.fg,
+                               activebackground=self.style.colors.selectbg,
+                               activeforeground=self.style.colors.selectfg,
+                               font=get_menu_font())
+            sub_font.add_command(label="➕ Aumentar letra",
+                                 command=lambda: self._change_font_size(1))
+            sub_font.add_command(label="➖ Reducir letra",
+                                 command=lambda: self._change_font_size(-1))
+            menu.add_cascade(label="🔤 Tamaño de letra", menu=sub_font)
+            sub_pwd = tk.Menu(menu, tearoff=0,
+                              bg=self.style.colors.bg, fg=self.style.colors.fg,
+                              activebackground=self.style.colors.selectbg,
+                              activeforeground=self.style.colors.selectfg,
+                              font=get_menu_font())
+            sub_pwd.add_command(label="🆕 Activar/Crear contraseña",
+                                command=self._setup_password_first_time)
+            sub_pwd.add_command(label="🔐 Cambiar contraseña (admin)",
+                                command=self._change_password)
+            menu.add_cascade(label="🔑 Contraseña de inicio", menu=sub_pwd)
+            menu.add_separator()
+            self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
+            menu.add_checkbutton(label="🚀 Iniciar con Windows",
+                                 variable=self.autostart_var,
+                                 command=self.toggle_autostart)
+            menu.add_separator()
+            menu.add_command(label="📄 Reporte del Día (TXT)",
+                             command=self.generate_daily_report)
+            menu.add_command(label="📊 Reporte del Mes (Excel)",
+                             command=self.generate_monthly_report)
+            menu.add_separator()
+            menu.add_command(label="📤 Exportar Base de Datos", command=self.export_db)
+            menu.add_command(label="📥 Importar Base de Datos", command=self.import_db)
 
+        def build_ventas(menu):
+            menu.add_command(label="📊 Resumen de Ventas", command=self.show_sales_summary)
+            menu.add_command(label="💳 Fiados (cuentas por cobrar)",
+                             command=self.show_credit_sales)
+
+        self.menubar.add_menu("Opciones", build_opciones)
+        self.menubar.add_menu("Ventas", build_ventas)
+
+        # --- Pestañas ---
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(10, 0))
         self.btn_pagos = ttk.Button(tabs, text="🛒  PAGOS", style="DarkGreen.TButton",
@@ -356,7 +352,7 @@ class MainView(tk.Tk):
 
     # =========== RESUMEN DE VENTAS ===========
     def show_sales_summary(self):
-        win = Toplevel(self)
+        win = tk.Toplevel(self)
         win.title("Resumen de Ventas")
         win.geometry("1000x650")
         win.transient(self)
@@ -408,20 +404,18 @@ class MainView(tk.Tk):
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
-                Messagebox.show_warning("Selecciona una venta primero.",
-                                        "Sin selección", parent=win)
+                MD.show_warning("Selecciona una venta primero.", "Sin selección", parent=win)
                 return
             vals = tree.item(sel[0], 'values')
             sid = int(vals[0])
-            if Messagebox.yesno(f"⚠️ ¿Eliminar la venta #{sid}?\n\nEsto restaurará el stock.",
-                                "Confirmar eliminación", parent=win) != "Yes":
+            if MD.yesno(f"⚠️ ¿Eliminar la venta #{sid}?\n\nEsto restaurará el stock.",
+                        "Confirmar eliminación", parent=win) != "Yes":
                 return
             pw = self._ask_password_1234(win)
             if not pw:
                 return
             self.sale_use_case.delete_sale(sid)
-            Messagebox.show_info(f"Venta #{sid} eliminada y stock restaurado.",
-                                 "OK", parent=win)
+            MD.show_info(f"Venta #{sid} eliminada y stock restaurado.", "Listo", parent=win)
             win.destroy()
             self.show_sales_summary()
             if self.current_page == "inventario":
@@ -432,7 +426,7 @@ class MainView(tk.Tk):
         show_popup_smooth(win, self.current_theme == 'darkly')
 
     def _ask_password_1234(self, parent):
-        pop = Toplevel(parent)
+        pop = tk.Toplevel(parent)
         pop.title("Contraseña requerida")
         pop.geometry("340x200")
         pop.transient(parent)
@@ -452,7 +446,7 @@ class MainView(tk.Tk):
                 ok["v"] = True
                 pop.destroy()
             else:
-                Messagebox.show_error("Contraseña incorrecta", "Error", parent=pop)
+                MD.show_error("Contraseña incorrecta", "Error", parent=pop)
                 v.set("")
 
         ttk.Button(pop, text="Aceptar", command=ver,
@@ -462,11 +456,11 @@ class MainView(tk.Tk):
         parent.wait_window(pop)
         return ok["v"]
 
-    # =========== FIADOS AGRUPADOS CON ABONO ===========
+    # =========== FIADOS ===========
     def show_credit_sales(self):
-        win = Toplevel(self)
+        win = tk.Toplevel(self)
         win.title("Fiados - Cuentas por cobrar")
-        win.geometry("1050x680")
+        win.geometry("1150x720")
         win.transient(self)
         win.grab_set()
         win.withdraw()
@@ -474,25 +468,24 @@ class MainView(tk.Tk):
         ttk.Label(win, text="💳 CUENTAS POR COBRAR (FIADOS)",
                   font=("Arial", 18, "bold")).pack(pady=15)
 
-        # --- RESUMEN SUPERIOR ---
         resumen_lbl = ttk.Label(win, text="", font=("Arial", 12, "bold"))
         resumen_lbl.pack(pady=5)
 
-        # --- TABLA PRINCIPAL ---
         frame = ttk.Frame(win)
         frame.pack(fill="both", expand=True, padx=15, pady=10)
 
         tree = ttk.Treeview(frame,
-                            columns=("Cliente", "Fecha", "Total", "Abonado", "Pendiente", "Estado"),
+                            columns=("Cliente", "Fecha", "Productos", "Total",
+                                     "Abonado", "Pendiente", "Estado"),
                             show='headings', height=15)
-        for c, t, w in [("Cliente", "Cliente", 200), ("Fecha", "Fecha", 150),
-                        ("Total", "Total", 110), ("Abonado", "Abonado", 110),
-                        ("Pendiente", "Pendiente", 110), ("Estado", "Estado", 110)]:
+        for c, t, w in [("Cliente", "Cliente", 180), ("Fecha", "Fecha", 140),
+                        ("Productos", "Productos fiados", 280),
+                        ("Total", "Total", 90), ("Abonado", "Abonado", 90),
+                        ("Pendiente", "Pendiente", 100), ("Estado", "Estado", 100)]:
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="center")
         tree.pack(fill="both", expand=True)
 
-        # Guardar referencia a los sales por iid
         sales_map = {}
 
         def recargar():
@@ -500,40 +493,100 @@ class MainView(tk.Tk):
                 tree.delete(r)
             sales_map.clear()
             ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
-            # Agrupar por nombre: primero los que tienen nombre, luego los sin nombre
             ventas.sort(key=lambda s: (s.customer_name or "zzz_sin_nombre").lower())
             total_pend = 0.0
-            clientes = set()
+            clientes = {}
             for s_ in ventas:
                 cliente = s_.customer_name if s_.customer_name else "(sin nombre)"
                 pendiente = s_.pending()
                 total_pend += pendiente
                 if s_.customer_name:
-                    clientes.add(s_.customer_name)
+                    clientes[s_.customer_name] = clientes.get(s_.customer_name, 0) + pendiente
+                # Resumen de productos de esta venta
+                resumen_items = ", ".join(
+                    f"{it.quantity:g}x {it.product_name[:18]}"
+                    for it in s_.items[:3])
+                if len(s_.items) > 3:
+                    resumen_items += f" (+{len(s_.items) - 3} más)"
                 estado = "✅ Pagado" if s_.is_paid else "💳 Pendiente"
                 iid = tree.insert("", "end", values=(
-                    cliente, s_.date,
+                    cliente, s_.date, resumen_items,
                     f"${s_.total:,.0f}".replace(",", "."),
                     f"${s_.amount_paid:,.0f}".replace(",", "."),
                     f"${pendiente:,.0f}".replace(",", "."),
                     estado))
                 sales_map[iid] = s_.sale_id
-            resumen_lbl.configure(
-                text=f"📋 {len(ventas)} fiados pendientes   |   "
-                     f"👥 {len(clientes)} clientes   |   "
-                     f"💰 Total por cobrar: ${total_pend:,.0f}".replace(",", "."))
+
+            # Resumen agrupado por cliente
+            if clientes:
+                texto_clientes = "  |  ".join(
+                    f"{k}: ${v:,.0f}".replace(",", ".")
+                    for k, v in list(clientes.items())[:5])
+                if len(clientes) > 5:
+                    texto_clientes += f"  (+{len(clientes) - 5} más)"
+                resumen_lbl.configure(
+                    text=f"📋 {len(ventas)} fiados   |   💰 Total: ${total_pend:,.0f}\n"
+                         f"👥 Por cliente: {texto_clientes}".replace(",", "."))
+            else:
+                resumen_lbl.configure(text="")
 
         recargar()
+
+        def ver_productos():
+            sel = tree.selection()
+            if not sel:
+                MD.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                return
+            sid = sales_map.get(sel[0])
+            venta = None
+            for v in self.sale_use_case.get_credit_sales(only_unpaid=False):
+                if v.sale_id == sid:
+                    venta = v
+                    break
+            if not venta:
+                return
+            detail_win = tk.Toplevel(win)
+            detail_win.title(f"Productos fiados - Venta #{sid}")
+            detail_win.geometry("600x480")
+            detail_win.transient(win)
+            detail_win.grab_set()
+            detail_win.withdraw()
+            cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
+            ttk.Label(detail_win, text=f"💳 Fiado a: {cliente}",
+                      font=("Arial", 14, "bold")).pack(pady=10)
+            ttk.Label(detail_win, text=f"Fecha: {venta.date}",
+                      font=("Arial", 11)).pack(pady=3)
+            t2 = ttk.Treeview(detail_win,
+                              columns=("Prod", "Qty", "Unit", "Sub"),
+                              show='headings', height=10)
+            for c, t_, w in [("Prod", "Producto", 220), ("Qty", "Cant.", 70),
+                             ("Unit", "P. Unit.", 100), ("Sub", "Subtotal", 110)]:
+                t2.heading(c, text=t_)
+                t2.column(c, width=w, anchor="center")
+            t2.pack(fill="both", expand=True, padx=15, pady=10)
+            for it in venta.items:
+                t2.insert("", "end", values=(
+                    it.product_name, f"{it.quantity:g}",
+                    f"${it.unit_price:,.0f}".replace(",", "."),
+                    f"${it.subtotal:,.0f}".replace(",", ".")))
+            total_f = ttk.Label(detail_win,
+                                text=f"Total: ${venta.total:,.0f}   |   "
+                                     f"Abonado: ${venta.amount_paid:,.0f}   |   "
+                                     f"Pendiente: ${venta.pending():,.0f}".replace(",", "."),
+                                font=("Arial", 12, "bold"))
+            total_f.pack(pady=10)
+            ttk.Button(detail_win, text="Cerrar",
+                       command=detail_win.destroy).pack(pady=10)
+            show_popup_smooth(detail_win, self.current_theme == 'darkly')
 
         def abonar():
             sel = tree.selection()
             if not sel:
-                Messagebox.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
                 return
             sid = sales_map.get(sel[0])
             if not sid:
                 return
-            # Buscar la venta para saber pendiente
             venta = None
             for v in self.sale_use_case.get_credit_sales(only_unpaid=True):
                 if v.sale_id == sid:
@@ -543,7 +596,7 @@ class MainView(tk.Tk):
                 return
             pendiente = venta.pending()
             if pendiente <= 0:
-                Messagebox.show_info("Esta venta ya está pagada.", "OK", parent=win)
+                MD.show_info("Esta venta ya está pagada.", "Listo", parent=win)
                 return
             self._abonar_dialog(win, sid, venta, pendiente, recargar)
 
@@ -554,15 +607,42 @@ class MainView(tk.Tk):
             sid = sales_map.get(sel[0])
             if not sid:
                 return
-            if Messagebox.yesno(f"¿Marcar la venta #{sid} como PAGADA por completo?",
-                                "Confirmar", parent=win) == "Yes":
+            if MD.yesno(f"¿Marcar la venta #{sid} como PAGADA por completo?",
+                        "Confirmar", parent=win) == "Yes":
                 self.sale_use_case.mark_as_paid(sid)
                 recargar()
-                Messagebox.show_info("Marcada como pagada.", "OK", parent=win)
+                MD.show_info("Marcada como pagada.", "Listo", parent=win)
+
+        def on_ctrl_f12(event=None):
+            sel = tree.selection()
+            if not sel:
+                MD.show_warning("Selecciona un fiado primero.", "Sin selección", parent=win)
+                return
+            sid = sales_map.get(sel[0])
+            if not sid:
+                return
+            if MD.yesno(f"⚠️ ¿Eliminar el fiado #{sid}?\n\nEsto restaurará el stock.",
+                        "Confirmar eliminación", parent=win) != "Yes":
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                return
+            self.sale_use_case.delete_sale(sid)
+            MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.", "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+
+        win.bind("<Control-F12>", on_ctrl_f12)
+        tree.bind("<Control-F12>", on_ctrl_f12)
 
         bf = ttk.Frame(win)
         bf.pack(pady=10)
-        ttk.Button(bf, text="💵 Abonar", command=abonar,
+        ttk.Button(bf, text="📋 Ver productos",
+                   command=ver_productos,
+                   bootstyle="info").pack(side="left", padx=5)
+        ttk.Button(bf, text="💵 Abonar",
+                   command=abonar,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
         ttk.Button(bf, text="✅ Marcar como pagado",
                    command=marcar_pagado,
@@ -573,9 +653,9 @@ class MainView(tk.Tk):
         show_popup_smooth(win, self.current_theme == 'darkly')
 
     def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
-        pop = Toplevel(parent)
+        pop = tk.Toplevel(parent)
         pop.title(f"Abonar a venta #{sale_id}")
-        pop.geometry("420x340")
+        pop.geometry("420x380")
         pop.transient(parent)
         pop.grab_set()
         pop.withdraw()
@@ -606,21 +686,20 @@ class MainView(tk.Tk):
                 if monto <= 0:
                     raise ValueError
             except ValueError:
-                Messagebox.show_error("Monto inválido", "Error", parent=pop)
+                MD.show_error("Monto inválido", "Error", parent=pop)
                 return
             if monto > pendiente + 0.01:
-                if Messagebox.yesno(
-                        f"El monto ingresado (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
+                if MD.yesno(
+                        f"El monto (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
                         f"¿Registrar solo ${pendiente:,.0f}?".replace(",", "."),
                         "Confirmar", parent=pop) != "Yes":
                     return
                 monto = pendiente
-            ok, _ = self.sale_use_case.add_payment(sale_id, monto)
-            if ok:
-                pop.destroy()
-                Messagebox.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
-                                     "OK", parent=parent)
-                on_done()
+            self.sale_use_case.add_payment(sale_id, monto)
+            pop.destroy()
+            MD.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
+                         "Listo", parent=parent)
+            on_done()
 
         e.bind("<Return>", lambda e: aplicar())
         bf = ttk.Frame(pop)
@@ -632,8 +711,8 @@ class MainView(tk.Tk):
 
     # =========== AUTO-INICIO ===========
     def _get_startup_bat_path(self):
-        startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows', 'Start Menu',
-                               'Programs', 'Startup')
+        startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
+                               'Start Menu', 'Programs', 'Startup')
         return os.path.join(startup, 'MiniPOS_Portable.bat')
 
     def _is_autostart_enabled(self):
@@ -645,25 +724,25 @@ class MainView(tk.Tk):
             try:
                 with open(bat, 'w', encoding='utf-8') as f:
                     f.write(f'@echo off\nstart "" "{sys.executable}"\n')
-                Messagebox.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio", parent=self)
+                MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio", parent=self)
             except Exception as e:
                 self.autostart_var.set(False)
-                Messagebox.show_error(f"Error: {e}", "Error", parent=self)
+                MD.show_error(f"Error: {e}", "Error", parent=self)
         else:
             try:
                 if os.path.exists(bat):
                     os.remove(bat)
-                Messagebox.show_info("❌ Auto-inicio DESACTIVADO.", "Auto-inicio", parent=self)
+                MD.show_info("❌ Auto-inicio DESACTIVADO.", "Auto-inicio", parent=self)
             except Exception as e:
                 self.autostart_var.set(True)
-                Messagebox.show_error(f"Error: {e}", "Error", parent=self)
+                MD.show_error(f"Error: {e}", "Error", parent=self)
 
     # =========== REPORTES ===========
     def generate_daily_report(self):
         hoy = datetime.now().strftime("%Y-%m-%d")
         sales = self.sale_use_case.get_sales_by_day(hoy)
         if not sales:
-            Messagebox.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
+            MD.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
             return
         arch = filedialog.asksaveasfilename(defaultextension=".txt",
                                             initialfile=f"ventas_{hoy}.txt",
@@ -694,21 +773,21 @@ class MainView(tk.Tk):
         try:
             with open(arch, "w", encoding="utf-8") as f:
                 f.write("\n".join(L))
-            Messagebox.show_info(f"Guardado:\n{arch}", "OK", parent=self)
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
         except Exception as e:
-            Messagebox.show_error(f"Error: {e}", "Error", parent=self)
+            MD.show_error(f"Error: {e}", "Error", parent=self)
 
     def generate_monthly_report(self):
         try:
             import openpyxl
             from openpyxl.styles import Font, Alignment, PatternFill
         except ImportError:
-            Messagebox.show_error("Falta openpyxl.", "Error", parent=self)
+            MD.show_error("Falta openpyxl.", "Error", parent=self)
             return
         ym = datetime.now().strftime("%Y-%m")
         sales = self.sale_use_case.get_sales_by_month(ym)
         if not sales:
-            Messagebox.show_info("No hay ventas este mes.", "Reporte vacío", parent=self)
+            MD.show_info("No hay ventas este mes.", "Reporte vacío", parent=self)
             return
         arch = filedialog.asksaveasfilename(defaultextension=".xlsx",
                                             initialfile=f"ventas_{ym}.xlsx",
@@ -736,9 +815,9 @@ class MainView(tk.Tk):
             ws.column_dimensions[col].width = w
         try:
             wb.save(arch)
-            Messagebox.show_info(f"Guardado:\n{arch}", "OK", parent=self)
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
         except Exception as e:
-            Messagebox.show_error(f"Error: {e}", "Error", parent=self)
+            MD.show_error(f"Error: {e}", "Error", parent=self)
 
     # =========== EXPORTAR / IMPORTAR ===========
     def export_db(self):
@@ -747,12 +826,12 @@ class MainView(tk.Tk):
         if arch:
             self.db_manager.close_connection()
             shutil.copy2(self.db_path, arch)
-            Messagebox.show_info("Base de datos exportada.", "OK", parent=self)
+            MD.show_info("Base de datos exportada.", "Listo", parent=self)
 
     def import_db(self):
         arch = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
-        if arch and Messagebox.yesno("¿Reemplazar datos?", "Confirmar", parent=self) == "Yes":
+        if arch and MD.yesno("¿Reemplazar datos?", "Confirmar", parent=self) == "Yes":
             self.db_manager.close_connection()
             shutil.copy2(arch, self.db_path)
             self.inventory_view.load_products()
-            Messagebox.show_info("Importada.", "OK", parent=self)
+            MD.show_info("Importada.", "Listo", parent=self)
