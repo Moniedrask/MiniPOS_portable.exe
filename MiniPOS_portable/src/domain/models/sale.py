@@ -23,9 +23,10 @@ class Sale:
         self.is_credit = 0
         self.is_paid = 1
         self.amount_paid = 0.0
+        # ✅ Número visual que se muestra al usuario (puede diferir del sale_id)
+        self.display_number = sale_id
 
     def pending(self):
-        """Monto pendiente por cobrar."""
         return max(0.0, self.total - self.amount_paid)
 
     def __repr__(self):
