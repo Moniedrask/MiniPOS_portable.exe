@@ -54,10 +54,8 @@ class MainView(tk.Tk):
         self.product_use_case = ProductCase(self.db_manager)
         self.sale_use_case = SaleCase(self.db_manager)
 
-        # ✅ Bandeja del sistema
         self.tray_icon = None
         self.tray_thread = None
-        # ✅ CORRECCIÓN 3: Cola para comunicar el hilo de pystray con el main thread
         self.tray_queue = queue.Queue()
 
         if not self._check_startup_password():
@@ -69,8 +67,6 @@ class MainView(tk.Tk):
         self._apply_font_size()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-
-        # ✅ Poll de la cola de la bandeja
         self.after(200, self._poll_tray_queue)
 
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
@@ -78,7 +74,7 @@ class MainView(tk.Tk):
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
-    # =========== POLL DE LA COLA DE LA BANDEJA ===========
+    # =========== BANDEJA ===========
     def _poll_tray_queue(self):
         try:
             while True:
@@ -97,7 +93,6 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
-    # =========== CIERRE PERSONALIZADO (BANDEJA) ===========
     def _on_close(self):
         to_tray = self.db_manager.get_setting("close_to_tray", "0") == "1"
         if to_tray:
@@ -154,7 +149,6 @@ class MainView(tk.Tk):
         draw.rectangle([38, 16, 44, 48], fill=(168, 230, 168, 255))
         draw.rectangle([20, 30, 44, 34], fill=(168, 230, 168, 255))
 
-        # ✅ CORRECCIÓN 3: usar la cola en lugar de self.after desde otro hilo
         def on_show(icon, item):
             self.tray_queue.put("show")
 
@@ -252,6 +246,8 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
+        pop.after(100, lambda: e.focus_set())
+
         self.wait_window(pop)
         if resultado["ok"]:
             self.deiconify()
@@ -315,7 +311,7 @@ class MainView(tk.Tk):
 
         ttk.Button(pop, text="Guardar", command=aplicar,
                    style="DarkGreen.TButton").pack(pady=12)
-
+        pop.bind("<Return>", lambda e: aplicar())
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -357,7 +353,7 @@ class MainView(tk.Tk):
 
         ttk.Button(pop, text="Guardar", command=guardar,
                    style="DarkGreen.TButton").pack(pady=12)
-
+        pop.bind("<Return>", lambda e: guardar())
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -528,11 +524,13 @@ class MainView(tk.Tk):
         apply_titlebar_theme(self, self.current_theme == 'darkly')
         self._apply_font_size()
 
-    # =========== RESUMEN DE VENTAS ===========
+    # =========================================================
+    # RESUMEN DE VENTAS (con checkboxes y menú contextual)
+    # =========================================================
     def show_sales_summary(self):
         win = tk.Toplevel(self)
         win.title("Resumen de Ventas")
-        win.geometry("1150x720")
+        win.geometry("1200x720")
         win.transient(self)
         win.configure(bg=self.style.colors.bg)
         win.withdraw()
@@ -540,7 +538,7 @@ class MainView(tk.Tk):
         fg = self.style.colors.fg
 
         tk.Label(win, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
-                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=15)
+                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=12)
 
         s = self.sale_use_case.get_summary()
         cards = tk.Frame(win, bg=bg)
@@ -553,7 +551,7 @@ class MainView(tk.Tk):
             ("FIADOS", s["fiados"], "#d97706"),
         ]
         for i, (titulo, (cnt, tot), color) in enumerate(cards_data):
-            c = tk.Frame(cards, bg=color, padx=18, pady=12)
+            c = tk.Frame(cards, bg=color, padx=18, pady=10)
             c.grid(row=0, column=i, padx=8)
             tk.Label(c, text=titulo, font=("Arial", 12, "bold"),
                      bg=color, fg="#ffffff").pack()
@@ -571,17 +569,74 @@ class MainView(tk.Tk):
                             value=val, bootstyle="info",
                             command=lambda: recargar()).pack(side="left", padx=8)
 
-        tree = ttk.Treeview(win,
-                            columns=("Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
-                            show='headings', height=15)
-        for c, t, w in [("Cliente", "Cliente", 260), ("Ventas", "# Ventas", 90),
+        # ✅ Treeview con columna de selección
+        tree_frame = ttk.Frame(win, bootstyle="dark")
+        tree_frame.pack(fill="both", expand=True, padx=15, pady=10)
+
+        sb = ttk.Scrollbar(tree_frame, orient="vertical")
+        sb.pack(side="right", fill="y")
+
+        tree = ttk.Treeview(tree_frame,
+                            columns=("Sel", "Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
+                            show='headings', height=14,
+                            yscrollcommand=sb.set)
+        tree.heading("Sel", text="☐")
+        tree.column("Sel", width=40, anchor="center")
+        for c, t, w in [("Cliente", "Cliente", 240), ("Ventas", "# Ventas", 90),
                         ("Total", "Total", 140), ("Pagado", "Pagado", 140),
                         ("Pendiente", "Pendiente", 140)]:
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="center")
-        tree.pack(fill="both", expand=True, padx=15, pady=10)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.config(command=tree.yview)
 
-        grupos_map = {}
+        def _on_mousewheel(event):
+            try:
+                tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        tree.bind("<MouseWheel>", _on_mousewheel)
+
+        grupos_map = {}      # iid -> group
+        marcados = set()     # iid de los marcados
+
+        def actualizar_heading_sel():
+            """Actualiza el encabezado de la columna Sel."""
+            if not grupos_map:
+                texto = "☐"
+            elif len(marcados) == 0:
+                texto = "☐"
+            elif len(marcados) >= len(grupos_map):
+                texto = "☑"
+            else:
+                texto = "◪"
+            tree.heading("Sel", text=texto)
+
+        def toggle_mark(iid):
+            if iid in marcados:
+                marcados.discard(iid)
+                tree.set(iid, "Sel", "☐")
+            else:
+                marcados.add(iid)
+                tree.set(iid, "Sel", "☑")
+            actualizar_heading_sel()
+
+        def toggle_all():
+            if len(marcados) >= len(grupos_map):
+                marcados.clear()
+                for iid in grupos_map:
+                    tree.set(iid, "Sel", "☐")
+            else:
+                marcados.clear()
+                for iid in grupos_map:
+                    marcados.add(iid)
+                    tree.set(iid, "Sel", "☑")
+            actualizar_heading_sel()
+
+        def click_heading_sel():
+            toggle_all()
+
+        tree.heading("Sel", text="☐", command=click_heading_sel)
 
         def restaurar_foco():
             try:
@@ -594,6 +649,7 @@ class MainView(tk.Tk):
             for r in tree.get_children():
                 tree.delete(r)
             grupos_map.clear()
+            marcados.clear()
             filtro = filtro_var.get()
             if filtro == "today":
                 sales = self.sale_use_case.get_sales_by_day(datetime.now().strftime("%Y-%m-%d"))
@@ -604,18 +660,22 @@ class MainView(tk.Tk):
             grupos = self.sale_use_case.group_sales_by_customer(sales)
             for g in grupos:
                 iid = tree.insert("", "end", values=(
+                    "☐",
                     g["customer_name"],
                     g["count"],
                     f"${g['total']:,.0f}".replace(",", "."),
                     f"${g['paid']:,.0f}".replace(",", "."),
                     f"${g['pending']:,.0f}".replace(",", ".")))
                 grupos_map[iid] = g
+            actualizar_heading_sel()
 
         recargar()
 
         def ver_detalle(event=None):
             sel = tree.selection()
             if not sel:
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                restaurar_foco()
                 return
             g = grupos_map.get(sel[0])
             if not g:
@@ -656,7 +716,6 @@ class MainView(tk.Tk):
                     f"${sale.total:,.0f}".replace(",", "."), estado))
             ttk.Button(det, text="Cerrar",
                        command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
-
             show_popup_smooth(det)
             try:
                 det.grab_set()
@@ -666,14 +725,101 @@ class MainView(tk.Tk):
 
         tree.bind("<Double-1>", ver_detalle)
 
+        # ✅ Clic en la columna Sel (o cualquier celda) para marcar
+        def on_click(event):
+            region = tree.identify("region", event.x, event.y)
+            if region != "cell":
+                return
+            col = tree.identify_column(event.x)
+            row = tree.identify_row(event.y)
+            if not row:
+                return
+            if col == "#1":
+                toggle_mark(row)
+
+        tree.bind("<Button-1>", on_click, add="+")
+
+        # ✅ Menú contextual (clic derecho)
+        def on_right_click(event):
+            row = tree.identify_row(event.y)
+            if row:
+                tree.selection_set(row)
+                tree.focus(row)
+            style = ttk.Style()
+            m = tk.Menu(win, tearoff=0,
+                        bg=style.colors.bg, fg=style.colors.fg,
+                        activebackground=style.colors.selectbg,
+                        activeforeground=style.colors.selectfg,
+                        bd=1, relief="solid",
+                        font=get_menu_font())
+            m.add_command(label="👁️  Ver detalle", command=ver_detalle)
+            m.add_separator()
+            if row:
+                marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
+                m.add_command(label=marca, command=lambda: toggle_mark(row))
+            m.add_command(label="☑ Marcar todos", command=toggle_all)
+            m.add_command(label="☐ Desmarcar todos",
+                          command=lambda: [marcados.clear(),
+                                           [tree.set(i, "Sel", "☐") for i in grupos_map],
+                                           actualizar_heading_sel()])
+            m.add_separator()
+            m.add_command(label=f"🗑️  Eliminar marcados ({len(marcados)})",
+                          command=eliminar_marcados)
+            try:
+                m.tk_popup(event.x_root, event.y_root)
+            finally:
+                m.grab_release()
+
+        tree.bind("<Button-3>", on_right_click)
+
+        def eliminar_marcados():
+            if not marcados:
+                MD.show_warning("No hay clientes marcados.", "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            total_ventas = sum(grupos_map[i]["count"] for i in marcados if i in grupos_map)
+            total_dinero = sum(grupos_map[i]["total"] for i in marcados if i in grupos_map)
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar TODAS las ventas de los {len(marcados)} clientes marcados?\n\n"
+                    f"Se eliminarán {total_ventas} ventas por un total de ${total_dinero:,.0f}.\n"
+                    f"Esto restaurará el stock de todos los productos.".replace(",", "."),
+                    "Confirmar eliminación total", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                restaurar_foco()
+                return
+            total_borradas = 0
+            for iid in list(marcados):
+                g = grupos_map.get(iid)
+                if not g:
+                    continue
+                for s in g["sales"]:
+                    self.sale_use_case.delete_sale(s.sale_id)
+                    total_borradas += 1
+            MD.show_info(f"✅ {total_borradas} ventas eliminadas y stock restaurado.",
+                         "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+            restaurar_foco()
+
+        # ✅ Ctrl+F12: elimina la venta más reciente del primer marcado/seleccionado
         def on_ctrl_f12(event=None):
-            sel = tree.selection()
-            if not sel:
-                MD.show_warning("Selecciona un cliente primero.",
+            iid = None
+            if marcados:
+                iid = next(iter(marcados))
+            else:
+                sel = tree.selection()
+                if sel:
+                    iid = sel[0]
+            if not iid:
+                MD.show_warning("Marca o selecciona un cliente primero.",
                                 "Sin selección", parent=win)
                 restaurar_foco()
                 return
-            g = grupos_map.get(sel[0])
+            g = grupos_map.get(iid)
             if not g or not g["sales"]:
                 return
             venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
@@ -690,45 +836,15 @@ class MainView(tk.Tk):
                 restaurar_foco()
                 return
             self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"Venta #{sid} eliminada y stock restaurado.",
-                         "Listo", parent=win)
+            MD.show_info(f"Venta #{sid} eliminada y stock restaurado.", "Listo", parent=win)
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
             restaurar_foco()
 
+        # ✅ Shift+F12: elimina todos los marcados
         def on_shift_f12(event=None):
-            sel = tree.selection()
-            if not sel:
-                MD.show_warning("Selecciona un cliente primero.",
-                                "Sin selección", parent=win)
-                restaurar_foco()
-                return
-            g = grupos_map.get(sel[0])
-            if not g or not g["sales"]:
-                return
-            n = g["count"]
-            total_eliminar = g["total"]
-            if MD.yesno(
-                    f"⚠️ ¿Eliminar TODAS las ventas de '{g['customer_name']}'?\n\n"
-                    f"Se eliminarán {n} ventas por un total de ${total_eliminar:,.0f}.\n"
-                    f"Esto restaurará el stock de todos los productos.".replace(",", "."),
-                    "Confirmar eliminación total", parent=win) != "Yes":
-                restaurar_foco()
-                return
-            pw = self._ask_password_1234(win)
-            if not pw:
-                restaurar_foco()
-                return
-            ids = [s.sale_id for s in g["sales"]]
-            for sid in ids:
-                self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"✅ {len(ids)} ventas eliminadas y stock restaurado.",
-                         "Listo", parent=win)
-            recargar()
-            if self.current_page == "inventario":
-                self.inventory_view.load_products()
-            restaurar_foco()
+            eliminar_marcados()
 
         win.bind("<Control-F12>", on_ctrl_f12)
         win.bind("<Shift-F12>", on_shift_f12)
@@ -737,8 +853,12 @@ class MainView(tk.Tk):
 
         bf = tk.Frame(win, bg=bg)
         bf.pack(pady=10)
-        ttk.Button(bf, text="📋 Ver detalle", command=ver_detalle,
+        ttk.Button(bf, text="📋 Más detalles", command=ver_detalle,
                    bootstyle="info").pack(side="left", padx=5)
+        ttk.Button(bf, text="☑ Marcar todos", command=toggle_all,
+                   bootstyle="secondary").pack(side="left", padx=5)
+        ttk.Button(bf, text="🗑️ Eliminar marcados", command=eliminar_marcados,
+                   bootstyle="danger").pack(side="left", padx=5)
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
@@ -765,7 +885,6 @@ class MainView(tk.Tk):
         e = ttk.Entry(pop, textvariable=v, show="•", width=20,
                       font=("Arial", 14), justify="center")
         e.pack(pady=5)
-        e.focus_set()
         ok = {"v": False}
 
         def ver():
@@ -776,9 +895,13 @@ class MainView(tk.Tk):
                 MD.show_error("Contraseña incorrecta", "Error", parent=pop)
                 v.set("")
 
-        ttk.Button(pop, text="Aceptar", command=ver,
-                   style="DarkGreen.TButton").pack(pady=15)
-        e.bind("<Return>", lambda e: ver())
+        btn = ttk.Button(pop, text="Aceptar", command=ver,
+                         style="DarkGreen.TButton")
+        btn.pack(pady=15)
+
+        e.bind("<Return>", lambda ev: ver())
+        pop.bind("<Return>", lambda ev: ver())
+        pop.bind("<Escape>", lambda ev: pop.destroy())
 
         show_popup_smooth(pop)
         try:
@@ -787,14 +910,26 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
+        # ✅ Forzar foco al Entry
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e.focus_set()
+            except Exception:
+                pass
+        pop.after(50, set_focus)
+        pop.after(250, set_focus)
+
         parent.wait_window(pop)
         return ok["v"]
 
-    # =========== FIADOS ===========
+    # =========================================================
+    # FIADOS (con checkboxes y menú contextual)
+    # =========================================================
     def show_credit_sales(self):
         win = tk.Toplevel(self)
         win.title("Fiados - Cuentas por cobrar")
-        win.geometry("1100x700")
+        win.geometry("1150x720")
         win.transient(self)
         win.configure(bg=self.style.colors.bg)
         win.withdraw()
@@ -802,7 +937,7 @@ class MainView(tk.Tk):
         fg = self.style.colors.fg
 
         tk.Label(win, text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
-                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=15)
+                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=12)
 
         resumen_lbl = tk.Label(win, text="", font=("Arial", 12, "bold"),
                                bg=bg, fg=fg)
@@ -811,17 +946,66 @@ class MainView(tk.Tk):
         frame = ttk.Frame(win, bootstyle="dark")
         frame.pack(fill="both", expand=True, padx=15, pady=10)
 
+        sb = ttk.Scrollbar(frame, orient="vertical")
+        sb.pack(side="right", fill="y")
+
         tree = ttk.Treeview(frame,
-                            columns=("Cliente", "Fiados", "Total", "Abonado", "Pendiente"),
-                            show='headings', height=15)
-        for c, t, w in [("Cliente", "Cliente", 260), ("Fiados", "# Fiados", 90),
-                        ("Total", "Total fiado", 150), ("Abonado", "Abonado", 150),
-                        ("Pendiente", "Pendiente", 150)]:
+                            columns=("Sel", "Cliente", "Fiados", "Total", "Abonado", "Pendiente"),
+                            show='headings', height=15,
+                            yscrollcommand=sb.set)
+        tree.heading("Sel", text="☐")
+        tree.column("Sel", width=40, anchor="center")
+        for c, t, w in [("Cliente", "Cliente", 240), ("Fiados", "# Fiados", 90),
+                        ("Total", "Total fiado", 140), ("Abonado", "Abonado", 140),
+                        ("Pendiente", "Pendiente", 140)]:
             tree.heading(c, text=t)
             tree.column(c, width=w, anchor="center")
-        tree.pack(fill="both", expand=True)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.config(command=tree.yview)
+
+        def _on_mousewheel(event):
+            try:
+                tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        tree.bind("<MouseWheel>", _on_mousewheel)
 
         grupos_map = {}
+        marcados = set()
+
+        def actualizar_heading_sel():
+            if not grupos_map:
+                texto = "☐"
+            elif len(marcados) == 0:
+                texto = "☐"
+            elif len(marcados) >= len(grupos_map):
+                texto = "☑"
+            else:
+                texto = "◪"
+            tree.heading("Sel", text=texto)
+
+        def toggle_mark(iid):
+            if iid in marcados:
+                marcados.discard(iid)
+                tree.set(iid, "Sel", "☐")
+            else:
+                marcados.add(iid)
+                tree.set(iid, "Sel", "☑")
+            actualizar_heading_sel()
+
+        def toggle_all():
+            if len(marcados) >= len(grupos_map):
+                marcados.clear()
+                for iid in grupos_map:
+                    tree.set(iid, "Sel", "☐")
+            else:
+                marcados.clear()
+                for iid in grupos_map:
+                    marcados.add(iid)
+                    tree.set(iid, "Sel", "☑")
+            actualizar_heading_sel()
+
+        tree.heading("Sel", text="☐", command=toggle_all)
 
         def restaurar_foco():
             try:
@@ -834,6 +1018,7 @@ class MainView(tk.Tk):
             for r in tree.get_children():
                 tree.delete(r)
             grupos_map.clear()
+            marcados.clear()
             ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
             ventas = [v for v in ventas if v.pending() > 0.01]
             grupos = self.sale_use_case.group_sales_by_customer(ventas)
@@ -841,6 +1026,7 @@ class MainView(tk.Tk):
             for g in grupos:
                 total_global += g["pending"]
                 iid = tree.insert("", "end", values=(
+                    "☐",
                     g["customer_name"],
                     g["count"],
                     f"${g['total']:,.0f}".replace(",", "."),
@@ -850,12 +1036,15 @@ class MainView(tk.Tk):
             resumen_lbl.configure(
                 text=f"👥 {len(grupos)} clientes con deuda   |   "
                      f"💰 Total por cobrar: ${total_global:,.0f}".replace(",", "."))
+            actualizar_heading_sel()
 
         recargar()
 
         def ver_detalle(event=None):
             sel = tree.selection()
             if not sel:
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                restaurar_foco()
                 return
             g = grupos_map.get(sel[0])
             if not g:
@@ -895,7 +1084,6 @@ class MainView(tk.Tk):
                     f"${sale.pending():,.0f}".replace(",", ".")))
             ttk.Button(det, text="Cerrar",
                        command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
-
             show_popup_smooth(det)
             try:
                 det.grab_set()
@@ -905,14 +1093,32 @@ class MainView(tk.Tk):
 
         tree.bind("<Double-1>", ver_detalle)
 
+        def on_click(event):
+            region = tree.identify("region", event.x, event.y)
+            if region != "cell":
+                return
+            col = tree.identify_column(event.x)
+            row = tree.identify_row(event.y)
+            if not row:
+                return
+            if col == "#1":
+                toggle_mark(row)
+
+        tree.bind("<Button-1>", on_click, add="+")
+
         def abonar():
-            sel = tree.selection()
-            if not sel:
-                MD.show_warning("Selecciona un cliente primero.",
-                                "Sin selección", parent=win)
+            iid = None
+            if marcados:
+                iid = next(iter(marcados))
+            else:
+                sel = tree.selection()
+                if sel:
+                    iid = sel[0]
+            if not iid:
+                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 restaurar_foco()
                 return
-            g = grupos_map.get(sel[0])
+            g = grupos_map.get(iid)
             if not g:
                 return
             ventas_pend = [v for v in g["sales"] if v.pending() > 0.01]
@@ -925,36 +1131,111 @@ class MainView(tk.Tk):
             self._abonar_dialog(win, venta.sale_id, venta, pendiente, recargar)
 
         def marcar_pagado():
-            sel = tree.selection()
-            if not sel:
-                MD.show_warning("Selecciona un cliente primero.",
+            if not marcados and not tree.selection():
+                MD.show_warning("Marca o selecciona un cliente primero.",
                                 "Sin selección", parent=win)
                 restaurar_foco()
                 return
-            g = grupos_map.get(sel[0])
-            if not g:
-                return
+            iids = list(marcados) if marcados else list(tree.selection())
+            total_marcar = sum(grupos_map[i]["pending"] for i in iids if i in grupos_map)
             if MD.yesno(
-                    f"¿Marcar TODOS los fiados pendientes de '{g['customer_name']}' como PAGADOS?\n"
-                    f"Total a marcar: ${g['pending']:,.0f}".replace(",", "."),
+                    f"¿Marcar TODOS los fiados pendientes de {len(iids)} cliente(s) como PAGADOS?\n"
+                    f"Total a marcar: ${total_marcar:,.0f}".replace(",", "."),
                     "Confirmar", parent=win) != "Yes":
                 restaurar_foco()
                 return
-            for v in g["sales"]:
-                if v.pending() > 0.01:
-                    self.sale_use_case.mark_as_paid(v.sale_id)
+            for iid in iids:
+                g = grupos_map.get(iid)
+                if not g:
+                    continue
+                for v in g["sales"]:
+                    if v.pending() > 0.01:
+                        self.sale_use_case.mark_as_paid(v.sale_id)
             recargar()
             MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
             restaurar_foco()
 
+        def eliminar_marcados():
+            if not marcados:
+                MD.show_warning("No hay clientes marcados.", "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            total_fiados = sum(grupos_map[i]["count"] for i in marcados if i in grupos_map)
+            total_dinero = sum(grupos_map[i]["total"] for i in marcados if i in grupos_map)
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar TODOS los fiados de los {len(marcados)} clientes marcados?\n\n"
+                    f"Se eliminarán {total_fiados} fiados por un total de ${total_dinero:,.0f}.\n"
+                    f"Esto restaurará el stock de todos los productos.".replace(",", "."),
+                    "Confirmar eliminación total", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                restaurar_foco()
+                return
+            total_borradas = 0
+            for iid in list(marcados):
+                g = grupos_map.get(iid)
+                if not g:
+                    continue
+                for s in g["sales"]:
+                    self.sale_use_case.delete_sale(s.sale_id)
+                    total_borradas += 1
+            MD.show_info(f"✅ {total_borradas} fiados eliminados y stock restaurado.",
+                         "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+            restaurar_foco()
+
+        def on_right_click(event):
+            row = tree.identify_row(event.y)
+            if row:
+                tree.selection_set(row)
+                tree.focus(row)
+            style = ttk.Style()
+            m = tk.Menu(win, tearoff=0,
+                        bg=style.colors.bg, fg=style.colors.fg,
+                        activebackground=style.colors.selectbg,
+                        activeforeground=style.colors.selectfg,
+                        bd=1, relief="solid",
+                        font=get_menu_font())
+            m.add_command(label="👁️  Ver detalle", command=ver_detalle)
+            m.add_command(label="💵 Abonar (más antigua)", command=abonar)
+            m.add_command(label="✅ Marcar como pagado", command=marcar_pagado)
+            m.add_separator()
+            if row:
+                marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
+                m.add_command(label=marca, command=lambda: toggle_mark(row))
+            m.add_command(label="☑ Marcar todos", command=toggle_all)
+            m.add_command(label="☐ Desmarcar todos",
+                          command=lambda: [marcados.clear(),
+                                           [tree.set(i, "Sel", "☐") for i in grupos_map],
+                                           actualizar_heading_sel()])
+            m.add_separator()
+            m.add_command(label=f"🗑️  Eliminar marcados ({len(marcados)})",
+                          command=eliminar_marcados)
+            try:
+                m.tk_popup(event.x_root, event.y_root)
+            finally:
+                m.grab_release()
+
+        tree.bind("<Button-3>", on_right_click)
+
         def on_ctrl_f12(event=None):
-            sel = tree.selection()
-            if not sel:
-                MD.show_warning("Selecciona un cliente primero.",
+            iid = None
+            if marcados:
+                iid = next(iter(marcados))
+            else:
+                sel = tree.selection()
+                if sel:
+                    iid = sel[0]
+            if not iid:
+                MD.show_warning("Marca o selecciona un cliente primero.",
                                 "Sin selección", parent=win)
                 restaurar_foco()
                 return
-            g = grupos_map.get(sel[0])
+            g = grupos_map.get(iid)
             if not g or not g["sales"]:
                 return
             venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
@@ -971,45 +1252,14 @@ class MainView(tk.Tk):
                 restaurar_foco()
                 return
             self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.",
-                         "Listo", parent=win)
+            MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.", "Listo", parent=win)
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
             restaurar_foco()
 
         def on_shift_f12(event=None):
-            sel = tree.selection()
-            if not sel:
-                MD.show_warning("Selecciona un cliente primero.",
-                                "Sin selección", parent=win)
-                restaurar_foco()
-                return
-            g = grupos_map.get(sel[0])
-            if not g or not g["sales"]:
-                return
-            n = g["count"]
-            total_eliminar = g["total"]
-            if MD.yesno(
-                    f"⚠️ ¿Eliminar TODOS los fiados de '{g['customer_name']}'?\n\n"
-                    f"Se eliminarán {n} fiados por un total de ${total_eliminar:,.0f}.\n"
-                    f"Esto restaurará el stock de todos los productos.".replace(",", "."),
-                    "Confirmar eliminación total", parent=win) != "Yes":
-                restaurar_foco()
-                return
-            pw = self._ask_password_1234(win)
-            if not pw:
-                restaurar_foco()
-                return
-            ids = [s.sale_id for s in g["sales"]]
-            for sid in ids:
-                self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"✅ {len(ids)} fiados eliminados y stock restaurado.",
-                         "Listo", parent=win)
-            recargar()
-            if self.current_page == "inventario":
-                self.inventory_view.load_products()
-            restaurar_foco()
+            eliminar_marcados()
 
         win.bind("<Control-F12>", on_ctrl_f12)
         win.bind("<Shift-F12>", on_shift_f12)
@@ -1018,12 +1268,16 @@ class MainView(tk.Tk):
 
         bf = tk.Frame(win, bg=bg)
         bf.pack(pady=10)
-        ttk.Button(bf, text="📋 Ver detalle", command=ver_detalle,
+        ttk.Button(bf, text="📋 Más detalles", command=ver_detalle,
                    bootstyle="info").pack(side="left", padx=5)
         ttk.Button(bf, text="💵 Abonar (más antigua)",
                    command=abonar, style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="✅ Marcar todo pagado",
+        ttk.Button(bf, text="✅ Marcar como pagado",
                    command=marcar_pagado, style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="☑ Marcar todos", command=toggle_all,
+                   bootstyle="secondary").pack(side="left", padx=5)
+        ttk.Button(bf, text="🗑️ Eliminar marcados", command=eliminar_marcados,
+                   bootstyle="danger").pack(side="left", padx=5)
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
@@ -1064,7 +1318,6 @@ class MainView(tk.Tk):
         e = ttk.Entry(pop, textvariable=monto_var, width=20,
                       font=("Arial", 16), justify="center")
         e.pack(pady=5)
-        e.focus_set()
 
         def aplicar():
             try:
@@ -1093,6 +1346,9 @@ class MainView(tk.Tk):
                 pass
 
         e.bind("<Return>", lambda e: aplicar())
+        pop.bind("<Return>", lambda e: aplicar())
+        pop.bind("<Escape>", lambda e: pop.destroy())
+
         bf = tk.Frame(pop, bg=bg)
         bf.pack(pady=15)
         ttk.Button(bf, text="Registrar abono", command=aplicar,
@@ -1106,6 +1362,15 @@ class MainView(tk.Tk):
             pop.focus_force()
         except Exception:
             pass
+
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e.focus_set()
+            except Exception:
+                pass
+        pop.after(50, set_focus)
+        pop.after(250, set_focus)
 
     # =========== AUTO-INICIO ===========
     def _get_startup_bat_path(self):
