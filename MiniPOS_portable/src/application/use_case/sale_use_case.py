@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from domain.models.sale import Sale, SaleItem
 
@@ -101,14 +102,8 @@ class SaleCase:
         conn.commit()
         return True, "Abono registrado"
 
-    # ============ NUEVO: aplicar abono a todas las deudas del cliente ============
     def apply_payment_to_customer(self, name, amount):
-        """
-        Aplica un abono a las ventas fiadas pendientes del cliente,
-        empezando por la más antigua. Devuelve (aplicado, saldo_restante).
-        """
         if not name or amount <= 0:
-            # Calcular saldo actual sin aplicar nada
             return 0.0, self.get_pending_by_customer(name)
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -134,7 +129,6 @@ class SaleCase:
             restante -= pagar
             aplicado += pagar
         conn.commit()
-        # Calcular saldo restante del cliente
         cur.execute(
             "SELECT COALESCE(SUM(total - amount_paid), 0) t FROM sales "
             "WHERE is_credit = 1 AND is_paid = 0 AND customer_name = ?", (name,))
@@ -206,3 +200,42 @@ class SaleCase:
             "total": (ventas_tot, total_tot),
             "fiados": (fiados_c, fiados_t),
         }
+
+    # ============ BORRADOR DE CARRITO ============
+    def save_cart_draft(self, items):
+        """Guarda el carrito actual como borrador (se llama cada vez que cambia)."""
+        try:
+            conn = self.db.get_connection()
+            cur = conn.cursor()
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            data = json.dumps(items, ensure_ascii=False)
+            cur.execute(
+                "INSERT OR REPLACE INTO cart_draft (id, data, updated_at) VALUES (1, ?, ?)",
+                (data, now))
+            conn.commit()
+        except Exception:
+            pass
+
+    def load_cart_draft(self):
+        """Devuelve (items, fecha) o (None, None)."""
+        try:
+            cur = self.db.get_connection().cursor()
+            cur.execute("SELECT data, updated_at FROM cart_draft WHERE id = 1")
+            row = cur.fetchone()
+            if not row:
+                return None, None
+            items = json.loads(row["data"])
+            if not items:
+                return None, None
+            return items, row["updated_at"]
+        except Exception:
+            return None, None
+
+    def clear_cart_draft(self):
+        try:
+            conn = self.db.get_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM cart_draft WHERE id = 1")
+            conn.commit()
+        except Exception:
+            pass
