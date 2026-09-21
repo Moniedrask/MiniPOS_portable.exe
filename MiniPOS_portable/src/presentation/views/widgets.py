@@ -42,18 +42,75 @@ def apply_titlebar_theme(window, is_dark=True):
     force_dark_titlebar(window)
 
 
+def auto_resize_popup(win, margin=10):
+    """
+    ✅ NUEVO: Ajusta el popup al tamaño de la pantalla con margen de seguridad.
+    - 10px a los lados
+    - 40px arriba (barra de título de Windows)
+    - 40px abajo (barra de tareas de Windows)
+    """
+    try:
+        win.update_idletasks()
+
+        # Tamaño actual (según geometry)
+        geo = win.geometry()  # "WxH+X+Y"
+        try:
+            size = geo.split("+")[0]
+            if "x" in size:
+                cw, ch = size.split("x")
+                cw = int(cw)
+                ch = int(ch)
+            else:
+                cw = win.winfo_width()
+                ch = win.winfo_height()
+        except Exception:
+            cw = win.winfo_width()
+            ch = win.winfo_height()
+
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+
+        max_w = sw - margin * 2
+        max_h = sh - margin * 2 - 40  # extra por barra de título/tareas
+
+        w = min(cw, max_w)
+        h = min(ch, max_h)
+
+        # Si el tamaño actual ya cabe, no tocar nada
+        if cw <= max_w and ch <= max_h:
+            return
+
+        x = (sw - w) // 2
+        y = max(margin, (sh - h) // 2 - 20)
+
+        win.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        pass
+
+
 def center_window(win):
-    win.update_idletasks()
-    w = win.winfo_width()
-    h = win.winfo_height()
-    if w <= 1 or h <= 1:
-        w = win.winfo_reqwidth()
-        h = win.winfo_reqheight()
-    sw = win.winfo_screenwidth()
-    sh = win.winfo_screenheight()
-    x = (sw - w) // 2
-    y = (sh - h) // 2
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    """Centra la ventana y la ajusta si excede la pantalla."""
+    try:
+        win.update_idletasks()
+        w = win.winfo_width()
+        h = win.winfo_height()
+        if w <= 1 or h <= 1:
+            w = win.winfo_reqwidth()
+            h = win.winfo_reqheight()
+
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+
+        max_w = sw - 20
+        max_h = sh - 80
+        w = min(w, max_w)
+        h = min(h, max_h)
+
+        x = (sw - w) // 2
+        y = max(0, (sh - h) // 2 - 20)
+        win.geometry(f"{w}x{h}+{x}+{y}")
+    except Exception:
+        pass
 
 
 def show_popup_smooth(popup, is_dark=True):
@@ -73,8 +130,8 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    popup.update_idletasks()
-    center_window(popup)
+    # ✅ Ajustar antes de mostrar
+    auto_resize_popup(popup)
 
     try:
         popup.deiconify()
@@ -84,6 +141,10 @@ def show_popup_smooth(popup, is_dark=True):
         popup.update()
     except Exception:
         pass
+
+    # ✅ Reajustar después de que el contenido real se dibuja
+    popup.after(80, lambda: auto_resize_popup(popup) if popup.winfo_exists() else None)
+    popup.after(250, lambda: auto_resize_popup(popup) if popup.winfo_exists() else None)
 
     try:
         style = ttk.Style()
@@ -178,8 +239,7 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
 def make_scrollable(container, build_content, build_bottom=None, bg=None):
     """
     Convierte `container` en una zona con scroll.
-    Los widgets que YA tienen scroll propio (Treeview, Listbox, Text)
-    se saltan al aplicar la rueda del ratón para evitar doble scroll.
+    Los widgets con scroll propio (Treeview/Listbox/Text) se saltan.
     """
     apply_dark_red_scrollbar_style()
     if bg is None:
@@ -190,10 +250,10 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
 
     result = {"canvas": None, "inner": None, "scrollbar": None, "bottom": None}
 
-    # 1. Botones fijos abajo
+    # 1. Botones fijos abajo (PRIORIDAD)
     if build_bottom is not None:
         bottom_frame = tk.Frame(container, bg=bg)
-        bottom_frame.pack(side="bottom", fill="x")
+        bottom_frame.pack(side="bottom", fill="x", pady=4)
         try:
             build_bottom(bottom_frame)
         except Exception:
@@ -239,11 +299,8 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
             pass
 
     def bind_wheel_recursive(widget):
-        # ✅ Saltar widgets que ya manejan su propia rueda
         try:
-            if isinstance(widget, (ttk.Treeview, tk.Listbox, tk.Text)):
-                pass  # No agregar binding al canvas
-            else:
+            if not isinstance(widget, (ttk.Treeview, tk.Listbox, tk.Text)):
                 widget.bind("<MouseWheel>", _on_mousewheel, add="+")
         except Exception:
             pass
@@ -265,12 +322,22 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     except Exception:
         pass
 
-    # 7. Aplicar rueda del ratón a los hijos
+    # 7. Aplicar rueda a los hijos + forzar recálculo
+    def _recalcular():
+        try:
+            container.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            bind_wheel_recursive(inner)
+            if result["bottom"] is not None:
+                bind_wheel_recursive(result["bottom"])
+        except Exception:
+            pass
+
     try:
-        container.update_idletasks()
-        bind_wheel_recursive(inner)
-        if result["bottom"] is not None:
-            bind_wheel_recursive(result["bottom"])
+        _recalcular()
+        # ✅ Reintentar después de que el layout se asiente
+        container.after(100, _recalcular)
+        container.after(300, _recalcular)
     except Exception:
         pass
 
@@ -738,6 +805,15 @@ class AutoCompleteEntry(ttk.Entry):
         w = self.winfo_width()
         item_h = 22
         h = min(len(values) * item_h + 6, 300)
+
+        # ✅ Asegurar que el dropdown no se salga de la pantalla
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        if x + w > sw - 10:
+            x = sw - w - 10
+        if y + h > sh - 10:
+            y = self.winfo_rooty() - h
+
         self.popup.geometry(f"{w}x{h}+{x}+{y}")
         self.popup.deiconify()
         self.popup.lift()
