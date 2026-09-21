@@ -467,6 +467,9 @@ class MainView(tk.Tk):
                                  variable=self.autostart_var,
                                  command=self.toggle_autostart)
             menu.add_separator()
+            menu.add_command(label="🔄 Reiniciar # de ventas",
+                             command=self.reset_sales_counter)
+            menu.add_separator()
             menu.add_command(label="📄 Reporte del Día (TXT)",
                              command=self.generate_daily_report)
             menu.add_command(label="📊 Reporte del Mes (Excel)",
@@ -523,6 +526,37 @@ class MainView(tk.Tk):
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
                          "Modo normal", parent=self)
 
+    # =========== REINICIAR # DE VENTAS ===========
+    def reset_sales_counter(self):
+        """Borra TODAS las ventas y reinicia el contador a #1. Requiere contraseña."""
+        r1 = MD.yesno(
+            "⚠️ ¿Reiniciar el contador de ventas?\n\n"
+            "Esta acción ELIMINARÁ TODAS las ventas, fiados y abonos registrados.\n"
+            "Los productos del inventario NO se borran.\n\n"
+            "¿Deseas continuar?",
+            "Confirmar reinicio", parent=self, default_yes=False)
+        if r1 != "Yes":
+            return
+        r2 = MD.yesno(
+            "🚨 ÚLTIMA ADVERTENCIA 🚨\n\n"
+            "No se puede deshacer. Se perderá TODO el historial de ventas y fiados.\n\n"
+            "¿Estás COMPLETAMENTE seguro?",
+            "Confirmación final", parent=self, default_yes=False)
+        if r2 != "Yes":
+            return
+        pw = self._ask_password_1234(self)
+        if not pw:
+            return
+        try:
+            self.sale_use_case.reset_sales_counter()
+            MD.show_info(
+                "✅ Contador reiniciado. La próxima venta será #1.",
+                "Listo", parent=self)
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+        except Exception as e:
+            MD.show_error(f"Error al reiniciar: {e}", "Error", parent=self)
+
     def show_page(self, page):
         for w in (self.payment_view, self.inventory_view):
             w.pack_forget()
@@ -551,7 +585,7 @@ class MainView(tk.Tk):
         self._apply_font_size()
 
     # =========================================================
-    # RESUMEN DE VENTAS (con checkboxes y menú contextual)
+    # RESUMEN DE VENTAS
     # =========================================================
     def show_sales_summary(self):
         win = tk.Toplevel(self)
@@ -566,27 +600,56 @@ class MainView(tk.Tk):
         tk.Label(win, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
                  font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=12)
 
-        s = self.sale_use_case.get_summary()
+        # ===== CARDS DINÁMICAS =====
         cards = tk.Frame(win, bg=bg)
         cards.pack(pady=5)
+        cards_labels = {}
 
-        cards_data = [
-            ("HOY", s["hoy"], "#0d6efd"),
-            ("MES", s["mes"], "#0d6efd"),
-            ("TOTAL", s["total"], "#0a4d1f"),
-            ("FIADOS", s["fiados"], "#d97706"),
-        ]
-        for i, (titulo, (cnt, tot), color) in enumerate(cards_data):
-            c = tk.Frame(cards, bg=color, padx=18, pady=10)
-            c.grid(row=0, column=i, padx=8)
-            tk.Label(c, text=titulo, font=("Arial", 12, "bold"),
-                     bg=color, fg="#ffffff").pack()
-            tk.Label(c, text=f"{cnt} ventas", font=("Arial", 11),
-                     bg=color, fg="#ffffff").pack()
-            tk.Label(c, text=f"${tot:,.0f}".replace(",", "."),
-                     font=("Arial", 16, "bold"),
-                     bg=color, fg="#ffffff").pack()
+        def crear_cards():
+            for w in cards.winfo_children():
+                w.destroy()
+            cards_labels.clear()
+            s = self.sale_use_case.get_summary()
+            datos = [
+                ("HOY", s["hoy"], "#0d6efd"),
+                ("MES", s["mes"], "#0d6efd"),
+                ("TOTAL", s["total"], "#0a4d1f"),
+                ("FIADOS", s["fiados"], "#d97706"),
+            ]
+            for i, (titulo, (cnt, tot), color) in enumerate(datos):
+                c = tk.Frame(cards, bg=color, padx=18, pady=10)
+                c.grid(row=0, column=i, padx=8)
+                tk.Label(c, text=titulo, font=("Arial", 12, "bold"),
+                         bg=color, fg="#ffffff").pack()
+                lc = tk.Label(c, text=f"{cnt} ventas", font=("Arial", 11),
+                              bg=color, fg="#ffffff")
+                lc.pack()
+                lt = tk.Label(c, text=f"${tot:,.0f}".replace(",", "."),
+                              font=("Arial", 16, "bold"),
+                              bg=color, fg="#ffffff")
+                lt.pack()
+                cards_labels[titulo] = (lc, lt)
 
+        def actualizar_cards():
+            s = self.sale_use_case.get_summary()
+            datos = {
+                "HOY": s["hoy"],
+                "MES": s["mes"],
+                "TOTAL": s["total"],
+                "FIADOS": s["fiados"],
+            }
+            for titulo, (cnt, tot) in datos.items():
+                if titulo in cards_labels:
+                    lc, lt = cards_labels[titulo]
+                    try:
+                        lc.configure(text=f"{cnt} ventas")
+                        lt.configure(text=f"${tot:,.0f}".replace(",", "."))
+                    except Exception:
+                        pass
+
+        crear_cards()
+
+        # ===== FILTROS =====
         filt_frame = tk.Frame(win, bg=bg)
         filt_frame.pack(pady=5)
         filtro_var = tk.StringVar(value="all")
@@ -595,6 +658,7 @@ class MainView(tk.Tk):
                             value=val, bootstyle="info",
                             command=lambda: recargar()).pack(side="left", padx=8)
 
+        # ===== TREEVIEW =====
         tree_frame = ttk.Frame(win, bootstyle="dark")
         tree_frame.pack(fill="both", expand=True, padx=15, pady=10)
 
@@ -716,6 +780,8 @@ class MainView(tk.Tk):
                     f"${g['pending']:,.0f}".replace(",", ".")))
                 grupos_map[iid] = g
             actualizar_heading_sel()
+            # ✅ Actualizar los cards
+            actualizar_cards()
 
         recargar()
 
@@ -917,7 +983,7 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # PEDIR CONTRASEÑA 1234 (CORREGIDO - sin doble binding)
+    # PEDIR CONTRASEÑA 1234
     # =========================================================
     def _ask_password_1234(self, parent):
         pop = tk.Toplevel(parent)
@@ -939,7 +1005,6 @@ class MainView(tk.Tk):
         ok = {"v": False}
 
         def ver(ev=None):
-            # ✅ CORRECCIÓN: retornar "break" para no propagar el evento al popup
             if v.get() == "1234":
                 ok["v"] = True
                 pop.destroy()
@@ -957,10 +1022,8 @@ class MainView(tk.Tk):
             pop.destroy()
             return "break"
 
-        # ✅ SOLO un binding a Return en el Entry
         e.bind("<Return>", ver)
         e.bind("<KP_Enter>", ver)
-        # ✅ Escape para cancelar
         pop.bind("<Escape>", cancelar)
 
         ttk.Button(pop, text="Aceptar", command=ver,
@@ -987,7 +1050,7 @@ class MainView(tk.Tk):
         return ok["v"]
 
     # =========================================================
-    # FIADOS (con checkboxes y menú contextual)
+    # FIADOS
     # =========================================================
     def show_credit_sales(self):
         win = tk.Toplevel(self)
@@ -1382,7 +1445,7 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # ABONAR (CORREGIDO - sin doble binding)
+    # ABONAR
     # =========================================================
     def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
@@ -1446,7 +1509,6 @@ class MainView(tk.Tk):
             pop.destroy()
             return "break"
 
-        # ✅ SOLO un binding Return en el Entry
         e.bind("<Return>", aplicar)
         e.bind("<KP_Enter>", aplicar)
         pop.bind("<Escape>", cancelar)
