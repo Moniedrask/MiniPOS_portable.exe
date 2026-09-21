@@ -16,9 +16,12 @@ class PaymentView(ttk.Frame):
         self.get_theme = get_theme_func
         self.cart = []
         self.tooltip = None
+        self._draft_loaded = False
         self.create_widgets()
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
+        # ✅ Buscar borrador de carrito al iniciar
+        self.after(600, self._check_cart_draft)
         self._keep_scanner_focused()
 
     def _is_dark(self):
@@ -37,6 +40,50 @@ class PaymentView(ttk.Frame):
         except Exception:
             pass
         self.after(700, self._keep_scanner_focused)
+
+    # ============ AUTO-GUARDADO DEL CARRITO ============
+    def _check_cart_draft(self):
+        """Al abrir, revisa si hay un carrito sin cobrar."""
+        if self._draft_loaded:
+            return
+        self._draft_loaded = True
+        try:
+            items, updated = self.sale_use_case.load_cart_draft()
+        except Exception:
+            return
+        if not items:
+            return
+        try:
+            total = sum(i["quantity"] * i["unit_price"] for i in items)
+            n = len(items)
+            fecha = updated or "(sin fecha)"
+            r = MD.yesno(
+                f"🛒 Se encontró un carrito sin cobrar:\n\n"
+                f"Productos: {n}\n"
+                f"Total: ${total:,.0f}\n"
+                f"Guardado: {fecha}\n\n"
+                f"¿Deseas recuperarlo?".replace(",", "."),
+                "Recuperar carrito", parent=self)
+            if r == "Yes":
+                self.cart = items
+                self.refresh_cart()
+                self.scan_entry.focus_set()
+            else:
+                self.sale_use_case.clear_cart_draft()
+                self.cart = []
+                self.refresh_cart()
+        except Exception:
+            pass
+
+    def _save_cart_draft(self):
+        """Guarda el carrito actual como borrador."""
+        try:
+            if self.cart:
+                self.sale_use_case.save_cart_draft(self.cart)
+            else:
+                self.sale_use_case.clear_cart_draft()
+        except Exception:
+            pass
 
     def create_widgets(self):
         top = ttk.Frame(self, bootstyle="dark")
@@ -176,12 +223,14 @@ class PaymentView(ttk.Frame):
                         it["subtotal"] = it["quantity"] * it["unit_price"]
                     break
             self.refresh_cart()
+            self._save_cart_draft()
             self.scan_entry.focus_set()
 
     def _confirm_remove_all(self, pid, name):
         if MD.yesno(f"¿Quitar TODO '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
             self.cart = [i for i in self.cart if i["product_id"] != pid]
             self.refresh_cart()
+            self._save_cart_draft()
             self.scan_entry.focus_set()
 
     def add_by_barcode(self, event=None):
@@ -257,6 +306,7 @@ class PaymentView(ttk.Frame):
                 it["quantity"] += cantidad
                 it["subtotal"] = it["quantity"] * it["unit_price"]
                 self.refresh_cart()
+                self._save_cart_draft()
                 return
         self.cart.append({
             "product_id": product.product_id,
@@ -268,6 +318,7 @@ class PaymentView(ttk.Frame):
             "subtotal": cantidad * product.price,
         })
         self.refresh_cart()
+        self._save_cart_draft()
 
     def refresh_cart(self):
         for r in self.tree.get_children():
@@ -287,6 +338,7 @@ class PaymentView(ttk.Frame):
         if MD.yesno("¿Vaciar el carrito?", "Confirmar", parent=self) == "Yes":
             self.cart = []
             self.refresh_cart()
+            self.sale_use_case.clear_cart_draft()
             self.scan_entry.focus_set()
 
     # ============ COBRAR ============
@@ -330,22 +382,18 @@ class PaymentView(ttk.Frame):
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 12)).pack(pady=5)
 
-        # ====== Aviso de deuda ======
         deuda_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
                              bg=bg, fg="#ffd166", wraplength=560, justify="center")
         deuda_lbl.pack(pady=5)
 
-        # ====== Frame de abono ======
         abono_frame = tk.Frame(pop, bg=bg)
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar()
         saldo_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
                              bg=bg, fg="#a8e6a8", wraplength=560, justify="center")
 
-        # ====== Método de pago (definido antes para los traces) ======
         metodo_var = tk.StringVar(value="Efectivo")
 
-        # ---- Recalcular saldo (abono resta en tiempo real) ----
         def recalcular_saldo(*args):
             try:
                 nombre = nombre_var.get().strip()
@@ -354,9 +402,7 @@ class PaymentView(ttk.Frame):
                     return
                 deuda = self.sale_use_case.get_pending_by_customer(nombre)
                 es_fiado = (metodo_var.get() == "Fiado")
-                # Total acumulado que se mostrará
                 base_total = deuda + (total if es_fiado else 0)
-                # El abono aplica SOLO a la deuda anterior
                 if abono_var.get():
                     try:
                         monto = float(abono_monto_var.get()
@@ -377,10 +423,8 @@ class PaymentView(ttk.Frame):
             except Exception:
                 saldo_lbl.configure(text="")
 
-        # ---- Actualizar mensaje cuando cambia el nombre o el método ----
         def actualizar_deuda(*args):
             nombre = nombre_var.get().strip()
-            # Limpiar frame de abono
             for w in abono_frame.winfo_children():
                 w.destroy()
             abono_var.set(False)
@@ -399,7 +443,6 @@ class PaymentView(ttk.Frame):
 
             es_fiado = (metodo_var.get() == "Fiado")
 
-            # ---- Mensaje según el caso ----
             if deuda > 0:
                 if es_fiado:
                     total_nuevo = deuda + total
@@ -409,7 +452,6 @@ class PaymentView(ttk.Frame):
                              f"➡️ Nueva deuda total: ${total_nuevo:,.0f}".replace(",", "."),
                         fg="#ffd166")
                 else:
-                    # Aviso amarillo para métodos distintos a fiado
                     total_si_fuera = deuda + total
                     deuda_lbl.configure(
                         text=f"⚠️ {nombre} ya debe ${deuda:,.0f} de fiados anteriores.\n"
@@ -422,7 +464,6 @@ class PaymentView(ttk.Frame):
             else:
                 deuda_lbl.configure(text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
 
-            # ---- Mostrar abono si hay deuda previa O es fiado ----
             if deuda > 0 or es_fiado:
                 chk = ttk.Checkbutton(
                     abono_frame,
@@ -446,7 +487,6 @@ class PaymentView(ttk.Frame):
         metodo_var.trace_add("write", actualizar_deuda)
         metodo_var.trace_add("write", recalcular_saldo)
 
-        # ---- UI del método de pago ----
         tk.Label(pop, text="Método de pago:", font=("Arial", 11),
                  bg=bg, fg=fg).pack(pady=(10, 3))
         mf = tk.Frame(pop, bg=bg)
@@ -462,7 +502,6 @@ class PaymentView(ttk.Frame):
 
         saldo_lbl.pack(pady=5)
 
-        # ---- Confirmar ----
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -496,10 +535,12 @@ class PaymentView(ttk.Frame):
                         msg += "\n✅ Deuda SALDADA por completo."
                     else:
                         msg += f"\n📌 Saldo pendiente: ${saldo:,.0f}".replace(",", ".")
-                pop.destroy()
-                MD.show_info(msg, "Venta Exitosa", parent=self)
+                # ✅ Limpiar carrito y borrador
                 self.cart = []
                 self.refresh_cart()
+                self.sale_use_case.clear_cart_draft()
+                pop.destroy()
+                MD.show_info(msg, "Venta Exitosa", parent=self)
                 self.scan_entry.focus_set()
             except Exception as e:
                 MD.show_error(f"Error: {e}", "Error", parent=pop)
