@@ -65,7 +65,7 @@ class MainView(tk.Tk):
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
-    # =========== ESTILO VERDE OSCURO ===========
+    # =========== ESTILOS ===========
     def _setup_dark_green_style(self):
         try:
             self.style.configure(
@@ -92,10 +92,12 @@ class MainView(tk.Tk):
         pop.geometry("380x230")
         pop.transient(self)
         pop.grab_set()
+        pop.configure(bg=self.style.colors.bg)
         pop.protocol("WM_DELETE_WINDOW", lambda: self._cancel_login(pop))
         pop.withdraw()
-        ttk.Label(pop, text="🔒 Contraseña requerida",
-                  font=("Arial", 14, "bold")).pack(pady=15)
+        tk.Label(pop, text="🔒 Contraseña requerida",
+                 font=("Arial", 14, "bold"),
+                 bg=self.style.colors.bg, fg=self.style.colors.fg).pack(pady=15)
         v = tk.StringVar()
         e = ttk.Entry(pop, textvariable=v, show="•", width=25,
                       font=("Arial", 14), justify="center")
@@ -136,17 +138,21 @@ class MainView(tk.Tk):
         pop.geometry("400x400")
         pop.transient(self)
         pop.grab_set()
+        pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
-        ttk.Label(pop, text="🔐 Cambiar contraseña",
-                  font=("Arial", 14, "bold")).pack(pady=15)
-        ttk.Label(pop, text="Contraseña actual:").pack()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
+
+        tk.Label(pop, text="🔐 Cambiar contraseña",
+                 font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=15)
+        tk.Label(pop, text="Contraseña actual:", bg=bg, fg=fg).pack()
         e1 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e1.pack(pady=5)
         e1.focus_set()
-        ttk.Label(pop, text="Nueva contraseña:").pack()
+        tk.Label(pop, text="Nueva contraseña:", bg=bg, fg=fg).pack()
         e2 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e2.pack(pady=5)
-        ttk.Label(pop, text="Confirmar nueva:").pack()
+        tk.Label(pop, text="Confirmar nueva:", bg=bg, fg=fg).pack()
         e3 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e3.pack(pady=5)
         vaciar = tk.BooleanVar(value=False)
@@ -183,14 +189,19 @@ class MainView(tk.Tk):
         pop.geometry("380x280")
         pop.transient(self)
         pop.grab_set()
+        pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
-        ttk.Label(pop, text="🔐 Crear contraseña de inicio",
-                  font=("Arial", 14, "bold")).pack(pady=15)
-        ttk.Label(pop, text="Nueva contraseña (mín. 4 caracteres):").pack()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
+
+        tk.Label(pop, text="🔐 Crear contraseña de inicio",
+                 font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=15)
+        tk.Label(pop, text="Nueva contraseña (mín. 4 caracteres):",
+                 bg=bg, fg=fg).pack()
         e1 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e1.pack(pady=5)
         e1.focus_set()
-        ttk.Label(pop, text="Confirmar:").pack()
+        tk.Label(pop, text="Confirmar:", bg=bg, fg=fg).pack()
         e2 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e2.pack(pady=5)
 
@@ -290,7 +301,8 @@ class MainView(tk.Tk):
             menu.add_command(label="📥 Importar Base de Datos", command=self.import_db)
 
         def build_ventas(menu):
-            menu.add_command(label="📊 Resumen de Ventas (agrupado)", command=self.show_sales_summary)
+            menu.add_command(label="📊 Resumen de Ventas (agrupado)",
+                             command=self.show_sales_summary)
             menu.add_command(label="💳 Fiados (agrupado por cliente)",
                              command=self.show_credit_sales)
 
@@ -345,47 +357,53 @@ class MainView(tk.Tk):
         apply_titlebar_theme(self, self.current_theme == 'darkly')
         self._apply_font_size()
 
-    # =========== RESUMEN DE VENTAS (AGRUPADO) ===========
+    # =========== RESUMEN DE VENTAS ===========
     def show_sales_summary(self):
         win = tk.Toplevel(self)
         win.title("Resumen de Ventas")
         win.geometry("1150x720")
         win.transient(self)
         win.grab_set()
+        win.configure(bg=self.style.colors.bg)
         win.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
 
-        ttk.Label(win, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
-                  font=("Arial", 18, "bold")).pack(pady=15)
+        tk.Label(win, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
+                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=15)
 
         s = self.sale_use_case.get_summary()
-        cards = ttk.Frame(win)
+        cards = tk.Frame(win, bg=bg)
         cards.pack(pady=5)
-        for i, (titulo, (cnt, tot), style_) in enumerate([
-                ("HOY", s["hoy"], "info"),
-                ("MES", s["mes"], "primary"),
-                ("TOTAL", s["total"], "success"),
-                ("FIADOS", s["fiados"], "warning")]):
-            c = ttk.Frame(cards, bootstyle=style_, padding=15)
-            c.grid(row=0, column=i, padx=8)
-            ttk.Label(c, text=titulo, font=("Arial", 12, "bold"),
-                      bootstyle=f"inverse-{style_}").pack()
-            ttk.Label(c, text=f"{cnt} ventas", font=("Arial", 11),
-                      bootstyle=f"inverse-{style_}").pack()
-            ttk.Label(c, text=f"${tot:,.0f}".replace(",", "."),
-                      font=("Arial", 16, "bold"),
-                      bootstyle=f"inverse-{style_}").pack()
 
-        # Filtro rápido
-        filt_frame = ttk.Frame(win)
+        cards_data = [
+            ("HOY", s["hoy"], "#0d6efd"),        # azul
+            ("MES", s["mes"], "#0d6efd"),
+            ("TOTAL", s["total"], "#0a4d1f"),    # ✅ verde oscuro
+            ("FIADOS", s["fiados"], "#d97706"),  # naranja oscuro
+        ]
+        for i, (titulo, (cnt, tot), color) in enumerate(cards_data):
+            c = tk.Frame(cards, bg=color, padx=18, pady=12)
+            c.grid(row=0, column=i, padx=8)
+            tk.Label(c, text=titulo, font=("Arial", 12, "bold"),
+                     bg=color, fg="#ffffff").pack()
+            tk.Label(c, text=f"{cnt} ventas", font=("Arial", 11),
+                     bg=color, fg="#ffffff").pack()
+            tk.Label(c, text=f"${tot:,.0f}".replace(",", "."),
+                     font=("Arial", 16, "bold"),
+                     bg=color, fg="#ffffff").pack()
+
+        filt_frame = tk.Frame(win, bg=bg)
         filt_frame.pack(pady=5)
         filtro_var = tk.StringVar(value="all")
         for val, txt in [("all", "Todas"), ("today", "Hoy"), ("month", "Este mes")]:
-            ttk.Radiobutton(filt_frame, text=txt, variable=filtro_var, value=val,
+            ttk.Radiobutton(filt_frame, text=txt, variable=filtro_var,
+                            value=val, bootstyle="info",
                             command=lambda: recargar()).pack(side="left", padx=8)
 
-        ttk.Label(win, text="Ventas agrupadas por cliente "
-                            "(Selecciona una fila y Ctrl+F12 para eliminar la venta más reciente)",
-                  font=("Arial", 10, "italic")).pack(pady=5)
+        tk.Label(win, text="Doble clic para ver el detalle del cliente. "
+                           "Ctrl+F12 para eliminar la venta más reciente.",
+                 font=("Arial", 10, "italic"), bg=bg, fg=fg).pack(pady=5)
 
         tree = ttk.Treeview(win,
                             columns=("Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
@@ -422,44 +440,53 @@ class MainView(tk.Tk):
 
         recargar()
 
-        def ver_detalle():
+        def ver_detalle(event=None):
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
             g = grupos_map.get(sel[0])
             if not g:
                 return
             det = tk.Toplevel(win)
             det.title(f"Detalle - {g['customer_name']}")
-            det.geometry("900x520")
+            det.geometry("950x560")
             det.transient(win)
             det.grab_set()
+            det.configure(bg=self.style.colors.bg)
             det.withdraw()
-            ttk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
-                      font=("Arial", 14, "bold")).pack(pady=10)
-            ttk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
-                                f"Pagado: ${g['paid']:,.0f}   |   "
-                                f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
-                      font=("Arial", 11)).pack(pady=5)
+            tk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
+                     font=("Arial", 14, "bold"),
+                     bg=bg, fg=fg).pack(pady=10)
+            tk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
+                               f"Pagado: ${g['paid']:,.0f}   |   "
+                               f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=5)
             t2 = ttk.Treeview(det,
-                              columns=("ID", "Fecha", "Método", "Total", "Estado"),
+                              columns=("ID", "Fecha", "Método", "Productos", "Total", "Estado"),
                               show='headings', height=12)
-            for c, t_, w in [("ID", "#", 60), ("Fecha", "Fecha", 160),
-                             ("Método", "Método", 120), ("Total", "Total", 120),
-                             ("Estado", "Estado", 130)]:
+            for c, t_, w in [("ID", "#", 50), ("Fecha", "Fecha", 140),
+                             ("Método", "Método", 110), ("Productos", "Productos", 260),
+                             ("Total", "Total", 100), ("Estado", "Estado", 120)]:
                 t2.heading(c, text=t_)
                 t2.column(c, width=w, anchor="center")
             t2.pack(fill="both", expand=True, padx=15, pady=10)
             for sale in sorted(g["sales"], key=lambda x: x.date):
+                resumen_items = ", ".join(
+                    f"{it.quantity:g}x {it.product_name[:20]}"
+                    for it in sale.items[:3])
+                if len(sale.items) > 3:
+                    resumen_items += f" (+{len(sale.items) - 3} más)"
                 estado = "✅ Pagado"
                 if sale.is_credit:
                     estado = "💳 Fiado" if not sale.is_paid else "✅ Fiado pagado"
                 t2.insert("", "end", values=(
                     sale.sale_id, sale.date, sale.payment_method,
+                    resumen_items,
                     f"${sale.total:,.0f}".replace(",", "."), estado))
             ttk.Button(det, text="Cerrar", command=det.destroy).pack(pady=10)
             show_popup_smooth(det, self.current_theme == 'darkly')
+
+        tree.bind("<Double-1>", ver_detalle)
 
         def on_ctrl_f12(event=None):
             sel = tree.selection()
@@ -469,7 +496,6 @@ class MainView(tk.Tk):
             g = grupos_map.get(sel[0])
             if not g or not g["sales"]:
                 return
-            # Eliminar la venta más reciente del cliente
             venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
             sid = venta_reciente.sale_id
             if MD.yesno(
@@ -490,7 +516,7 @@ class MainView(tk.Tk):
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
 
-        bf = ttk.Frame(win)
+        bf = tk.Frame(win, bg=bg)
         bf.pack(pady=10)
         ttk.Button(bf, text="📋 Ver detalle", command=ver_detalle,
                    bootstyle="info").pack(side="left", padx=5)
@@ -505,9 +531,13 @@ class MainView(tk.Tk):
         pop.geometry("340x200")
         pop.transient(parent)
         pop.grab_set()
+        pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
-        ttk.Label(pop, text="🔒 Contraseña de administrador:",
-                  font=("Arial", 12, "bold")).pack(pady=20)
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
+
+        tk.Label(pop, text="🔒 Contraseña de administrador:",
+                 font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(pady=20)
         v = tk.StringVar()
         e = ttk.Entry(pop, textvariable=v, show="•", width=20,
                       font=("Arial", 14), justify="center")
@@ -530,22 +560,26 @@ class MainView(tk.Tk):
         parent.wait_window(pop)
         return ok["v"]
 
-    # =========== FIADOS (AGRUPADO POR CLIENTE) ===========
+    # =========== FIADOS ===========
     def show_credit_sales(self):
         win = tk.Toplevel(self)
         win.title("Fiados - Cuentas por cobrar")
         win.geometry("1100x700")
         win.transient(self)
         win.grab_set()
+        win.configure(bg=self.style.colors.bg)
         win.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
 
-        ttk.Label(win, text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
-                  font=("Arial", 18, "bold")).pack(pady=15)
+        tk.Label(win, text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
+                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=15)
 
-        resumen_lbl = ttk.Label(win, text="", font=("Arial", 12, "bold"))
+        resumen_lbl = tk.Label(win, text="", font=("Arial", 12, "bold"),
+                               bg=bg, fg=fg)
         resumen_lbl.pack(pady=5)
 
-        frame = ttk.Frame(win)
+        frame = ttk.Frame(win, bootstyle="dark")
         frame.pack(fill="both", expand=True, padx=15, pady=10)
 
         tree = ttk.Treeview(frame,
@@ -565,7 +599,6 @@ class MainView(tk.Tk):
                 tree.delete(r)
             grupos_map.clear()
             ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
-            # Solo quedan los que tienen pendiente > 0
             ventas = [v for v in ventas if v.pending() > 0.01]
             grupos = self.sale_use_case.group_sales_by_customer(ventas)
             total_global = 0.0
@@ -584,31 +617,32 @@ class MainView(tk.Tk):
 
         recargar()
 
-        def ver_detalle():
+        def ver_detalle(event=None):
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
                 return
             g = grupos_map.get(sel[0])
             if not g:
                 return
             det = tk.Toplevel(win)
             det.title(f"Fiados de {g['customer_name']}")
-            det.geometry("900x520")
+            det.geometry("950x560")
             det.transient(win)
             det.grab_set()
+            det.configure(bg=bg)
             det.withdraw()
-            ttk.Label(det, text=f"👤 {g['customer_name']}",
-                      font=("Arial", 14, "bold")).pack(pady=10)
-            ttk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
-                                f"Abonado: ${g['paid']:,.0f}   |   "
-                                f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
-                      font=("Arial", 11)).pack(pady=5)
+            tk.Label(det, text=f"👤 {g['customer_name']}",
+                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=10)
+            tk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
+                               f"Abonado: ${g['paid']:,.0f}   |   "
+                               f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=5)
             t2 = ttk.Treeview(det,
-                              columns=("ID", "Fecha", "Productos", "Total", "Abonado", "Pendiente"),
+                              columns=("ID", "Fecha", "Productos", "Total",
+                                       "Abonado", "Pendiente"),
                               show='headings', height=12)
             for c, t_, w in [("ID", "#", 50), ("Fecha", "Fecha", 130),
-                             ("Productos", "Productos", 260), ("Total", "Total", 90),
+                             ("Productos", "Productos", 280), ("Total", "Total", 90),
                              ("Abonado", "Abonado", 90), ("Pendiente", "Pendiente", 100)]:
                 t2.heading(c, text=t_)
                 t2.column(c, width=w, anchor="center")
@@ -627,6 +661,8 @@ class MainView(tk.Tk):
             ttk.Button(det, text="Cerrar", command=det.destroy).pack(pady=10)
             show_popup_smooth(det, self.current_theme == 'darkly')
 
+        tree.bind("<Double-1>", ver_detalle)
+
         def abonar():
             sel = tree.selection()
             if not sel:
@@ -635,7 +671,6 @@ class MainView(tk.Tk):
             g = grupos_map.get(sel[0])
             if not g:
                 return
-            # Elegir la venta más antigua pendiente
             ventas_pend = [v for v in g["sales"] if v.pending() > 0.01]
             if not ventas_pend:
                 MD.show_info("Este cliente no tiene deudas pendientes.", "Listo", parent=win)
@@ -691,11 +726,11 @@ class MainView(tk.Tk):
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
 
-        bf = ttk.Frame(win)
+        bf = tk.Frame(win, bg=bg)
         bf.pack(pady=10)
         ttk.Button(bf, text="📋 Ver detalle", command=ver_detalle,
                    bootstyle="info").pack(side="left", padx=5)
-        ttk.Button(bf, text="💵 Abonar (venta más antigua)",
+        ttk.Button(bf, text="💵 Abonar (más antigua)",
                    command=abonar, style="DarkGreen.TButton").pack(side="left", padx=5)
         ttk.Button(bf, text="✅ Marcar todo pagado",
                    command=marcar_pagado, style="DarkGreen.TButton").pack(side="left", padx=5)
@@ -707,25 +742,30 @@ class MainView(tk.Tk):
     def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
         pop.title(f"Abonar a venta #{sale_id}")
-        pop.geometry("420x380")
+        pop.geometry("420x400")
         pop.transient(parent)
         pop.grab_set()
+        pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
 
-        ttk.Label(pop, text="💵 Registrar Abono",
-                  font=("Arial", 16, "bold")).pack(pady=15)
+        tk.Label(pop, text="💵 Registrar Abono",
+                 font=("Arial", 16, "bold"), bg=bg, fg=fg).pack(pady=15)
         cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
-        ttk.Label(pop, text=f"Cliente: {cliente}", font=("Arial", 12)).pack(pady=5)
-        ttk.Label(pop, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
-                  font=("Arial", 12)).pack(pady=3)
-        ttk.Label(pop, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
-                  font=("Arial", 12)).pack(pady=3)
-        ttk.Label(pop, text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
-                  font=("Arial", 14, "bold"),
-                  background="#0a4d1f", foreground="#a8e6a8",
-                  padding=8).pack(pady=10)
+        tk.Label(pop, text=f"Cliente: {cliente}", font=("Arial", 12),
+                 bg=bg, fg=fg).pack(pady=5)
+        tk.Label(pop, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
+                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
+        tk.Label(pop, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
+                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
+        tk.Label(pop, text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
+                 font=("Arial", 14, "bold"),
+                 bg="#0a4d1f", fg="#a8e6a8",
+                 padx=10, pady=8).pack(pady=10)
 
-        ttk.Label(pop, text="Monto del abono:").pack(pady=(10, 3))
+        tk.Label(pop, text="Monto del abono:",
+                 bg=bg, fg=fg).pack(pady=(10, 3))
         monto_var = tk.StringVar()
         e = ttk.Entry(pop, textvariable=monto_var, width=20,
                       font=("Arial", 16), justify="center")
@@ -754,7 +794,7 @@ class MainView(tk.Tk):
             on_done()
 
         e.bind("<Return>", lambda e: aplicar())
-        bf = ttk.Frame(pop)
+        bf = tk.Frame(pop, bg=bg)
         bf.pack(pady=15)
         ttk.Button(bf, text="Registrar abono", command=aplicar,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
