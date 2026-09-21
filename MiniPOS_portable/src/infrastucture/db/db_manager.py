@@ -18,6 +18,14 @@ class DBManager:
             self._create_database()
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
+
+        # ✅ Modo WAL: mejor resistencia a cortes de luz
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
+
         self._check_barcode_column()
         self._check_unit_columns()
         self._check_timestamp_columns()
@@ -25,6 +33,7 @@ class DBManager:
         self._check_credit_columns()
         self._check_payment_column()
         self._check_settings_table()
+        self._check_drafts_tables()
 
     def _create_database(self):
         conn = sqlite3.connect(self.db_path)
@@ -101,13 +110,11 @@ class DBManager:
             self.conn.commit()
 
     def _check_payment_column(self):
-        """Agrega columna amount_paid para pagos parciales (abonos)."""
         cur = self.conn.cursor()
         cur.execute("PRAGMA table_info(sales)")
         cols = [c[1] for c in cur.fetchall()]
         if 'amount_paid' not in cols:
             cur.execute("ALTER TABLE sales ADD COLUMN amount_paid REAL DEFAULT 0")
-            # Para ventas no fiadas y ya pagadas, marcar el total como pagado
             cur.execute("UPDATE sales SET amount_paid = total WHERE is_paid = 1")
             self.conn.commit()
 
@@ -115,6 +122,19 @@ class DBManager:
         cur = self.conn.cursor()
         cur.execute('''CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY, value TEXT DEFAULT '')''')
+        self.conn.commit()
+
+    def _check_drafts_tables(self):
+        """Tablas para auto-guardado (carrito y formulario de producto)."""
+        cur = self.conn.cursor()
+        cur.execute('''CREATE TABLE IF NOT EXISTS cart_draft (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL,
+            updated_at TEXT NOT NULL)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS product_draft (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL,
+            updated_at TEXT NOT NULL)''')
         self.conn.commit()
 
     # ---- Utilidades de settings ----
@@ -138,5 +158,9 @@ class DBManager:
 
     def close_connection(self):
         if self.conn:
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             self.conn.close()
             self.conn = None
