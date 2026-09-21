@@ -25,7 +25,7 @@ def is_admin():
 class MainView(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("MiniPOS Portable v2.1")
+        self.title("MiniPOS Portable v2.0")
         try:
             self.state('zoomed')
         except Exception:
