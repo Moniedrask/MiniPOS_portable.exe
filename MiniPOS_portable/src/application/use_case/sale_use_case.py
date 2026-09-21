@@ -13,11 +13,12 @@ class SaleCase:
         total = sum(i["quantity"] * i["unit_price"] for i in items)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         is_paid = 0 if is_credit else 1
+        amount_paid = 0.0 if is_credit else total
         cur.execute(
-            "INSERT INTO sales (date, total, payment_method, notes, customer_name, is_credit, is_paid) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO sales (date, total, payment_method, notes, customer_name, "
+            "is_credit, is_paid, amount_paid) VALUES (?,?,?,?,?,?,?,?)",
             (now, total, payment_method, notes, customer_name,
-             1 if is_credit else 0, is_paid))
+             1 if is_credit else 0, is_paid, amount_paid))
         sale_id = cur.lastrowid
         for it in items:
             sub = it["quantity"] * it["unit_price"]
@@ -43,9 +44,11 @@ class SaleCase:
                      for r in cur.fetchall()]
             sale = Sale(s["sale_id"], s["date"], s["total"],
                         s["payment_method"], s["notes"], items)
-            sale.customer_name = s["customer_name"] if "customer_name" in s.keys() else ""
-            sale.is_credit = s["is_credit"] if "is_credit" in s.keys() else 0
-            sale.is_paid = s["is_paid"] if "is_paid" in s.keys() else 1
+            keys = s.keys()
+            sale.customer_name = s["customer_name"] if "customer_name" in keys else ""
+            sale.is_credit = s["is_credit"] if "is_credit" in keys else 0
+            sale.is_paid = s["is_paid"] if "is_paid" in keys else 1
+            sale.amount_paid = s["amount_paid"] if "amount_paid" in keys else 0.0
             sales.append(sale)
         return sales
 
@@ -67,18 +70,38 @@ class SaleCase:
     def get_credit_sales(self, only_unpaid=True):
         cur = self.db.get_connection().cursor()
         if only_unpaid:
-            cur.execute("SELECT * FROM sales WHERE is_credit = 1 AND is_paid = 0 ORDER BY date DESC")
+            cur.execute("SELECT * FROM sales WHERE is_credit = 1 AND is_paid = 0 ORDER BY customer_name, date")
         else:
-            cur.execute("SELECT * FROM sales WHERE is_credit = 1 ORDER BY date DESC")
+            cur.execute("SELECT * FROM sales WHERE is_credit = 1 ORDER BY customer_name, date")
         return self._rows_to_sales(cur.fetchall())
 
     def mark_as_paid(self, sale_id):
-        cur = self.db.get_connection().cursor()
-        cur.execute("UPDATE sales SET is_paid = 1 WHERE sale_id = ?", (sale_id,))
-        self.db.get_connection().commit()
+        """Marca la venta como pagada en su totalidad."""
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE sales SET is_paid = 1, amount_paid = total WHERE sale_id = ?", (sale_id,))
+        conn.commit()
+
+    def add_payment(self, sale_id, amount):
+        """Registra un abono parcial a la venta. Si el pago cubre el total, la marca como pagada."""
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT total, amount_paid FROM sales WHERE sale_id = ?", (sale_id,))
+        row = cur.fetchone()
+        if not row:
+            return False, "Venta no encontrada"
+        total = row["total"]
+        current_paid = row["amount_paid"] or 0.0
+        new_paid = current_paid + amount
+        if new_paid > total:
+            new_paid = total
+        is_paid = 1 if new_paid >= total - 0.01 else 0
+        cur.execute("UPDATE sales SET amount_paid = ?, is_paid = ? WHERE sale_id = ?",
+                    (new_paid, is_paid, sale_id))
+        conn.commit()
+        return True, "Abono registrado"
 
     def delete_sale(self, sale_id):
-        """Elimina una venta y restaura el stock de los productos."""
         conn = self.db.get_connection()
         cur = conn.cursor()
         cur.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,))
@@ -101,7 +124,8 @@ class SaleCase:
         r = cur.fetchone(); ventas_mes, total_mes = r["c"], r["t"]
         cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales")
         r = cur.fetchone(); ventas_tot, total_tot = r["c"], r["t"]
-        cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales WHERE is_credit=1 AND is_paid=0")
+        cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total - amount_paid),0) t "
+                    "FROM sales WHERE is_credit = 1 AND is_paid = 0")
         r = cur.fetchone(); fiados_c, fiados_t = r["c"], r["t"]
         return {
             "hoy": (ventas_hoy, total_hoy),
