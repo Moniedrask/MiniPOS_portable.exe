@@ -201,9 +201,29 @@ class SaleCase:
             "fiados": (fiados_c, fiados_t),
         }
 
+    # ============ NUEVO: Reiniciar contador de ventas ============
+    def reset_sales_counter(self):
+        """
+        Elimina TODAS las ventas y fiados, y reinicia el contador AUTOINCREMENT a 1.
+        Los productos del inventario NO se tocan.
+        """
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sale_items")
+        cur.execute("DELETE FROM sales")
+        # Resetear el contador AUTOINCREMENT (si existe la tabla)
+        try:
+            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'sales'")
+        except Exception:
+            pass
+        try:
+            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'sale_items'")
+        except Exception:
+            pass
+        conn.commit()
+
     # ============ BORRADOR DE CARRITO ============
     def save_cart_draft(self, items):
-        """Guarda el carrito actual como borrador (se llama cada vez que cambia)."""
         try:
             conn = self.db.get_connection()
             cur = conn.cursor()
@@ -217,7 +237,6 @@ class SaleCase:
             pass
 
     def load_cart_draft(self):
-        """Devuelve (items, fecha) o (None, None)."""
         try:
             cur = self.db.get_connection().cursor()
             cur.execute("SELECT data, updated_at FROM cart_draft WHERE id = 1")
