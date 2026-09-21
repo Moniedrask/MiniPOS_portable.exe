@@ -5,6 +5,7 @@ from ttkbootstrap import Style
 import os
 import shutil
 import sys
+import queue
 import threading
 from datetime import datetime
 from application.use_case.product_use_case import ProductCase
@@ -53,9 +54,11 @@ class MainView(tk.Tk):
         self.product_use_case = ProductCase(self.db_manager)
         self.sale_use_case = SaleCase(self.db_manager)
 
-        # ✅ Variables para la bandeja del sistema
+        # ✅ Bandeja del sistema
         self.tray_icon = None
         self.tray_thread = None
+        # ✅ CORRECCIÓN 3: Cola para comunicar el hilo de pystray con el main thread
+        self.tray_queue = queue.Queue()
 
         if not self._check_startup_password():
             self.destroy()
@@ -67,14 +70,35 @@ class MainView(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # ✅ Poll de la cola de la bandeja
+        self.after(200, self._poll_tray_queue)
+
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
                   if self.current_page == "inventario" else None)
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
+    # =========== POLL DE LA COLA DE LA BANDEJA ===========
+    def _poll_tray_queue(self):
+        try:
+            while True:
+                action = self.tray_queue.get_nowait()
+                if action == "show":
+                    self._show_from_tray()
+                elif action == "quit":
+                    self._real_quit()
+                    return
+        except queue.Empty:
+            pass
+        except Exception:
+            pass
+        try:
+            self.after(300, self._poll_tray_queue)
+        except Exception:
+            pass
+
     # =========== CIERRE PERSONALIZADO (BANDEJA) ===========
     def _on_close(self):
-        """Manejo del botón X."""
         to_tray = self.db_manager.get_setting("close_to_tray", "0") == "1"
         if to_tray:
             self._hide_to_tray()
@@ -103,23 +127,18 @@ class MainView(tk.Tk):
         sys.exit(0)
 
     def _hide_to_tray(self):
-        """Oculta la ventana y crea el ícono en la bandeja del sistema."""
         try:
             self.withdraw()
         except Exception:
             pass
-
-        # Crear el ícono si no existe
         if self.tray_icon is None:
             self._create_tray_icon()
 
     def _create_tray_icon(self):
-        """Crea el ícono de la bandeja con menú Mostrar / Salir."""
         try:
             from PIL import Image, ImageDraw
             import pystray
         except ImportError:
-            # Sin pystray/Pillow → caer a minimizar normal
             try:
                 self.deiconify()
                 self.iconify()
@@ -127,27 +146,20 @@ class MainView(tk.Tk):
                 pass
             return
 
-        # Generar un ícono verde con "MP"
         img = Image.new("RGBA", (64, 64), (10, 77, 31, 255))
         draw = ImageDraw.Draw(img)
         draw.rectangle([4, 4, 60, 60], outline=(168, 230, 168, 255), width=3)
-        # Texto "MP" simple (sin fuente externa)
-        draw.rectangle([18, 24, 46, 28], fill=(168, 230, 168, 255))  # guion
-        draw.rectangle([20, 16, 26, 48], fill=(168, 230, 168, 255))  # M izquierda
-        draw.rectangle([38, 16, 44, 48], fill=(168, 230, 168, 255))  # M derecha
-        draw.rectangle([20, 30, 44, 34], fill=(168, 230, 168, 255))  # M medio
+        draw.rectangle([18, 24, 46, 28], fill=(168, 230, 168, 255))
+        draw.rectangle([20, 16, 26, 48], fill=(168, 230, 168, 255))
+        draw.rectangle([38, 16, 44, 48], fill=(168, 230, 168, 255))
+        draw.rectangle([20, 30, 44, 34], fill=(168, 230, 168, 255))
 
+        # ✅ CORRECCIÓN 3: usar la cola en lugar de self.after desde otro hilo
         def on_show(icon, item):
-            try:
-                self.after(0, self._show_from_tray)
-            except Exception:
-                pass
+            self.tray_queue.put("show")
 
         def on_quit(icon, item):
-            try:
-                self.after(0, self._real_quit)
-            except Exception:
-                pass
+            self.tray_queue.put("quit")
 
         menu = pystray.Menu(
             pystray.MenuItem("Mostrar MiniPOS", on_show, default=True),
@@ -166,7 +178,6 @@ class MainView(tk.Tk):
         self.tray_thread.start()
 
     def _show_from_tray(self):
-        """Muestra la ventana desde la bandeja."""
         try:
             if self.tray_icon:
                 self.tray_icon.stop()
@@ -422,7 +433,6 @@ class MainView(tk.Tk):
             menu.add_cascade(label="🔑 Contraseña de inicio", menu=sub_pwd)
             menu.add_separator()
 
-            # ✅ Casilla: ocultar en la bandeja al presionar X
             self.tray_var = tk.BooleanVar(
                 value=self.db_manager.get_setting("close_to_tray", "0") == "1")
             menu.add_checkbutton(
@@ -452,11 +462,9 @@ class MainView(tk.Tk):
         self.menubar.add_menu("Opciones", build_opciones)
         self.menubar.add_menu("Ventas", build_ventas)
 
-        # ✅ Pestañas compactas (vertical delgadas)
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(6, 0))
 
-        # ✅ Botones delgados: padding vertical mínimo (padding=(x, y))
         self.btn_pagos = ttk.Button(tabs, text="🛒 PAGOS",
                                     style="DarkGreen.TButton",
                                     command=lambda: self.show_page("pagos"),
@@ -481,7 +489,6 @@ class MainView(tk.Tk):
                                             lambda: self.current_theme)
         self.current_page = None
 
-    # =========== CIERRE A BANDEJA ===========
     def _toggle_close_to_tray(self):
         val = "1" if self.tray_var.get() else "0"
         self.db_manager.set_setting("close_to_tray", val)
