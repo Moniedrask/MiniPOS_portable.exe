@@ -117,7 +117,6 @@ class MainView(tk.Tk):
                    style="DarkGreen.TButton").pack(pady=10)
         e.bind("<Return>", lambda e: verificar())
 
-        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -189,7 +188,6 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Guardar", command=aplicar,
                    style="DarkGreen.TButton").pack(pady=12)
 
-        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -232,7 +230,6 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Guardar", command=guardar,
                    style="DarkGreen.TButton").pack(pady=12)
 
-        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -420,12 +417,9 @@ class MainView(tk.Tk):
                             value=val, bootstyle="info",
                             command=lambda: recargar()).pack(side="left", padx=8)
 
-        tk.Label(win, text="Doble clic para ver detalle. Ctrl+F12 para eliminar la venta más reciente.",
-                 font=("Arial", 10, "italic"), bg=bg, fg=fg).pack(pady=5)
-
         tree = ttk.Treeview(win,
                             columns=("Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
-                            show='headings', height=14)
+                            show='headings', height=15)
         for c, t, w in [("Cliente", "Cliente", 260), ("Ventas", "# Ventas", 90),
                         ("Total", "Total", 140), ("Pagado", "Pagado", 140),
                         ("Pendiente", "Pendiente", 140)]:
@@ -509,7 +503,6 @@ class MainView(tk.Tk):
             ttk.Button(det, text="Cerrar",
                        command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
 
-            # ✅ Mostrar primero, luego grab
             show_popup_smooth(det)
             try:
                 det.grab_set()
@@ -519,6 +512,7 @@ class MainView(tk.Tk):
 
         tree.bind("<Double-1>", ver_detalle)
 
+        # ✅ Ctrl+F12 → elimina la venta más reciente del cliente
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
@@ -550,8 +544,44 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
+        # ✅ Shift+F12 → elimina TODAS las ventas del cliente
+        def on_shift_f12(event=None):
+            sel = tree.selection()
+            if not sel:
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            g = grupos_map.get(sel[0])
+            if not g or not g["sales"]:
+                return
+            n = g["count"]
+            total_eliminar = g["total"]
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar TODAS las ventas de '{g['customer_name']}'?\n\n"
+                    f"Se eliminarán {n} ventas por un total de ${total_eliminar:,.0f}.\n"
+                    f"Esto restaurará el stock de todos los productos.".replace(",", "."),
+                    "Confirmar eliminación total", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                restaurar_foco()
+                return
+            ids = [s.sale_id for s in g["sales"]]
+            for sid in ids:
+                self.sale_use_case.delete_sale(sid)
+            MD.show_info(f"✅ {len(ids)} ventas eliminadas y stock restaurado.",
+                         "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+            restaurar_foco()
+
         win.bind("<Control-F12>", on_ctrl_f12)
+        win.bind("<Shift-F12>", on_shift_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
+        tree.bind("<Shift-F12>", on_shift_f12)
 
         bf = tk.Frame(win, bg=bg)
         bf.pack(pady=10)
@@ -560,7 +590,6 @@ class MainView(tk.Tk):
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
-        # ✅ Mostrar primero, luego grab
         show_popup_smooth(win)
         try:
             win.grab_set()
@@ -599,7 +628,6 @@ class MainView(tk.Tk):
                    style="DarkGreen.TButton").pack(pady=15)
         e.bind("<Return>", lambda e: ver())
 
-        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -767,6 +795,7 @@ class MainView(tk.Tk):
             MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
             restaurar_foco()
 
+        # ✅ Ctrl+F12 → elimina el fiado más reciente
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
@@ -798,8 +827,44 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
+        # ✅ Shift+F12 → elimina TODOS los fiados del cliente
+        def on_shift_f12(event=None):
+            sel = tree.selection()
+            if not sel:
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            g = grupos_map.get(sel[0])
+            if not g or not g["sales"]:
+                return
+            n = g["count"]
+            total_eliminar = g["total"]
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar TODOS los fiados de '{g['customer_name']}'?\n\n"
+                    f"Se eliminarán {n} fiados por un total de ${total_eliminar:,.0f}.\n"
+                    f"Esto restaurará el stock de todos los productos.".replace(",", "."),
+                    "Confirmar eliminación total", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                restaurar_foco()
+                return
+            ids = [s.sale_id for s in g["sales"]]
+            for sid in ids:
+                self.sale_use_case.delete_sale(sid)
+            MD.show_info(f"✅ {len(ids)} fiados eliminados y stock restaurado.",
+                         "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+            restaurar_foco()
+
         win.bind("<Control-F12>", on_ctrl_f12)
+        win.bind("<Shift-F12>", on_shift_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
+        tree.bind("<Shift-F12>", on_shift_f12)
 
         bf = tk.Frame(win, bg=bg)
         bf.pack(pady=10)
