@@ -7,8 +7,8 @@ class Product:
         self.barcode = barcode
         self.price = price
         self.stock = stock
-        self.unit_type = unit_type
-        self.unit = unit
+        self.unit_type = unit_type  # "unidad" | "peso" | "volumen"
+        self.unit = unit            # "unidad" | "kg" | "gr" | "mg" | "Lt" | "ml"
         self.created_at = created_at
         self.updated_at = updated_at
 
