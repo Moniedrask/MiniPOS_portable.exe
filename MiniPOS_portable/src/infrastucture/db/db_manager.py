@@ -19,7 +19,6 @@ class DBManager:
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
 
-        # ✅ Modo WAL: mejor resistencia a cortes de luz
         try:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -32,6 +31,7 @@ class DBManager:
         self._check_sales_tables()
         self._check_credit_columns()
         self._check_payment_column()
+        self._check_display_offset_column()
         self._check_settings_table()
         self._check_drafts_tables()
 
@@ -118,6 +118,15 @@ class DBManager:
             cur.execute("UPDATE sales SET amount_paid = total WHERE is_paid = 1")
             self.conn.commit()
 
+    def _check_display_offset_column(self):
+        """✅ NUEVO: columna para reiniciar el número visual de venta sin borrar datos."""
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(sales)")
+        cols = [c[1] for c in cur.fetchall()]
+        if 'display_offset' not in cols:
+            cur.execute("ALTER TABLE sales ADD COLUMN display_offset INTEGER DEFAULT 0")
+            self.conn.commit()
+
     def _check_settings_table(self):
         cur = self.conn.cursor()
         cur.execute('''CREATE TABLE IF NOT EXISTS settings (
@@ -125,7 +134,6 @@ class DBManager:
         self.conn.commit()
 
     def _check_drafts_tables(self):
-        """Tablas para auto-guardado (carrito y formulario de producto)."""
         cur = self.conn.cursor()
         cur.execute('''CREATE TABLE IF NOT EXISTS cart_draft (
             id INTEGER PRIMARY KEY CHECK (id = 1),
