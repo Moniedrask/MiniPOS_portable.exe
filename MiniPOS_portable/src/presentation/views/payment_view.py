@@ -21,7 +21,7 @@ class PaymentView(ttk.Frame):
         self._keep_scanner_focused()
 
     def _is_dark(self):
-        return self.get_theme() == 'darkly'
+        return True  # Forzado oscuro
 
     def _keep_scanner_focused(self):
         try:
@@ -75,7 +75,6 @@ class PaymentView(ttk.Frame):
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Button-3>", self._cart_context_menu)
 
-        # ✅ Tooltip para nombres largos en el carrito
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
         bottom = ttk.Frame(self, bootstyle="dark")
@@ -208,14 +207,16 @@ class PaymentView(ttk.Frame):
         pop.title(f"Cantidad - {product.name}")
         pop.geometry("400x320")
         pop.transient(self.winfo_toplevel())
-        pop.grab_set()
         pop.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
 
-        ttk.Label(pop, text=product.name, font=("Arial", 16, "bold")).pack(pady=12)
-        ttk.Label(pop, text=f"Precio: ${product.price:,.0f}/{product.unit}".replace(",", "."),
-                  font=("Arial", 12)).pack(pady=5)
-        ttk.Label(pop, text=f"Ingrese la cantidad en {product.unit}:",
-                  font=("Arial", 11)).pack(pady=10)
+        tk.Label(pop, text=product.name, font=("Arial", 16, "bold"),
+                 bg=bg, fg=fg).pack(pady=12)
+        tk.Label(pop, text=f"Precio: ${product.price:,.0f}/{product.unit}".replace(",", "."),
+                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=5)
+        tk.Label(pop, text=f"Ingrese la cantidad en {product.unit}:",
+                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=10)
         v = tk.StringVar(value="1")
         e = ttk.Entry(pop, textvariable=v, width=15, font=("Arial", 20), justify="center")
         e.pack(pady=5)
@@ -234,13 +235,13 @@ class PaymentView(ttk.Frame):
             self.add_to_cart(product, c)
             self.scan_entry.focus_set()
 
-        bf = ttk.Frame(pop)
+        bf = tk.Frame(pop, bg=bg)
         bf.pack(pady=15)
         ttk.Button(bf, text="Agregar", command=ok, style="DarkGreen.TButton").pack(side="left", padx=5)
         ttk.Button(bf, text="Cancelar",
                    command=lambda: [pop.destroy(), self.scan_entry.focus_set()]).pack(side="left", padx=5)
         e.bind("<Return>", lambda e: ok())
-        show_popup_smooth(pop, self._is_dark())
+        show_popup_smooth(pop)
 
     def add_to_cart(self, product, cantidad):
         for it in self.cart:
@@ -289,58 +290,120 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("560x680")
+        pop.geometry("600x760")
         pop.transient(self.winfo_toplevel())
-        pop.grab_set()
         pop.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
 
-        ttk.Label(pop, text="💰 CONFIRMAR PAGO", font=("Arial", 20, "bold")).pack(pady=15)
-        ttk.Label(pop, text="TOTAL A PAGAR", font=("Arial", 14),
-                  bootstyle="inverse-secondary").pack()
-        ttk.Label(pop, text=f"${total:,.0f}".replace(",", "."),
-                  font=("Arial", 40, "bold"),
-                  background="#0a4d1f", foreground="#a8e6a8",
-                  anchor="center", padding=15).pack(pady=10)
+        tk.Label(pop, text="💰 CONFIRMAR PAGO", font=("Arial", 20, "bold"),
+                 bg=bg, fg=fg).pack(pady=15)
+        tk.Label(pop, text="TOTAL A PAGAR", font=("Arial", 14),
+                 bg=bg, fg=fg).pack()
+        tk.Label(pop, text=f"${total:,.0f}".replace(",", "."),
+                 font=("Arial", 40, "bold"),
+                 background="#0a4d1f", foreground="#a8e6a8",
+                 anchor="center", padding=15).pack(pady=10)
 
-        ttk.Label(pop, text="Nombre del cliente (opcional):",
-                  font=("Arial", 11)).pack(pady=(15, 3))
+        tk.Label(pop, text="Nombre del cliente (opcional):",
+                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=(15, 3))
         nombre_var = tk.StringVar()
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 12)).pack(pady=5)
 
-        deuda_lbl = ttk.Label(pop, text="", font=("Arial", 11, "bold"),
-                              foreground="#ffd166")
+        # ---- Etiqueta de deuda previa ----
+        deuda_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
+                             bg=bg, fg="#ffd166", wraplength=520, justify="center")
         deuda_lbl.pack(pady=5)
+
+        # ---- Frame de abono (oculto por defecto) ----
+        abono_frame = tk.Frame(pop, bg=bg)
+        abono_var = tk.BooleanVar(value=False)
+        abono_monto_var = tk.StringVar()
+        saldo_lbl = tk.Label(pop, text="", font=("Arial", 11),
+                             bg=bg, fg="#a8e6a8", wraplength=520, justify="center")
+        chk_abono = None
+
+        def recalcular_saldo(*args):
+            """Actualiza la etiqueta de saldo restante según el monto a abonar."""
+            try:
+                nombre = nombre_var.get().strip()
+                if not nombre:
+                    saldo_lbl.configure(text="")
+                    return
+                deuda = self.sale_use_case.get_pending_by_customer(nombre)
+                if deuda <= 0:
+                    saldo_lbl.configure(text="")
+                    return
+                if abono_var.get():
+                    try:
+                        monto = float(abono_monto_var.get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                    except ValueError:
+                        monto = 0
+                    if monto > deuda:
+                        monto = deuda
+                    saldo = deuda - monto
+                    saldo_lbl.configure(
+                        text=f"💵 Saldo pendiente después del abono: ${saldo:,.0f}".replace(",", "."))
+                else:
+                    saldo_lbl.configure(
+                        text=f"💵 Deuda total del cliente: ${deuda:,.0f}".replace(",", "."))
+            except Exception:
+                saldo_lbl.configure(text="")
 
         def actualizar_deuda(*args):
             nombre = nombre_var.get().strip()
+            # Limpiar frame de abono
+            for w in abono_frame.winfo_children():
+                w.destroy()
+            abono_var.set(False)
+            abono_monto_var.set("")
             if not nombre:
                 deuda_lbl.configure(text="")
+                saldo_lbl.configure(text="")
+                abono_frame.pack_forget()
                 return
             try:
                 deuda = self.sale_use_case.get_pending_by_customer(nombre)
             except Exception:
                 deuda = 0
             if deuda > 0:
-                total_nuevo = deuda + total
                 deuda_lbl.configure(
-                    text=f"⚠️ {nombre} ya debe ${deuda:,.0f}. "
-                         f"Con esta venta serían ${total_nuevo:,.0f}.".replace(",", "."))
+                    text=f"⚠️ {nombre} ya debe ${deuda:,.0f} de fiados anteriores.\n"
+                         f"Esta venta es aparte.".replace(",", "."))
+                # Mostrar checkbox y campo de abono
+                chk = ttk.Checkbutton(
+                    abono_frame,
+                    text=f"💵 Abonar a la deuda anterior",
+                    variable=abono_var,
+                    bootstyle="success-round-toggle",
+                    command=recalcular_saldo)
+                chk.pack(side="left", padx=5)
+                ttk.Label(abono_frame, text="Monto:", bg=bg, fg=fg).pack(side="left", padx=5)
+                ent = ttk.Entry(abono_frame, textvariable=abono_monto_var,
+                                width=12, font=("Arial", 12), justify="center")
+                ent.pack(side="left", padx=5)
+                abono_monto_var.trace_add("write", recalcular_saldo)
+                abono_frame.pack(pady=5)
+                recalcular_saldo()
             else:
                 deuda_lbl.configure(text=f"ℹ️ {nombre} no tiene deudas previas.")
+                saldo_lbl.configure(text="")
+                abono_frame.pack_forget()
 
         nombre_var.trace_add("write", actualizar_deuda)
 
-        ttk.Label(pop, text="Método de pago:", font=("Arial", 11)).pack(pady=(10, 3))
+        tk.Label(pop, text="Método de pago:", font=("Arial", 11),
+                 bg=bg, fg=fg).pack(pady=(10, 3))
         metodo_var = tk.StringVar(value="Efectivo")
-        mf = ttk.Frame(pop)
+        mf = tk.Frame(pop, bg=bg)
         mf.pack(pady=5)
         for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
             ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m,
                             bootstyle="info").grid(row=i // 3, column=i % 3,
                                                     padx=8, pady=3, sticky="w")
 
-        ttk.Label(pop, text="Notas (opcional):").pack(pady=(10, 3))
+        tk.Label(pop, text="Notas (opcional):", bg=bg, fg=fg).pack(pady=(10, 3))
         notas_var = tk.StringVar()
         ttk.Entry(pop, textvariable=notas_var, width=40).pack(pady=5)
 
@@ -348,20 +411,39 @@ class PaymentView(ttk.Frame):
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
             es_fiado = (metodo == "Fiado")
+            # Validar abono
+            monto_abono = 0.0
+            if abono_var.get() and not es_fiado and nombre:
+                try:
+                    monto_abono = float(
+                        abono_monto_var.get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                except ValueError:
+                    monto_abono = 0.0
             try:
+                # 1) Registrar la venta actual
                 sid, tot = self.sale_use_case.create_sale(
                     self.cart,
                     payment_method=metodo,
                     notes=notas_var.get().strip(),
                     customer_name=nombre,
                     is_credit=es_fiado)
-                pop.destroy()
-                msg = f"✅ Venta #{sid} registrada.\nTotal: ${tot:,.0f}".replace(",", ".")
+                msg = f"✅ Venta #{sid} registrada.\n"
+                msg += f"Total: ${tot:,.0f}".replace(",", ".")
                 if es_fiado:
                     quien = nombre if nombre else "(sin nombre)"
                     deuda = self.sale_use_case.get_pending_by_customer(quien) if nombre else tot
                     msg += f"\n\n📌 FIADO a: {quien}"
                     msg += f"\n💰 Deuda total: ${deuda:,.0f}".replace(",", ".")
+                # 2) Aplicar abono a deuda anterior (si hay)
+                if monto_abono > 0 and nombre:
+                    aplicado, saldo = self.sale_use_case.apply_payment_to_customer(
+                        nombre, monto_abono)
+                    msg += f"\n\n💵 Abono aplicado: ${aplicado:,.0f}".replace(",", ".")
+                    if saldo <= 0.01:
+                        msg += f"\n✅ Deuda anterior SALDADA por completo."
+                    else:
+                        msg += f"\n📌 Saldo pendiente: ${saldo:,.0f}".replace(",", ".")
+                pop.destroy()
                 MD.show_info(msg, "Venta Exitosa", parent=self)
                 self.cart = []
                 self.refresh_cart()
@@ -369,9 +451,9 @@ class PaymentView(ttk.Frame):
             except Exception as e:
                 MD.show_error(f"Error: {e}", "Error", parent=pop)
 
-        bf = ttk.Frame(pop)
+        bf = tk.Frame(pop, bg=bg)
         bf.pack(pady=20)
         ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
                    style="DarkGreen.TButton").pack(side="left", padx=10, ipady=10, ipadx=20)
         ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
-        show_popup_smooth(pop, self._is_dark())
+        show_popup_smooth(pop)
