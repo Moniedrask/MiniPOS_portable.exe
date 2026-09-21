@@ -12,15 +12,13 @@ class DBManager:
         dir_path = os.path.dirname(self.db_path)
         if not os.path.exists(dir_path):
             os.makedirs(dir_path, exist_ok=True)
-
         if not os.path.exists(self.db_path):
             self._create_database()
-
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
-
         self._check_barcode_column()
-        self._check_sales_tables()   # ✅ NUEVO
+        self._check_unit_columns()
+        self._check_sales_tables()
 
     def _create_database(self):
         conn = sqlite3.connect(self.db_path)
@@ -31,7 +29,9 @@ class DBManager:
                 name TEXT NOT NULL,
                 barcode TEXT DEFAULT '',
                 price REAL NOT NULL,
-                stock INTEGER NOT NULL
+                stock REAL NOT NULL DEFAULT 0,
+                unit_type TEXT DEFAULT 'unidad',
+                unit TEXT DEFAULT 'unidad'
             );
         ''')
         conn.commit()
@@ -40,13 +40,23 @@ class DBManager:
     def _check_barcode_column(self):
         cursor = self.conn.cursor()
         cursor.execute("PRAGMA table_info(products)")
-        columns = [column[1] for column in cursor.fetchall()]
+        columns = [c[1] for c in cursor.fetchall()]
         if 'barcode' not in columns:
             cursor.execute("ALTER TABLE products ADD COLUMN barcode TEXT DEFAULT ''")
             self.conn.commit()
 
+    def _check_unit_columns(self):
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(products)")
+        columns = [c[1] for c in cursor.fetchall()]
+        if 'unit_type' not in columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN unit_type TEXT DEFAULT 'unidad'")
+            self.conn.commit()
+        if 'unit' not in columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN unit TEXT DEFAULT 'unidad'")
+            self.conn.commit()
+
     def _check_sales_tables(self):
-        """Crea las tablas de ventas si no existen (para la v2.0)."""
         cursor = self.conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sales (
@@ -64,7 +74,8 @@ class DBManager:
                 product_id INTEGER,
                 product_name TEXT NOT NULL,
                 barcode TEXT DEFAULT '',
-                quantity INTEGER NOT NULL,
+                quantity REAL NOT NULL,
+                unit TEXT DEFAULT 'unidad',
                 unit_price REAL NOT NULL,
                 subtotal REAL NOT NULL,
                 FOREIGN KEY (sale_id) REFERENCES sales(sale_id)
