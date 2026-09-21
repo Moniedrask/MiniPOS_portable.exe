@@ -5,15 +5,18 @@ from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
     popup_is_open, make_scrolled_treeview, make_scrollable,
-    find_similar_products,
+    find_similar_products, make_business_header,
 )
 
 
 class InventoryView(ttk.Frame):
-    def __init__(self, parent, product_use_case, get_theme_func):
+    def __init__(self, parent, product_use_case, db_manager,
+                 get_theme_func, on_business_click=None):
         super().__init__(parent, bootstyle="dark")
         self.product_use_case = product_use_case
+        self.db_manager = db_manager
         self.get_theme = get_theme_func
+        self.on_business_click = on_business_click
         self.sort_col = None
         self.sort_reverse = False
         self.filtered_products = []
@@ -25,6 +28,13 @@ class InventoryView(ttk.Frame):
         self.after(300, lambda: self.scan_entry.focus_set())
         self.after(800, self._check_product_draft)
         self._keep_scanner_focused()
+
+    def refresh_business_header(self):
+        try:
+            if hasattr(self, "business_header") and self.business_header:
+                self.business_header["refresh"]()
+        except Exception:
+            pass
 
     def _is_dark(self):
         return True
@@ -99,8 +109,16 @@ class InventoryView(ttk.Frame):
             group_name=data.get("group_name", ""))
 
     def create_widgets(self):
+        try:
+            bg = ttk.Style().colors.bg
+        except Exception:
+            bg = "#1a1a1a"
+        self.business_header = make_business_header(
+            self, self.db_manager, self.on_business_click, bg=bg)
+        self.business_header["frame"].pack(padx=10, pady=(8, 0), anchor="w")
+
         scan_frame = ttk.Frame(self, bootstyle="dark")
-        scan_frame.pack(padx=10, pady=(10, 3), fill="x")
+        scan_frame.pack(padx=10, pady=(6, 3), fill="x")
         ttk.Label(scan_frame, text="📷 Escanear código:",
                   font=("Arial", 11, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
@@ -385,9 +403,6 @@ class InventoryView(ttk.Frame):
         self.open_product_form("Agregar Producto", None, "", barcode_prefill,
                                0, 0, "unidad", "unidad", auto_select)
 
-    # =========================================================
-    # FORMULARIO DE PRODUCTO
-    # =========================================================
     def open_product_form(self, title, product_id, name, barcode, price, stock,
                           unit_type, unit, auto_select=False, from_draft=False,
                           group_name=""):
@@ -400,10 +415,7 @@ class InventoryView(ttk.Frame):
         fg = ttk.Style().colors.fg
 
         refs = {}
-        state = {
-            "draft_timer": None,
-            "pending_group_ids": [],
-        }
+        state = {"draft_timer": None, "pending_group_ids": []}
 
         def build_content(parent):
             ttk.Label(parent, text="Código de Barras / QR:").pack(pady=(10, 3))
@@ -657,11 +669,8 @@ class InventoryView(ttk.Frame):
             refs["group_entry"].bind("<KeyRelease>", schedule_save, add="+")
             refs["type_var"].trace_add("write", schedule_save)
             refs["unit_var"].trace_add("write", schedule_save)
-
             refs["similar_lbl"].bind("<Button-1>", on_similar_click)
-
             popup.protocol("WM_DELETE_WINDOW", _cancel)
-
             if from_draft:
                 schedule_save()
                 update_similar_label()
@@ -675,9 +684,6 @@ class InventoryView(ttk.Frame):
         except Exception:
             pass
 
-    # =========================================================
-    # POPUP DE SIMILARES
-    # =========================================================
     def _open_similar_dialog(self, base_name, current_product_id,
                              parent_toplevel, on_apply):
         try:
@@ -704,8 +710,7 @@ class InventoryView(ttk.Frame):
 
         tk.Label(dialog, text="🔗 PRODUCTOS SIMILARES",
                  font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=(12, 4))
-        tk.Label(dialog,
-                 text=f"Producto base: {base_name}",
+        tk.Label(dialog, text=f"Producto base: {base_name}",
                  font=("Arial", 10, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
 
         sugerencia = self._suggest_group_name(similares, base_name)
@@ -774,9 +779,7 @@ class InventoryView(ttk.Frame):
 
         for p, score in similares:
             iid = tree.insert("", "end", values=(
-                "☐",
-                p.product_id,
-                p.name,
+                "☐", p.product_id, p.name,
                 f"${p.price:,.0f}".replace(",", ".")))
             item_to_pid[iid] = p.product_id
 
@@ -827,8 +830,7 @@ class InventoryView(ttk.Frame):
         bf.pack(side="bottom", pady=10)
         ttk.Button(bf, text="🔗 Agrupar seleccionados",
                    command=aplicar, style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cancelar",
-                   command=cancelar).pack(side="left", padx=5)
+        ttk.Button(bf, text="Cancelar", command=cancelar).pack(side="left", padx=5)
 
         dialog.bind("<Escape>", lambda e: cancelar())
 
@@ -863,9 +865,6 @@ class InventoryView(ttk.Frame):
         if unit_var.get() not in opciones:
             unit_var.set(opciones[0])
 
-    # =========================================================
-    # ESCANEO
-    # =========================================================
     def lookup_barcode(self, event=None):
         codigo = self.scan_var.get().strip()
         if not codigo:
