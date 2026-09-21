@@ -20,8 +20,8 @@ class PaymentView(ttk.Frame):
         self.create_widgets()
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
-        # ✅ Buscar borrador de carrito al iniciar
-        self.after(600, self._check_cart_draft)
+        # ✅ Chequeo diferido que espera a que la vista esté visible
+        self.after(800, self._check_cart_draft)
         self._keep_scanner_focused()
 
     def _is_dark(self):
@@ -43,9 +43,16 @@ class PaymentView(ttk.Frame):
 
     # ============ AUTO-GUARDADO DEL CARRITO ============
     def _check_cart_draft(self):
-        """Al abrir, revisa si hay un carrito sin cobrar."""
+        """Solo revisa el borrador cuando la vista está visible."""
         if self._draft_loaded:
             return
+        # ✅ Esperar a que la vista esté mapeada (visible en pantalla)
+        try:
+            if not self.winfo_ismapped():
+                self.after(500, self._check_cart_draft)
+                return
+        except Exception:
+            pass
         self._draft_loaded = True
         try:
             items, updated = self.sale_use_case.load_cart_draft()
@@ -76,7 +83,6 @@ class PaymentView(ttk.Frame):
             pass
 
     def _save_cart_draft(self):
-        """Guarda el carrito actual como borrador."""
         try:
             if self.cart:
                 self.sale_use_case.save_cart_draft(self.cart)
