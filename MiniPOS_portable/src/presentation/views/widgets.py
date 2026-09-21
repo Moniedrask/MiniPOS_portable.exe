@@ -122,10 +122,36 @@ def get_menu_font():
         return ("Arial", 11)
 
 
+# =========================================================
+# SCROLLBARS ROJO OSCURO
+# =========================================================
+def apply_dark_red_scrollbar_style():
+    """Aplica el estilo rojo oscuro a las scrollbars ttk."""
+    try:
+        style = ttk.Style()
+        style.configure("DarkRed.Vertical.TScrollbar",
+                        background="#5c1a1a",
+                        troughcolor="#1a0505",
+                        bordercolor="#1a0505",
+                        arrowcolor="#a8e6a8",
+                        darkcolor="#5c1a1a",
+                        lightcolor="#7a2020",
+                        gripcount=0,
+                        relief="flat")
+        style.map("DarkRed.Vertical.TScrollbar",
+                  background=[("active", "#8b2020"), ("pressed", "#6e1515")],
+                  arrowcolor=[("active", "#ffffff")])
+    except Exception:
+        pass
+
+
 def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
+    apply_dark_red_scrollbar_style()
+
     frame = ttk.Frame(parent, bootstyle=bootstyle)
 
-    sb = ttk.Scrollbar(frame, orient="vertical")
+    sb = ttk.Scrollbar(frame, orient="vertical",
+                       style="DarkRed.Vertical.TScrollbar")
     sb.pack(side="right", fill="y")
 
     tree = ttk.Treeview(frame, columns=columns, show='headings',
@@ -147,7 +173,7 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
 
 
 # =========================================================
-# DIÁLOGOS PERSONALIZADOS (con foco y Enter/Escape)
+# DIÁLOGOS PERSONALIZADOS
 # =========================================================
 def _custom_dialog(parent, title, message, buttons, kind="info",
                    is_dark=True, default_button=0):
@@ -204,7 +230,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
 
-    # ✅ Enter = botón por defecto, Escape = cerrar
     def on_enter(e):
         try:
             btn_widgets[default_button].invoke()
@@ -229,7 +254,6 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
     except Exception:
         pass
 
-    # ✅ Forzar foco al botón por defecto
     def set_focus():
         try:
             if btn_widgets and pop.winfo_exists():
@@ -473,7 +497,7 @@ class ListboxTooltip(HoverTooltip):
 
 
 # =========================================================
-# AUTOCOMPLETADO ENTRY
+# AUTOCOMPLETADO ENTRY (con scrollbar rojo oscuro)
 # =========================================================
 class AutoCompleteEntry(ttk.Entry):
     def __init__(self, parent, values_getter, on_select, width=40, font=None, **kwargs):
@@ -528,7 +552,14 @@ class AutoCompleteEntry(ttk.Entry):
             container = tk.Frame(self.popup, bg=style.colors.bg)
             container.pack(fill='both', expand=True)
 
-            sb = tk.Scrollbar(container, orient="vertical")
+            # ✅ Scrollbar ROJO OSCURO
+            sb = tk.Scrollbar(container, orient="vertical",
+                              bg="#5c1a1a",
+                              troughcolor="#1a0505",
+                              activebackground="#8b2020",
+                              borderwidth=0,
+                              highlightthickness=0,
+                              elementborderwidth=0)
             sb.pack(side="right", fill="y")
 
             self.listbox = tk.Listbox(
