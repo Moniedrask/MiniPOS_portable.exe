@@ -70,20 +70,20 @@ class SaleCase:
     def get_credit_sales(self, only_unpaid=True):
         cur = self.db.get_connection().cursor()
         if only_unpaid:
-            cur.execute("SELECT * FROM sales WHERE is_credit = 1 AND is_paid = 0 ORDER BY customer_name, date")
+            cur.execute("SELECT * FROM sales WHERE is_credit = 1 AND is_paid = 0 "
+                        "ORDER BY customer_name, date")
         else:
             cur.execute("SELECT * FROM sales WHERE is_credit = 1 ORDER BY customer_name, date")
         return self._rows_to_sales(cur.fetchall())
 
     def mark_as_paid(self, sale_id):
-        """Marca la venta como pagada en su totalidad."""
         conn = self.db.get_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE sales SET is_paid = 1, amount_paid = total WHERE sale_id = ?", (sale_id,))
+        cur.execute("UPDATE sales SET is_paid = 1, amount_paid = total WHERE sale_id = ?",
+                    (sale_id,))
         conn.commit()
 
     def add_payment(self, sale_id, amount):
-        """Registra un abono parcial a la venta. Si el pago cubre el total, la marca como pagada."""
         conn = self.db.get_connection()
         cur = conn.cursor()
         cur.execute("SELECT total, amount_paid FROM sales WHERE sale_id = ?", (sale_id,))
@@ -114,13 +114,56 @@ class SaleCase:
         cur.execute("DELETE FROM sales WHERE sale_id = ?", (sale_id,))
         conn.commit()
 
+    # ============ NUEVO: pendiente por cliente ============
+    def get_pending_by_customer(self, name):
+        """Devuelve el total pendiente de un cliente."""
+        if not name:
+            return 0.0
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT COALESCE(SUM(total - amount_paid), 0) t FROM sales "
+            "WHERE is_credit = 1 AND is_paid = 0 AND customer_name = ?", (name,))
+        return cur.fetchone()["t"]
+
+    # ============ NUEVO: agrupar ventas por cliente ============
+    def group_sales_by_customer(self, sales):
+        """
+        Agrupa una lista de ventas por nombre de cliente.
+        Devuelve: lista de dicts con:
+            customer_name, count, total, paid, pending, sales (lista original)
+        Los clientes sin nombre se agrupan aparte como "(sin nombre)".
+        """
+        grupos = {}
+        for s in sales:
+            nombre = s.customer_name.strip() if s.customer_name else "(sin nombre)"
+            if nombre not in grupos:
+                grupos[nombre] = {
+                    "customer_name": nombre,
+                    "count": 0,
+                    "total": 0.0,
+                    "paid": 0.0,
+                    "pending": 0.0,
+                    "sales": []
+                }
+            g = grupos[nombre]
+            g["count"] += 1
+            g["total"] += s.total
+            g["paid"] += (s.amount_paid or 0)
+            g["pending"] += max(0.0, s.total - (s.amount_paid or 0))
+            g["sales"].append(s)
+        # Ordenar por pendiente descendente y luego por nombre
+        return sorted(grupos.values(),
+                      key=lambda x: (-x["pending"], x["customer_name"].lower()))
+
     def get_summary(self):
         cur = self.db.get_connection().cursor()
         hoy = datetime.now().strftime("%Y-%m-%d")
         mes = datetime.now().strftime("%Y-%m")
-        cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales WHERE date LIKE ?", (f"{hoy}%",))
+        cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales WHERE date LIKE ?",
+                    (f"{hoy}%",))
         r = cur.fetchone(); ventas_hoy, total_hoy = r["c"], r["t"]
-        cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales WHERE date LIKE ?", (f"{mes}%",))
+        cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales WHERE date LIKE ?",
+                    (f"{mes}%",))
         r = cur.fetchone(); ventas_mes, total_mes = r["c"], r["t"]
         cur.execute("SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales")
         r = cur.fetchone(); ventas_tot, total_tot = r["c"], r["t"]
