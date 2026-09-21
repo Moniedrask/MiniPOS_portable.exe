@@ -23,6 +23,7 @@ class DBManager:
         self._check_timestamp_columns()
         self._check_sales_tables()
         self._check_credit_columns()
+        self._check_payment_column()
         self._check_settings_table()
 
     def _create_database(self):
@@ -99,15 +100,25 @@ class DBManager:
             cur.execute("ALTER TABLE sales ADD COLUMN is_paid INTEGER DEFAULT 1")
             self.conn.commit()
 
+    def _check_payment_column(self):
+        """Agrega columna amount_paid para pagos parciales (abonos)."""
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(sales)")
+        cols = [c[1] for c in cur.fetchall()]
+        if 'amount_paid' not in cols:
+            cur.execute("ALTER TABLE sales ADD COLUMN amount_paid REAL DEFAULT 0")
+            # Para ventas no fiadas y ya pagadas, marcar el total como pagado
+            cur.execute("UPDATE sales SET amount_paid = total WHERE is_paid = 1")
+            self.conn.commit()
+
     def _check_settings_table(self):
         cur = self.conn.cursor()
         cur.execute('''CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY, value TEXT DEFAULT '')''')
         self.conn.commit()
 
-    # ---- Utilidades de settings (CORREGIDAS) ----
+    # ---- Utilidades de settings ----
     def get_setting(self, key, default=None):
-        # ✅ Asegurar que la conexión exista antes de usarla
         conn = self.get_connection()
         cur = conn.cursor()
         cur.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -115,7 +126,6 @@ class DBManager:
         return row["value"] if row else default
 
     def set_setting(self, key, value):
-        # ✅ Asegurar que la conexión exista antes de usarla
         conn = self.get_connection()
         cur = conn.cursor()
         cur.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, str(value)))
