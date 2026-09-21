@@ -20,7 +20,6 @@ class PaymentView(ttk.Frame):
         self.create_widgets()
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
-        # ✅ Chequeo diferido que espera a que la vista esté visible
         self.after(800, self._check_cart_draft)
         self._keep_scanner_focused()
 
@@ -43,10 +42,8 @@ class PaymentView(ttk.Frame):
 
     # ============ AUTO-GUARDADO DEL CARRITO ============
     def _check_cart_draft(self):
-        """Solo revisa el borrador cuando la vista está visible."""
         if self._draft_loaded:
             return
-        # ✅ Esperar a que la vista esté mapeada (visible en pantalla)
         try:
             if not self.winfo_ismapped():
                 self.after(500, self._check_cart_draft)
@@ -367,12 +364,13 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("620x820")
+        pop.geometry("640x900")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
+        # ---------- ENCABEZADO ----------
         tk.Label(pop, text="💰 CONFIRMAR PAGO", font=("Arial", 20, "bold"),
                  bg=bg, fg=fg).pack(pady=15)
         tk.Label(pop, text="TOTAL A PAGAR", font=("Arial", 14),
@@ -382,119 +380,22 @@ class PaymentView(ttk.Frame):
                  background="#0a4d1f", foreground="#a8e6a8",
                  anchor="center", padx=20, pady=15).pack(pady=10)
 
+        # ---------- NOMBRE DEL CLIENTE ----------
         tk.Label(pop, text="Nombre del cliente (opcional):",
                  font=("Arial", 11), bg=bg, fg=fg).pack(pady=(15, 3))
         nombre_var = tk.StringVar()
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 12)).pack(pady=5)
 
+        # ---------- AVISO DE DEUDA ----------
         deuda_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
-                             bg=bg, fg="#ffd166", wraplength=560, justify="center")
-        deuda_lbl.pack(pady=5)
+                             bg=bg, fg="#ffd166", wraplength=580, justify="center")
+        deuda_lbl.pack(pady=8)
 
-        abono_frame = tk.Frame(pop, bg=bg)
-        abono_var = tk.BooleanVar(value=False)
-        abono_monto_var = tk.StringVar()
-        saldo_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
-                             bg=bg, fg="#a8e6a8", wraplength=560, justify="center")
-
-        metodo_var = tk.StringVar(value="Efectivo")
-
-        def recalcular_saldo(*args):
-            try:
-                nombre = nombre_var.get().strip()
-                if not nombre:
-                    saldo_lbl.configure(text="")
-                    return
-                deuda = self.sale_use_case.get_pending_by_customer(nombre)
-                es_fiado = (metodo_var.get() == "Fiado")
-                base_total = deuda + (total if es_fiado else 0)
-                if abono_var.get():
-                    try:
-                        monto = float(abono_monto_var.get()
-                                      .replace("$", "").replace(".", "").replace(",", ".") or 0)
-                    except ValueError:
-                        monto = 0
-                    if monto > deuda:
-                        monto = deuda
-                    saldo = max(0, base_total - monto)
-                    saldo_lbl.configure(
-                        text=f"💵 Saldo después del abono: ${saldo:,.0f}".replace(",", "."))
-                else:
-                    if deuda > 0 or es_fiado:
-                        saldo_lbl.configure(
-                            text=f"💵 Saldo total: ${base_total:,.0f}".replace(",", "."))
-                    else:
-                        saldo_lbl.configure(text="")
-            except Exception:
-                saldo_lbl.configure(text="")
-
-        def actualizar_deuda(*args):
-            nombre = nombre_var.get().strip()
-            for w in abono_frame.winfo_children():
-                w.destroy()
-            abono_var.set(False)
-            abono_monto_var.set("")
-
-            if not nombre:
-                deuda_lbl.configure(text="")
-                saldo_lbl.configure(text="")
-                abono_frame.pack_forget()
-                return
-
-            try:
-                deuda = self.sale_use_case.get_pending_by_customer(nombre)
-            except Exception:
-                deuda = 0
-
-            es_fiado = (metodo_var.get() == "Fiado")
-
-            if deuda > 0:
-                if es_fiado:
-                    total_nuevo = deuda + total
-                    deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}\n"
-                             f"Deuda anterior: ${deuda:,.0f}  +  Esta venta: ${total:,.0f}\n"
-                             f"➡️ Nueva deuda total: ${total_nuevo:,.0f}".replace(",", "."),
-                        fg="#ffd166")
-                else:
-                    total_si_fuera = deuda + total
-                    deuda_lbl.configure(
-                        text=f"⚠️ {nombre} ya debe ${deuda:,.0f} de fiados anteriores.\n"
-                             f"Si sumamos esta venta (${total:,.0f}): ${total_si_fuera:,.0f}".replace(",", "."),
-                        fg="#ffd166")
-            elif es_fiado:
-                deuda_lbl.configure(
-                    text=f"📌 FIADO a: {nombre}  |  Total: ${total:,.0f}".replace(",", "."),
-                    fg="#ffd166")
-            else:
-                deuda_lbl.configure(text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
-
-            if deuda > 0 or es_fiado:
-                chk = ttk.Checkbutton(
-                    abono_frame,
-                    text="💵 Abonar",
-                    variable=abono_var,
-                    bootstyle="success-round-toggle",
-                    command=recalcular_saldo)
-                chk.pack(side="left", padx=5)
-                ttk.Label(abono_frame, text="Monto:", bg=bg, fg=fg).pack(side="left", padx=5)
-                ent = ttk.Entry(abono_frame, textvariable=abono_monto_var,
-                                width=12, font=("Arial", 12), justify="center")
-                ent.pack(side="left", padx=5)
-                abono_monto_var.trace_add("write", recalcular_saldo)
-                abono_frame.pack(pady=5)
-                recalcular_saldo()
-            else:
-                abono_frame.pack_forget()
-                saldo_lbl.configure(text="")
-
-        nombre_var.trace_add("write", actualizar_deuda)
-        metodo_var.trace_add("write", actualizar_deuda)
-        metodo_var.trace_add("write", recalcular_saldo)
-
+        # ---------- MÉTODO DE PAGO ----------
         tk.Label(pop, text="Método de pago:", font=("Arial", 11),
                  bg=bg, fg=fg).pack(pady=(10, 3))
+        metodo_var = tk.StringVar(value="Efectivo")
         mf = tk.Frame(pop, bg=bg)
         mf.pack(pady=5)
         for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
@@ -502,12 +403,130 @@ class PaymentView(ttk.Frame):
                             bootstyle="info").grid(row=i // 3, column=i % 3,
                                                     padx=8, pady=3, sticky="w")
 
-        tk.Label(pop, text="Notas (opcional):", bg=bg, fg=fg).pack(pady=(10, 3))
+        # ---------- FRAME DE ABONO (siempre visible, se muestra/oculta) ----------
+        abono_frame = tk.Frame(pop, bg=bg)
+        abono_var = tk.BooleanVar(value=False)
+        abono_monto_var = tk.StringVar(value="")
+
+        chk_abono = ttk.Checkbutton(
+            abono_frame,
+            text="💵 Abonar a deuda anterior",
+            variable=abono_var,
+            bootstyle="success-round-toggle")
+        chk_abono.pack(side="left", padx=5)
+
+        tk.Label(abono_frame, text="Monto:", bg=bg, fg=fg).pack(side="left", padx=5)
+        ent_abono = ttk.Entry(abono_frame, textvariable=abono_monto_var,
+                              width=12, font=("Arial", 12), justify="center")
+        ent_abono.pack(side="left", padx=5)
+
+        # ---------- SALDO EN TIEMPO REAL ----------
+        saldo_lbl = tk.Label(pop, text="", font=("Arial", 12, "bold"),
+                             bg=bg, fg="#a8e6a8", wraplength=580, justify="center")
+        saldo_lbl.pack(pady=8)
+
+        # ---------- NOTAS ----------
+        tk.Label(pop, text="Notas (opcional):", bg=bg, fg=fg).pack(pady=(5, 3))
         notas_var = tk.StringVar()
         ttk.Entry(pop, textvariable=notas_var, width=40).pack(pady=5)
 
-        saldo_lbl.pack(pady=5)
+        # =========================================================
+        # LÓGICA DE ACTUALIZACIÓN EN TIEMPO REAL
+        # =========================================================
+        def refresh_ui(*args):
+            """Recalcula todo: mensaje, visibilidad del abono y saldo."""
+            nombre = nombre_var.get().strip()
+            es_fiado = (metodo_var.get() == "Fiado")
 
+            # 1) Sin nombre → todo limpio
+            if not nombre:
+                deuda_lbl.configure(text="")
+                abono_frame.pack_forget()
+                saldo_lbl.configure(text="")
+                return
+
+            # 2) Consultar deuda previa
+            try:
+                deuda = self.sale_use_case.get_pending_by_customer(nombre)
+            except Exception:
+                deuda = 0
+
+            # 3) Mensaje según caso
+            if es_fiado:
+                if deuda > 0:
+                    total_nuevo = deuda + total
+                    deuda_lbl.configure(
+                        text=f"📌 FIADO a: {nombre}\n"
+                             f"Deuda anterior: ${deuda:,.0f}  +  Esta venta: ${total:,.0f}\n"
+                             f"➡️ Nueva deuda total: ${total_nuevo:,.0f}".replace(",", "."),
+                        fg="#ffd166")
+                else:
+                    deuda_lbl.configure(
+                        text=f"📌 FIADO a: {nombre}  |  Total: ${total:,.0f}".replace(",", "."),
+                        fg="#ffd166")
+            else:
+                # Efectivo / Transferencia / Tarjeta / Otro
+                if deuda > 0:
+                    deuda_lbl.configure(
+                        text=f"⚠️ {nombre} debe ${deuda:,.0f} de fiados anteriores.\n"
+                             f"Esta venta se paga por aparte.".replace(",", "."),
+                        fg="#ffd166")
+                else:
+                    deuda_lbl.configure(
+                        text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
+
+            # 4) Mostrar/ocultar el frame de abono
+            #    Se muestra si hay deuda previa O es fiado
+            if deuda > 0 or es_fiado:
+                abono_frame.pack(pady=5)
+            else:
+                abono_frame.pack_forget()
+                abono_var.set(False)
+                abono_monto_var.set("")
+                saldo_lbl.configure(text="")
+                return
+
+            # 5) Calcular y mostrar el saldo en tiempo real
+            try:
+                monto = 0.0
+                if abono_var.get():
+                    try:
+                        monto = float(abono_monto_var.get()
+                                      .replace("$", "").replace(".", "").replace(",", ".") or 0)
+                    except ValueError:
+                        monto = 0.0
+                    if monto > deuda:
+                        monto = deuda
+
+                if es_fiado:
+                    # Deuda previa + esta venta - abono
+                    total_acum = deuda + total
+                    saldo = max(0, total_acum - monto)
+                    if abono_var.get() and monto > 0:
+                        saldo_lbl.configure(
+                            text=f"💵 Nueva deuda después del abono: ${saldo:,.0f}".replace(",", "."))
+                    else:
+                        saldo_lbl.configure(
+                            text=f"💵 Nueva deuda total: ${total_acum:,.0f}".replace(",", "."))
+                else:
+                    # Solo se abona a la deuda anterior
+                    if abono_var.get() and monto > 0:
+                        saldo = max(0, deuda - monto)
+                        saldo_lbl.configure(
+                            text=f"💵 Saldo de la deuda anterior: ${saldo:,.0f}".replace(",", "."))
+                    else:
+                        saldo_lbl.configure(
+                            text=f"💵 Deuda anterior: ${deuda:,.0f}".replace(",", "."))
+            except Exception:
+                saldo_lbl.configure(text="")
+
+        # Un solo handler para todos los cambios
+        nombre_var.trace_add("write", refresh_ui)
+        metodo_var.trace_add("write", refresh_ui)
+        abono_var.trace_add("write", refresh_ui)
+        abono_monto_var.trace_add("write", refresh_ui)
+
+        # ---------- BOTONES ----------
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -541,7 +560,6 @@ class PaymentView(ttk.Frame):
                         msg += "\n✅ Deuda SALDADA por completo."
                     else:
                         msg += f"\n📌 Saldo pendiente: ${saldo:,.0f}".replace(",", ".")
-                # ✅ Limpiar carrito y borrador
                 self.cart = []
                 self.refresh_cart()
                 self.sale_use_case.clear_cart_draft()
