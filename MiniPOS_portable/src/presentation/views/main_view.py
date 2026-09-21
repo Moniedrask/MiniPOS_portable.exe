@@ -5,6 +5,7 @@ from ttkbootstrap import Style
 import os
 import shutil
 import sys
+import threading
 from datetime import datetime
 from application.use_case.product_use_case import ProductCase
 from application.use_case.sale_use_case import SaleCase
@@ -52,6 +53,10 @@ class MainView(tk.Tk):
         self.product_use_case = ProductCase(self.db_manager)
         self.sale_use_case = SaleCase(self.db_manager)
 
+        # ✅ Variables para la bandeja del sistema
+        self.tray_icon = None
+        self.tray_thread = None
+
         if not self._check_startup_password():
             self.destroy()
             return
@@ -60,7 +65,6 @@ class MainView(tk.Tk):
         self.show_page("pagos")
         self._apply_font_size()
 
-        # ✅ Configurar cierre personalizado
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
@@ -68,29 +72,115 @@ class MainView(tk.Tk):
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
-    # =========== CIERRE PERSONALIZADO ===========
+    # =========== CIERRE PERSONALIZADO (BANDEJA) ===========
     def _on_close(self):
-        """Manejo del botón X de la ventana."""
-        to_background = self.db_manager.get_setting("close_to_background", "0") == "1"
-        if to_background:
-            # Minimizar a segundo plano (barra de tareas)
-            try:
-                self.iconify()
-            except Exception:
-                self.withdraw()
+        """Manejo del botón X."""
+        to_tray = self.db_manager.get_setting("close_to_tray", "0") == "1"
+        if to_tray:
+            self._hide_to_tray()
             return
-        # Confirmar salida
         r = MD.yesno(
             "¿Estás seguro que deseas salir de MiniPOS Portable?\n\n"
             "Tus datos quedan guardados automáticamente.",
             "Confirmar salida", parent=self)
         if r == "Yes":
+            self._real_quit()
+
+    def _real_quit(self):
+        try:
+            if self.tray_icon:
+                self.tray_icon.stop()
+        except Exception:
+            pass
+        try:
+            self.db_manager.close_connection()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    def _hide_to_tray(self):
+        """Oculta la ventana y crea el ícono en la bandeja del sistema."""
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+
+        # Crear el ícono si no existe
+        if self.tray_icon is None:
+            self._create_tray_icon()
+
+    def _create_tray_icon(self):
+        """Crea el ícono de la bandeja con menú Mostrar / Salir."""
+        try:
+            from PIL import Image, ImageDraw
+            import pystray
+        except ImportError:
+            # Sin pystray/Pillow → caer a minimizar normal
             try:
-                self.db_manager.close_connection()
+                self.deiconify()
+                self.iconify()
             except Exception:
                 pass
-            self.destroy()
-            sys.exit(0)
+            return
+
+        # Generar un ícono verde con "MP"
+        img = Image.new("RGBA", (64, 64), (10, 77, 31, 255))
+        draw = ImageDraw.Draw(img)
+        draw.rectangle([4, 4, 60, 60], outline=(168, 230, 168, 255), width=3)
+        # Texto "MP" simple (sin fuente externa)
+        draw.rectangle([18, 24, 46, 28], fill=(168, 230, 168, 255))  # guion
+        draw.rectangle([20, 16, 26, 48], fill=(168, 230, 168, 255))  # M izquierda
+        draw.rectangle([38, 16, 44, 48], fill=(168, 230, 168, 255))  # M derecha
+        draw.rectangle([20, 30, 44, 34], fill=(168, 230, 168, 255))  # M medio
+
+        def on_show(icon, item):
+            try:
+                self.after(0, self._show_from_tray)
+            except Exception:
+                pass
+
+        def on_quit(icon, item):
+            try:
+                self.after(0, self._real_quit)
+            except Exception:
+                pass
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Mostrar MiniPOS", on_show, default=True),
+            pystray.MenuItem("Salir", on_quit),
+        )
+
+        self.tray_icon = pystray.Icon("MiniPOS", img, "MiniPOS Portable", menu)
+
+        def run_tray():
+            try:
+                self.tray_icon.run()
+            except Exception:
+                pass
+
+        self.tray_thread = threading.Thread(target=run_tray, daemon=True)
+        self.tray_thread.start()
+
+    def _show_from_tray(self):
+        """Muestra la ventana desde la bandeja."""
+        try:
+            if self.tray_icon:
+                self.tray_icon.stop()
+        except Exception:
+            pass
+        self.tray_icon = None
+
+        try:
+            self.deiconify()
+            self.state('zoomed')
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
 
     # =========== ESTILOS ===========
     def _setup_dark_green_style(self):
@@ -332,15 +422,14 @@ class MainView(tk.Tk):
             menu.add_cascade(label="🔑 Contraseña de inicio", menu=sub_pwd)
             menu.add_separator()
 
-            # ✅ Casilla: cerrar a segundo plano
-            self.bg_close_var = tk.BooleanVar(
-                value=self.db_manager.get_setting("close_to_background", "0") == "1")
+            # ✅ Casilla: ocultar en la bandeja al presionar X
+            self.tray_var = tk.BooleanVar(
+                value=self.db_manager.get_setting("close_to_tray", "0") == "1")
             menu.add_checkbutton(
-                label="🔽 Al presionar X ir a segundo plano",
-                variable=self.bg_close_var,
-                command=self._toggle_close_to_background)
+                label="🔽 Al presionar X ocultar en la bandeja",
+                variable=self.tray_var,
+                command=self._toggle_close_to_tray)
 
-            # ✅ Auto-inicio con Windows
             self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
             menu.add_checkbutton(label="🚀 Iniciar con Windows",
                                  variable=self.autostart_var,
@@ -363,20 +452,28 @@ class MainView(tk.Tk):
         self.menubar.add_menu("Opciones", build_opciones)
         self.menubar.add_menu("Ventas", build_ventas)
 
+        # ✅ Pestañas compactas (vertical delgadas)
         tabs = ttk.Frame(self, bootstyle="dark")
-        tabs.pack(fill="x", padx=10, pady=(10, 0))
-        self.btn_pagos = ttk.Button(tabs, text="🛒  PAGOS", style="DarkGreen.TButton",
-                                    command=lambda: self.show_page("pagos"), width=20)
-        self.btn_pagos.pack(side="left", padx=3, pady=3, ipady=8)
-        self.btn_inv = ttk.Button(tabs, text="📦  INVENTARIO", style="DarkGreen.TButton",
-                                  command=lambda: self.show_page("inventario"), width=20)
-        self.btn_inv.pack(side="left", padx=3, pady=3, ipady=8)
+        tabs.pack(fill="x", padx=10, pady=(6, 0))
+
+        # ✅ Botones delgados: padding vertical mínimo (padding=(x, y))
+        self.btn_pagos = ttk.Button(tabs, text="🛒 PAGOS",
+                                    style="DarkGreen.TButton",
+                                    command=lambda: self.show_page("pagos"),
+                                    width=14)
+        self.btn_pagos.pack(side="left", padx=3, pady=2)
+
+        self.btn_inv = ttk.Button(tabs, text="📦 INVENTARIO",
+                                  style="DarkGreen.TButton",
+                                  command=lambda: self.show_page("inventario"),
+                                  width=14)
+        self.btn_inv.pack(side="left", padx=3, pady=2)
 
         self.bind('<Control-Key-1>', lambda e: self.show_page("pagos"))
         self.bind('<Control-Key-2>', lambda e: self.show_page("inventario"))
 
         self.container = ttk.Frame(self, bootstyle="dark")
-        self.container.pack(fill="both", expand=True, padx=10, pady=10)
+        self.container.pack(fill="both", expand=True, padx=10, pady=6)
 
         self.payment_view = PaymentView(self.container, self.product_use_case,
                                         self.sale_use_case, lambda: self.current_theme)
@@ -384,14 +481,15 @@ class MainView(tk.Tk):
                                             lambda: self.current_theme)
         self.current_page = None
 
-    # =========== CERRAR A SEGUNDO PLANO ===========
-    def _toggle_close_to_background(self):
-        val = "1" if self.bg_close_var.get() else "0"
-        self.db_manager.set_setting("close_to_background", val)
+    # =========== CIERRE A BANDEJA ===========
+    def _toggle_close_to_tray(self):
+        val = "1" if self.tray_var.get() else "0"
+        self.db_manager.set_setting("close_to_tray", val)
         if val == "1":
-            MD.show_info("✅ Al presionar X la ventana se irá a segundo plano.\n"
-                         "Para abrirla de nuevo, haz clic en su ícono en la barra de tareas.",
-                         "Modo segundo plano", parent=self)
+            MD.show_info(
+                "✅ Al presionar X la ventana se ocultará en la bandeja del sistema.\n"
+                "Para abrirla, haz clic en el ícono (junto al reloj) y elige 'Mostrar MiniPOS'.",
+                "Modo bandeja", parent=self)
         else:
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
                          "Modo normal", parent=self)
