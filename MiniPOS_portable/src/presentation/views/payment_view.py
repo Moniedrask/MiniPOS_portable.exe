@@ -9,201 +9,211 @@ def apply_titlebar_theme(window, is_dark):
         import ctypes
         window.update_idletasks()
         hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
-        value = ctypes.c_int(1 if is_dark else 0)
-        for attr in (20, 19):
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(value), ctypes.sizeof(value))
+        v = ctypes.c_int(1 if is_dark else 0)
+        for a in (20, 19):
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, a, ctypes.byref(v), ctypes.sizeof(v))
     except Exception:
         pass
 
 
-class PaymentView(ttk.Frame):
-    """Módulo de PAGOS (POS) como Frame embebido en la ventana principal."""
+def center_window(win):
+    win.update_idletasks()
+    w, h = win.winfo_width(), win.winfo_height()
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    x, y = (sw - w) // 2, (sh - h) // 2
+    win.geometry(f"+{x}+{y}")
 
+
+class PaymentView(ttk.Frame):
     def __init__(self, parent, product_use_case, sale_use_case, get_theme_func):
         super().__init__(parent, bootstyle="dark")
         self.product_use_case = product_use_case
         self.sale_use_case = sale_use_case
         self.get_theme = get_theme_func
         self.cart = []
-
         self.create_widgets()
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
+        self._keep_scanner_focused()
+
+    def _keep_scanner_focused(self):
+        try:
+            fw = self.focus_get()
+            if fw is not None and not isinstance(fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
+                self.scan_entry.focus_set()
+        except Exception:
+            pass
+        self.after(700, self._keep_scanner_focused)
 
     def create_widgets(self):
-        # --- BARRA DE ESCANEO ---
-        scan_frame = ttk.Frame(self, bootstyle="dark")
-        scan_frame.pack(padx=10, pady=(15, 5), fill="x")
-        ttk.Label(scan_frame, text="📷 Escanear producto:",
-                  font=("Arial", 14, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
+        # --- ESCANEO ---
+        top = ttk.Frame(self, bootstyle="dark"); top.pack(padx=10, pady=(15, 5), fill="x")
+        ttk.Label(top, text="📷 Escanear:", font=("Arial", 14, "bold"),
+                  bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
-        self.scan_entry = ttk.Entry(scan_frame, textvariable=self.scan_var, width=40, font=("Arial", 14))
+        self.scan_entry = ttk.Entry(top, textvariable=self.scan_var, width=30, font=("Arial", 14))
         self.scan_entry.pack(side="left", padx=5)
         self.scan_entry.bind("<Return>", self.add_by_barcode)
-        ttk.Button(scan_frame, text="🔍 Agregar", command=lambda: self.add_by_barcode(None)).pack(side="left", padx=5)
 
-        # --- TABLA DEL CARRITO ---
-        cart_frame = ttk.Frame(self, bootstyle="dark")
-        cart_frame.pack(padx=10, pady=5, fill="both", expand=True)
+        ttk.Label(top, text="🔍 Buscar:", font=("Arial", 11),
+                  bootstyle="inverse-dark").pack(side="left", padx=(20, 5))
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(top, textvariable=self.search_var, width=25, font=("Arial", 11))
+        self.search_entry.pack(side="left", padx=5)
+        self.search_entry.bind("<Return>", self.add_by_search)
+
+        ttk.Button(top, text="Agregar", command=self.add_by_search, bootstyle="info").pack(side="left", padx=5)
+
+        # --- CARRITO ---
+        cart_frame = ttk.Frame(self, bootstyle="dark"); cart_frame.pack(padx=10, pady=5, fill="both", expand=True)
         self.tree = ttk.Treeview(cart_frame,
                                  columns=("ID", "Name", "Barcode", "Price", "Qty", "Subtotal"),
                                  show='headings')
-        self.tree.heading("ID", text="ID")
-        self.tree.heading("Name", text="Producto")
-        self.tree.heading("Barcode", text="Código")
-        self.tree.heading("Price", text="P. Unit.")
-        self.tree.heading("Qty", text="Cantidad")
-        self.tree.heading("Subtotal", text="Subtotal")
-        self.tree.column("ID", width=50, anchor="center")
-        self.tree.column("Name", width=300)
-        self.tree.column("Barcode", width=150)
-        self.tree.column("Price", width=110, anchor="e")
-        self.tree.column("Qty", width=100, anchor="center")
-        self.tree.column("Subtotal", width=120, anchor="e")
+        for c, t, w, a in [("ID","ID",50,"center"),("Name","Producto",300,"w"),
+                           ("Barcode","Código",150,"w"),("Price","P. Unit.",110,"e"),
+                           ("Qty","Cantidad",110,"center"),("Subtotal","Subtotal",120,"e")]:
+            self.tree.heading(c, text=t); self.tree.column(c, width=w, anchor=a)
         self.tree.pack(fill="both", expand=True)
+        # ✅ Clic derecho para quitar
+        self.tree.bind("<Button-3>", self._cart_context_menu)
 
         # --- TOTAL Y BOTONES ---
-        bottom = ttk.Frame(self, bootstyle="dark")
-        bottom.pack(fill="x", padx=10, pady=10)
-
-        total_frame = ttk.Frame(bottom, bootstyle="dark")
-        total_frame.pack(side="left")
-        ttk.Label(total_frame, text="TOTAL A PAGAR:", font=("Arial", 14, "bold"),
+        bottom = ttk.Frame(self, bootstyle="dark"); bottom.pack(fill="x", padx=10, pady=10)
+        tf = ttk.Frame(bottom, bootstyle="dark"); tf.pack(side="left")
+        ttk.Label(tf, text="TOTAL A PAGAR:", font=("Arial", 14, "bold"),
                   bootstyle="inverse-dark").pack(anchor="w")
-        self.total_label = ttk.Label(total_frame, text="$0", font=("Arial", 32, "bold"),
+        self.total_label = ttk.Label(tf, text="$0", font=("Arial", 36, "bold"),
                                      bootstyle="inverse-success")
         self.total_label.pack(anchor="w")
 
-        btns = ttk.Frame(bottom, bootstyle="dark")
-        btns.pack(side="right")
-        ttk.Button(btns, text="➖ Restar", command=self.decrease_qty).grid(row=0, column=0, padx=5, pady=3, sticky="ew")
-        ttk.Button(btns, text="🗑 Quitar", command=self.remove_item).grid(row=0, column=1, padx=5, pady=3, sticky="ew")
-        ttk.Button(btns, text="🧹 Vaciar", command=self.clear_cart).grid(row=0, column=2, padx=5, pady=3, sticky="ew")
-        ttk.Button(btns, text="💰 COBRAR", command=self.pay, bootstyle="success").grid(
-            row=1, column=0, columnspan=2, padx=5, pady=10, sticky="ew", ipady=12)
-        ttk.Button(btns, text="❌ Cancelar", command=self.clear_cart, bootstyle="danger").grid(
-            row=1, column=2, padx=5, pady=10, sticky="ew", ipady=12)
+        bf = ttk.Frame(bottom, bootstyle="dark"); bf.pack(side="right")
+        ttk.Button(bf, text="💰 COBRAR", command=self.pay, bootstyle="success").pack(
+            side="left", padx=5, ipady=15, ipadx=20)
+        ttk.Button(bf, text="❌ Cancelar", command=self.clear_cart, bootstyle="danger").pack(
+            side="left", padx=5, ipady=15)
+
+    def _cart_context_menu(self, event):
+        row = self.tree.identify_row(event.y)
+        if not row: return
+        self.tree.selection_set(row); self.tree.focus(row)
+        pid = int(self.tree.item(row, 'values')[0])
+        name = self.tree.item(row, 'values')[1]
+        style = ttk.Style()
+        m = tk.Menu(self, tearoff=0, bg=style.colors.bg, fg=style.colors.fg,
+                    activebackground=style.colors.selectbg, activeforeground=style.colors.selectfg,
+                    bd=1, relief="solid")
+        m.add_command(label="➖ Quitar 1", command=lambda: self._confirm_remove_one(pid, name))
+        m.add_command(label="🗑️  Quitar producto completo", command=lambda: self._confirm_remove_all(pid, name))
+        m.add_separator()
+        m.add_command(label="🧹 Vaciar carrito", command=self.clear_cart)
+        try: m.tk_popup(event.x_root, event.y_root)
+        finally: m.grab_release()
+
+    def _confirm_remove_one(self, pid, name):
+        if Messagebox.yesno(f"¿Quitar 1 de '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
+            for i, it in enumerate(self.cart):
+                if it["product_id"] == pid:
+                    it["quantity"] -= 1
+                    if it["quantity"] <= 0:
+                        self.cart.pop(i)
+                    else:
+                        it["subtotal"] = it["quantity"] * it["unit_price"]
+                    break
+            self.refresh_cart()
+
+    def _confirm_remove_all(self, pid, name):
+        if Messagebox.yesno(f"¿Quitar TODO '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
+            self.cart = [i for i in self.cart if i["product_id"] != pid]
+            self.refresh_cart()
 
     def add_by_barcode(self, event=None):
         codigo = self.scan_var.get().strip()
-        if not codigo:
-            return
-        encontrado = None
+        if not codigo: return
+        enc = None
         for p in self.product_use_case.list_products():
             if str(p.barcode).strip() == codigo:
-                encontrado = p
-                break
-
-        if not encontrado:
-            Messagebox.show_warning(f"⚠️ El código '{codigo}' no está registrado.",
-                                    "Producto no encontrado", parent=self)
+                enc = p; break
+        if not enc:
+            Messagebox.show_warning(f"⚠️ '{codigo}' no registrado.", "No encontrado", parent=self)
             self.scan_var.set(""); self.scan_entry.focus_set(); return
-
-        # Si es por peso/volumen, preguntar cantidad
-        if encontrado.unit_type in ("peso", "volumen"):
-            self.ask_amount(encontrado)
-        else:
-            self.add_to_cart(encontrado, 1)
         self.scan_var.set(""); self.scan_entry.focus_set()
+        if enc.unit_type in ("peso", "volumen"):
+            self.ask_amount(enc)
+        else:
+            self.add_to_cart(enc, 1)
+
+    def add_by_search(self, event=None):
+        q = self.search_var.get().strip().lower()
+        if not q: return
+        enc = None
+        for p in self.product_use_case.list_products():
+            if str(p.barcode).strip() == q or p.name.lower() == q:
+                enc = p; break
+        if not enc:
+            # Búsqueda parcial
+            for p in self.product_use_case.list_products():
+                if q in p.name.lower():
+                    enc = p; break
+        if not enc:
+            Messagebox.show_warning(f"⚠️ No se encontró '{q}'.", "No encontrado", parent=self)
+            return
+        self.search_var.set("")
+        if enc.unit_type in ("peso", "volumen"):
+            self.ask_amount(enc)
+        else:
+            self.add_to_cart(enc, 1)
+        self.scan_entry.focus_set()
 
     def ask_amount(self, product):
-        """Popup para ingresar peso/volumen del producto."""
-        self.parent_popup = Toplevel(self)
-        self.parent_popup.title(f"Cantidad - {product.name}")
-        self.parent_popup.geometry("350x280")
-        self.parent_popup.transient(self.winfo_toplevel())
-        self.parent_popup.grab_set()
-
-        theme = self.get_theme()
-        ttk.Label(self.parent_popup, text=f"{product.name}",
-                  font=("Arial", 14, "bold")).pack(pady=10)
-        ttk.Label(self.parent_popup, text=f"Precio: ${product.price:,.0f}/{product.unit}".replace(",", "."),
-                  font=("Arial", 11)).pack(pady=5)
-        ttk.Label(self.parent_popup, text=f"Ingrese la cantidad en {product.unit}:",
+        pop = Toplevel(self); pop.title(f"Cantidad - {product.name}")
+        pop.geometry("400x320"); pop.transient(self.winfo_toplevel()); pop.grab_set()
+        ttk.Label(pop, text=product.name, font=("Arial", 16, "bold")).pack(pady=12)
+        ttk.Label(pop, text=f"Precio: ${product.price:,.0f}/{product.unit}".replace(",", "."),
+                  font=("Arial", 12)).pack(pady=5)
+        ttk.Label(pop, text=f"Ingrese la cantidad en {product.unit}:",
                   font=("Arial", 11)).pack(pady=10)
+        v = tk.StringVar(value="1")
+        e = ttk.Entry(pop, textvariable=v, width=15, font=("Arial", 20), justify="center")
+        e.pack(pady=5); e.select_range(0, tk.END); e.focus_set()
 
-        entry_var = tk.StringVar(value="1")
-        entry = ttk.Entry(self.parent_popup, textvariable=entry_var, width=15,
-                          font=("Arial", 18), justify="center")
-        entry.pack(pady=5)
-        entry.select_range(0, tk.END)
-        entry.focus_set()
-
-        def aceptar():
+        def ok():
             try:
-                cant = float(entry_var.get().replace(",", "."))
-                if cant <= 0:
-                    raise ValueError
+                c = float(v.get().replace(",", "."))
+                if c <= 0: raise ValueError
             except ValueError:
-                Messagebox.show_error(f"Cantidad inválida", "Error", parent=self.parent_popup)
-                return
-            self.parent_popup.destroy()
-            self.add_to_cart(product, cant)
+                Messagebox.show_error("Cantidad inválida", "Error", parent=pop); return
+            pop.destroy(); self.add_to_cart(product, c); self.scan_entry.focus_set()
 
-        def cancelar():
-            self.parent_popup.destroy()
-            self.scan_entry.focus_set()
-
-        btn_frame = ttk.Frame(self.parent_popup)
-        btn_frame.pack(pady=15)
-        ttk.Button(btn_frame, text="Agregar", command=aceptar, bootstyle="success").pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Cancelar", command=cancelar).pack(side="left", padx=5)
-        entry.bind("<Return>", lambda e: aceptar())
-        self.parent_popup.after(200, lambda: apply_titlebar_theme(self.parent_popup, theme == 'darkly'))
+        bf = ttk.Frame(pop); bf.pack(pady=15)
+        ttk.Button(bf, text="Agregar", command=ok, bootstyle="success").pack(side="left", padx=5)
+        ttk.Button(bf, text="Cancelar", command=lambda: [pop.destroy(), self.scan_entry.focus_set()]).pack(side="left", padx=5)
+        e.bind("<Return>", lambda e: ok())
+        pop.after(100, lambda: center_window(pop))
+        pop.after(200, lambda: apply_titlebar_theme(pop, self.get_theme() == 'darkly'))
 
     def add_to_cart(self, product, cantidad):
-        """Agrega un producto al carrito (o suma cantidad si ya existe)."""
-        for item in self.cart:
-            if item["product_id"] == product.product_id:
-                item["quantity"] += cantidad
-                item["subtotal"] = item["quantity"] * item["unit_price"]
-                self.refresh_cart()
-                return
+        for it in self.cart:
+            if it["product_id"] == product.product_id:
+                it["quantity"] += cantidad
+                it["subtotal"] = it["quantity"] * it["unit_price"]
+                self.refresh_cart(); return
         self.cart.append({
-            "product_id": product.product_id,
-            "product_name": product.name,
-            "barcode": product.barcode,
-            "unit": product.unit,
-            "unit_price": product.price,
-            "quantity": cantidad,
-            "subtotal": cantidad * product.price,
-        })
+            "product_id": product.product_id, "product_name": product.name,
+            "barcode": product.barcode, "unit": product.unit,
+            "unit_price": product.price, "quantity": cantidad,
+            "subtotal": cantidad * product.price})
         self.refresh_cart()
 
     def refresh_cart(self):
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-        for item in self.cart:
-            qty_txt = f"{item['quantity']:g} {item['unit']}" if item["unit"] != "unidad" else f"{int(item['quantity'])}"
+        for r in self.tree.get_children(): self.tree.delete(r)
+        for it in self.cart:
+            qt = f"{it['quantity']:g} {it['unit']}" if it["unit"] != "unidad" else f"{int(it['quantity'])}"
             self.tree.insert("", "end", values=(
-                item["product_id"], item["product_name"], item["barcode"],
-                f"${item['unit_price']:,.0f}".replace(",", "."),
-                qty_txt,
-                f"${item['subtotal']:,.0f}".replace(",", ".")))
-        total = sum(i["subtotal"] for i in self.cart)
-        self.total_label.configure(text=f"${total:,.0f}".replace(",", "."))
-
-    def decrease_qty(self):
-        sel = self.tree.selection()
-        if not sel: return
-        pid = int(self.tree.item(sel[0], 'values')[0])
-        for i, item in enumerate(self.cart):
-            if item["product_id"] == pid:
-                # Para peso/volumen pedir cuánto restar (por simplicidad: restar de a 1)
-                item["quantity"] -= 1 if item["unit"] == "unidad" else 0.1
-                if item["quantity"] <= 0:
-                    self.cart.pop(i)
-                else:
-                    item["subtotal"] = item["quantity"] * item["unit_price"]
-                break
-        self.refresh_cart(); self.scan_entry.focus_set()
-
-    def remove_item(self):
-        sel = self.tree.selection()
-        if not sel: return
-        pid = int(self.tree.item(sel[0], 'values')[0])
-        self.cart = [i for i in self.cart if i["product_id"] != pid]
-        self.refresh_cart(); self.scan_entry.focus_set()
+                it["product_id"], it["product_name"], it["barcode"],
+                f"${it['unit_price']:,.0f}".replace(",", "."), qt,
+                f"${it['subtotal']:,.0f}".replace(",", ".")))
+        tot = sum(i["subtotal"] for i in self.cart)
+        self.total_label.configure(text=f"${tot:,.0f}".replace(",", "."))
 
     def clear_cart(self):
         if not self.cart: return
@@ -215,38 +225,55 @@ class PaymentView(ttk.Frame):
             Messagebox.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self); return
         total = sum(i["subtotal"] for i in self.cart)
 
-        popup = Toplevel(self)
-        popup.title("Confirmar Pago")
-        popup.geometry("400x400")
-        popup.transient(self.winfo_toplevel()); popup.grab_set()
+        pop = Toplevel(self); pop.title("Confirmar Pago")
+        pop.geometry("560x620"); pop.transient(self.winfo_toplevel()); pop.grab_set()
 
-        ttk.Label(popup, text="💰 CONFIRMAR PAGO", font=("Arial", 14, "bold")).pack(pady=10)
-        ttk.Label(popup, text=f"Total a pagar:  ${total:,.0f}".replace(",", "."),
-                  font=("Arial", 18, "bold"), bootstyle="success").pack(pady=10)
+        ttk.Label(pop, text="💰 CONFIRMAR PAGO", font=("Arial", 20, "bold")).pack(pady=15)
+        ttk.Label(pop, text="TOTAL A PAGAR", font=("Arial", 14),
+                  bootstyle="inverse-secondary").pack()
+        ttk.Label(pop, text=f"${total:,.0f}".replace(",", "."),
+                  font=("Arial", 40, "bold"), bootstyle="success").pack(pady=10)
 
-        ttk.Label(popup, text="Método de pago:").pack(pady=5)
+        # Nombre del cliente
+        ttk.Label(pop, text="Nombre del cliente (opcional):", font=("Arial", 11)).pack(pady=(15, 3))
+        nombre_var = tk.StringVar()
+        ttk.Entry(pop, textvariable=nombre_var, width=40, font=("Arial", 12)).pack(pady=5)
+
+        # Método de pago
+        ttk.Label(pop, text="Método de pago:", font=("Arial", 11)).pack(pady=(10, 3))
         metodo_var = tk.StringVar(value="Efectivo")
-        mf = ttk.Frame(popup); mf.pack(pady=5)
-        for m in ("Efectivo", "Transferencia", "Tarjeta", "Otro"):
-            ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m).pack(anchor="w")
+        mf = ttk.Frame(pop); mf.pack(pady=5)
+        for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
+            ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m, bootstyle="info").grid(
+                row=i//3, column=i%3, padx=8, pady=3, sticky="w")
 
-        ttk.Label(popup, text="Notas (opcional):").pack(pady=5)
-        notas_entry = ttk.Entry(popup, width=40); notas_entry.pack(pady=5)
+        ttk.Label(pop, text="Notas (opcional):").pack(pady=(10, 3))
+        notas_var = tk.StringVar()
+        ttk.Entry(pop, textvariable=notas_var, width=40).pack(pady=5)
 
         def confirmar():
+            nombre = nombre_var.get().strip()
+            metodo = metodo_var.get()
+            es_fiado = (metodo == "Fiado")
+            if es_fiado and not nombre:
+                Messagebox.show_error("Para fiado debes ingresar el nombre del cliente.",
+                                     "Falta nombre", parent=pop); return
             try:
-                sale_id, total_final = self.sale_use_case.create_sale(
-                    self.cart, payment_method=metodo_var.get(), notes=notas_entry.get().strip())
-                popup.destroy()
-                Messagebox.show_info(
-                    f"✅ Venta #{sale_id} registrada.\nTotal: ${total_final:,.0f}".replace(",", "."),
-                    "Venta Exitosa", parent=self)
-                self.cart = []; self.refresh_cart()
-                self.scan_entry.focus_set()
+                sid, tot = self.sale_use_case.create_sale(
+                    self.cart, payment_method=metodo, notes=notas_var.get().strip(),
+                    customer_name=nombre, is_credit=es_fiado)
+                pop.destroy()
+                msg = f"✅ Venta #{sid} registrada.\nTotal: ${tot:,.0f}".replace(",", ".")
+                if es_fiado:
+                    msg += f"\n\n📌 FIADO a: {nombre}\n(Recuerda cobrarle)"
+                Messagebox.show_info(msg, "Venta Exitosa", parent=self)
+                self.cart = []; self.refresh_cart(); self.scan_entry.focus_set()
             except Exception as e:
-                Messagebox.show_error(f"Error: {e}", "Error", parent=popup)
+                Messagebox.show_error(f"Error: {e}", "Error", parent=pop)
 
-        bf = ttk.Frame(popup); bf.pack(pady=20)
-        ttk.Button(bf, text="✅ Confirmar", command=confirmar, bootstyle="success").pack(side="left", padx=10)
-        ttk.Button(bf, text="Cancelar", command=popup.destroy).pack(side="left", padx=10)
-        popup.after(200, lambda: apply_titlebar_theme(popup, self.get_theme() == 'darkly'))
+        bf = ttk.Frame(pop); bf.pack(pady=20)
+        ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar, bootstyle="success").pack(
+            side="left", padx=10, ipady=10, ipadx=20)
+        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
+        pop.after(100, lambda: center_window(pop))
+        pop.after(200, lambda: apply_titlebar_theme(pop, self.get_theme() == 'darkly'))
