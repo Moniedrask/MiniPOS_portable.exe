@@ -13,7 +13,7 @@ from application.use_case.sale_use_case import SaleCase
 from infrastucture.db.db_manager import DBManager
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, DarkMenuBar, MD
+    get_menu_font, DarkMenuBar, MD, make_scrollable, make_scrolled_treeview
 )
 from presentation.views.payment_view import PaymentView
 from presentation.views.inventory_view import InventoryView
@@ -526,12 +526,8 @@ class MainView(tk.Tk):
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
                          "Modo normal", parent=self)
 
-    # =========== REINICIAR CONTADOR DE VENTAS (#) ===========
+    # =========== REINICIAR CONTADOR ===========
     def reset_sales_counter(self):
-        """
-        Reinicia SOLO el número que se muestra como 'Venta #X'.
-        NO borra ventas, fiados, abonos ni productos.
-        """
         r1 = MD.yesno(
             "🔄 ¿Reiniciar el contador de ventas?\n\n"
             "Las ventas y fiados NO se borran.\n"
@@ -580,7 +576,7 @@ class MainView(tk.Tk):
         self._apply_font_size()
 
     # =========================================================
-    # RESUMEN DE VENTAS
+    # RESUMEN DE VENTAS (con scroll universal)
     # =========================================================
     def show_sales_summary(self):
         win = tk.Toplevel(self)
@@ -592,18 +588,30 @@ class MainView(tk.Tk):
         bg = self.style.colors.bg
         fg = self.style.colors.fg
 
-        tk.Label(win, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
-                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=12)
+        # ---- Botones PRIMERO (abajo) ----
+        bf = tk.Frame(win, bg=bg)
+        bf.pack(side="bottom", fill="x", pady=8)
 
-        # ===== CARDS DINÁMICAS =====
-        cards = tk.Frame(win, bg=bg)
-        cards.pack(pady=5)
-        cards_labels = {}
+        # ---- Contenedor con scroll ----
+        container = tk.Frame(win, bg=bg)
+        container.pack(fill="both", expand=True)
 
-        def crear_cards():
-            for w in cards.winfo_children():
-                w.destroy()
-            cards_labels.clear()
+        grupos_map = {}
+        marcados = set()
+        refs = {}
+
+        def build_content(parent):
+            # Título
+            tk.Label(parent, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
+                     font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
+
+            # Cards
+            cards = tk.Frame(parent, bg=bg)
+            cards.pack(pady=5)
+            cards_labels = {}
+            refs["cards"] = cards
+            refs["cards_labels"] = cards_labels
+
             s = self.sale_use_case.get_summary()
             datos = [
                 ("HOY", s["hoy"], "#0d6efd"),
@@ -625,73 +633,88 @@ class MainView(tk.Tk):
                 lt.pack()
                 cards_labels[titulo] = (lc, lt)
 
+            # Filtros
+            filt_frame = tk.Frame(parent, bg=bg)
+            filt_frame.pack(pady=5)
+            filtro_var = tk.StringVar(value="all")
+            refs["filtro_var"] = filtro_var
+            for val, txt in [("all", "Todas"), ("today", "Hoy"), ("month", "Este mes")]:
+                ttk.Radiobutton(filt_frame, text=txt, variable=filtro_var,
+                                value=val, bootstyle="info",
+                                command=lambda: recargar()).pack(side="left", padx=8)
+
+            # Treeview
+            tree_frame = ttk.Frame(parent, bootstyle="dark")
+            tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
+
+            tree_frame2, tree = make_scrolled_treeview(
+                tree_frame,
+                columns=("Sel", "Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
+                headings=[
+                    ("Sel", "☐", 40, "center"),
+                    ("Cliente", "Cliente", 240, "center"),
+                    ("Ventas", "# Ventas", 90, "center"),
+                    ("Total", "Total", 140, "center"),
+                    ("Pagado", "Pagado", 140, "center"),
+                    ("Pendiente", "Pendiente", 140, "center"),
+                ],
+                bootstyle="dark")
+            tree_frame2.pack(fill="both", expand=True)
+
+            tree.heading("Sel", text="☐", command=toggle_all)
+            refs["tree"] = tree
+
+            # Eventos del tree
+            tree.bind("<Double-1>", ver_detalle)
+            tree.bind("<Button-3>", on_right_click)
+            tree.bind("<Button-1>", on_click, add="+")
+            win.bind("<Control-F12>", on_ctrl_f12)
+            win.bind("<Shift-F12>", on_shift_f12)
+            tree.bind("<Control-F12>", on_ctrl_f12)
+            tree.bind("<Shift-F12>", on_shift_f12)
+
+        def build_bottom(parent):
+            ttk.Button(parent, text="📋 Más detalles",
+                       command=lambda: ver_detalle(),
+                       bootstyle="info").pack(side="left", padx=5)
+            ttk.Button(parent, text="☑ Marcar todos",
+                       command=lambda: toggle_all(),
+                       bootstyle="secondary").pack(side="left", padx=5)
+            ttk.Button(parent, text="🗑️ Eliminar marcados",
+                       command=lambda: eliminar_marcados(),
+                       bootstyle="danger").pack(side="left", padx=5)
+            ttk.Button(parent, text="🔄 Refrescar",
+                       command=lambda: recargar(),
+                       bootstyle="secondary").pack(side="left", padx=5)
+
+        # ---- Utilidades ----
         def actualizar_cards():
-            s = self.sale_use_case.get_summary()
-            datos = {
-                "HOY": s["hoy"],
-                "MES": s["mes"],
-                "TOTAL": s["total"],
-                "FIADOS": s["fiados"],
-            }
-            for titulo, (cnt, tot) in datos.items():
-                if titulo in cards_labels:
-                    lc, lt = cards_labels[titulo]
-                    try:
+            try:
+                s = self.sale_use_case.get_summary()
+                datos = {
+                    "HOY": s["hoy"], "MES": s["mes"],
+                    "TOTAL": s["total"], "FIADOS": s["fiados"],
+                }
+                labels = refs.get("cards_labels", {})
+                for titulo, (cnt, tot) in datos.items():
+                    if titulo in labels:
+                        lc, lt = labels[titulo]
                         lc.configure(text=f"{cnt} ventas")
                         lt.configure(text=f"${tot:,.0f}".replace(",", "."))
-                    except Exception:
-                        pass
-
-        crear_cards()
-
-        # ===== FILTROS =====
-        filt_frame = tk.Frame(win, bg=bg)
-        filt_frame.pack(pady=5)
-        filtro_var = tk.StringVar(value="all")
-        for val, txt in [("all", "Todas"), ("today", "Hoy"), ("month", "Este mes")]:
-            ttk.Radiobutton(filt_frame, text=txt, variable=filtro_var,
-                            value=val, bootstyle="info",
-                            command=lambda: recargar()).pack(side="left", padx=8)
-
-        # ===== TREEVIEW =====
-        tree_frame = ttk.Frame(win, bootstyle="dark")
-        tree_frame.pack(fill="both", expand=True, padx=15, pady=10)
-
-        sb = ttk.Scrollbar(tree_frame, orient="vertical")
-        sb.pack(side="right", fill="y")
-
-        tree = ttk.Treeview(tree_frame,
-                            columns=("Sel", "Cliente", "Ventas", "Total", "Pagado", "Pendiente"),
-                            show='headings', height=14,
-                            yscrollcommand=sb.set)
-        tree.heading("Sel", text="☐")
-        tree.column("Sel", width=40, anchor="center")
-        for c, t, w in [("Cliente", "Cliente", 240), ("Ventas", "# Ventas", 90),
-                        ("Total", "Total", 140), ("Pagado", "Pagado", 140),
-                        ("Pendiente", "Pendiente", 140)]:
-            tree.heading(c, text=t)
-            tree.column(c, width=w, anchor="center")
-        tree.pack(side="left", fill="both", expand=True)
-        sb.config(command=tree.yview)
-
-        def _on_mousewheel(event):
-            try:
-                tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
             except Exception:
                 pass
-        tree.bind("<MouseWheel>", _on_mousewheel)
-
-        grupos_map = {}
-        marcados = set()
 
         def actualizar_heading_sel():
-            if not grupos_map or len(marcados) == 0:
-                texto = "☐"
-            elif len(marcados) >= len(grupos_map):
-                texto = "☑"
-            else:
-                texto = "◪"
             try:
+                tree = refs.get("tree")
+                if not tree:
+                    return
+                if not grupos_map or len(marcados) == 0:
+                    texto = "☐"
+                elif len(marcados) >= len(grupos_map):
+                    texto = "☑"
+                else:
+                    texto = "◪"
                 tree.heading("Sel", text=texto)
             except Exception:
                 pass
@@ -699,6 +722,7 @@ class MainView(tk.Tk):
         def toggle_mark(iid):
             if not iid or iid not in grupos_map:
                 return
+            tree = refs.get("tree")
             if iid in marcados:
                 marcados.discard(iid)
                 try:
@@ -714,7 +738,8 @@ class MainView(tk.Tk):
             actualizar_heading_sel()
 
         def toggle_all():
-            if not grupos_map:
+            tree = refs.get("tree")
+            if not tree or not grupos_map:
                 return
             if len(marcados) >= len(grupos_map):
                 marcados.clear()
@@ -734,15 +759,15 @@ class MainView(tk.Tk):
             actualizar_heading_sel()
 
         def desmarcar_todos():
+            tree = refs.get("tree")
             marcados.clear()
-            for iid in grupos_map:
-                try:
-                    tree.set(iid, "Sel", "☐")
-                except Exception:
-                    pass
+            if tree:
+                for iid in grupos_map:
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
             actualizar_heading_sel()
-
-        tree.heading("Sel", text="☐", command=toggle_all)
 
         def restaurar_foco():
             try:
@@ -753,11 +778,15 @@ class MainView(tk.Tk):
                 pass
 
         def recargar():
+            tree = refs.get("tree")
+            if not tree:
+                return
             for r in tree.get_children():
                 tree.delete(r)
             grupos_map.clear()
             marcados.clear()
-            filtro = filtro_var.get()
+            filtro_var = refs.get("filtro_var")
+            filtro = filtro_var.get() if filtro_var else "all"
             if filtro == "today":
                 sales = self.sale_use_case.get_sales_by_day(datetime.now().strftime("%Y-%m-%d"))
             elif filtro == "month":
@@ -767,9 +796,7 @@ class MainView(tk.Tk):
             grupos = self.sale_use_case.group_sales_by_customer(sales)
             for g in grupos:
                 iid = tree.insert("", "end", values=(
-                    "☐",
-                    g["customer_name"],
-                    g["count"],
+                    "☐", g["customer_name"], g["count"],
                     f"${g['total']:,.0f}".replace(",", "."),
                     f"${g['paid']:,.0f}".replace(",", "."),
                     f"${g['pending']:,.0f}".replace(",", ".")))
@@ -777,9 +804,10 @@ class MainView(tk.Tk):
             actualizar_heading_sel()
             actualizar_cards()
 
-        recargar()
-
         def ver_detalle(event=None):
+            tree = refs.get("tree")
+            if not tree:
+                return
             sel = tree.selection()
             if not sel:
                 MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
@@ -794,21 +822,33 @@ class MainView(tk.Tk):
             det.transient(win)
             det.configure(bg=bg)
             det.withdraw()
+
+            # Header
             tk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
-                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=10)
-            tk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
-                               f"Pagado: ${g['paid']:,.0f}   |   "
-                               f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
-                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=5)
-            t2 = ttk.Treeview(det,
-                              columns=("ID", "Fecha", "Método", "Productos", "Total", "Estado"),
-                              show='headings', height=12)
-            for c, t_, w in [("ID", "#", 60), ("Fecha", "Fecha", 140),
-                             ("Método", "Método", 110), ("Productos", "Productos", 260),
-                             ("Total", "Total", 100), ("Estado", "Estado", 120)]:
-                t2.heading(c, text=t_)
-                t2.column(c, width=w, anchor="center")
-            t2.pack(fill="both", expand=True, padx=15, pady=10)
+                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=8)
+            tk.Label(det,
+                     text=f"Total: ${g['total']:,.0f}   |   "
+                          f"Pagado: ${g['paid']:,.0f}   |   "
+                          f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=4)
+
+            # Treeview con scroll
+            f2 = ttk.Frame(det, bootstyle="dark")
+            f2.pack(fill="both", expand=True, padx=12, pady=6)
+            tf2, t2 = make_scrolled_treeview(
+                f2,
+                columns=("ID", "Fecha", "Método", "Productos", "Total", "Estado"),
+                headings=[
+                    ("ID", "#", 60, "center"),
+                    ("Fecha", "Fecha", 140, "center"),
+                    ("Método", "Método", 110, "center"),
+                    ("Productos", "Productos", 260, "center"),
+                    ("Total", "Total", 100, "center"),
+                    ("Estado", "Estado", 120, "center"),
+                ],
+                bootstyle="dark")
+            tf2.pack(fill="both", expand=True)
+
             for sale in sorted(g["sales"], key=lambda x: x.date):
                 resumen_items = ", ".join(
                     f"{it.quantity:g}x {it.product_name[:20]}"
@@ -818,14 +858,17 @@ class MainView(tk.Tk):
                 estado = "✅ Pagado"
                 if sale.is_credit:
                     estado = "💳 Fiado" if not sale.is_paid else "✅ Fiado pagado"
-                # ✅ Mostrar número visual (#XX)
                 t2.insert("", "end", values=(
                     f"#{sale.display_number:02d}",
-                    sale.date, sale.payment_method,
-                    resumen_items,
+                    sale.date, sale.payment_method, resumen_items,
                     f"${sale.total:,.0f}".replace(",", "."), estado))
-            ttk.Button(det, text="Cerrar",
-                       command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
+
+            # Botón cerrar
+            bf2 = tk.Frame(det, bg=bg)
+            bf2.pack(side="bottom", pady=8)
+            ttk.Button(bf2, text="Cerrar",
+                       command=lambda: [det.destroy(), restaurar_foco()]).pack()
+
             show_popup_smooth(det)
             try:
                 det.grab_set()
@@ -833,10 +876,9 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
-        tree.bind("<Double-1>", ver_detalle)
-
         def on_click(event):
             try:
+                tree = refs.get("tree")
                 region = tree.identify("region", event.x, event.y)
                 if region != "cell":
                     return
@@ -848,8 +890,6 @@ class MainView(tk.Tk):
                     toggle_mark(row)
             except Exception:
                 pass
-
-        tree.bind("<Button-1>", on_click, add="+")
 
         def eliminar_marcados():
             if not marcados:
@@ -885,6 +925,9 @@ class MainView(tk.Tk):
             restaurar_foco()
 
         def on_ctrl_f12(event=None):
+            tree = refs.get("tree")
+            if not tree:
+                return
             iid = None
             if marcados:
                 iid = next(iter(marcados))
@@ -927,6 +970,7 @@ class MainView(tk.Tk):
 
         def on_right_click(event):
             try:
+                tree = refs.get("tree")
                 row = tree.identify_row(event.y)
                 if row:
                     tree.selection_set(row)
@@ -955,23 +999,9 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
-        tree.bind("<Button-3>", on_right_click)
-
-        win.bind("<Control-F12>", on_ctrl_f12)
-        win.bind("<Shift-F12>", on_shift_f12)
-        tree.bind("<Control-F12>", on_ctrl_f12)
-        tree.bind("<Shift-F12>", on_shift_f12)
-
-        bf = tk.Frame(win, bg=bg)
-        bf.pack(pady=10)
-        ttk.Button(bf, text="📋 Más detalles", command=ver_detalle,
-                   bootstyle="info").pack(side="left", padx=5)
-        ttk.Button(bf, text="☑ Marcar todos", command=toggle_all,
-                   bootstyle="secondary").pack(side="left", padx=5)
-        ttk.Button(bf, text="🗑️ Eliminar marcados", command=eliminar_marcados,
-                   bootstyle="danger").pack(side="left", padx=5)
-        ttk.Button(bf, text="🔄 Refrescar", command=recargar,
-                   bootstyle="secondary").pack(side="left", padx=5)
+        # ---- Construir ----
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+        recargar()
 
         show_popup_smooth(win)
         try:
@@ -1048,7 +1078,7 @@ class MainView(tk.Tk):
         return ok["v"]
 
     # =========================================================
-    # FIADOS
+    # FIADOS (con scroll universal)
     # =========================================================
     def show_credit_sales(self):
         win = tk.Toplevel(self)
@@ -1060,51 +1090,86 @@ class MainView(tk.Tk):
         bg = self.style.colors.bg
         fg = self.style.colors.fg
 
-        tk.Label(win, text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
-                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=12)
+        # Botones primero (abajo)
+        bf = tk.Frame(win, bg=bg)
+        bf.pack(side="bottom", fill="x", pady=8)
 
-        resumen_lbl = tk.Label(win, text="", font=("Arial", 12, "bold"),
-                               bg=bg, fg=fg)
-        resumen_lbl.pack(pady=5)
-
-        frame = ttk.Frame(win, bootstyle="dark")
-        frame.pack(fill="both", expand=True, padx=15, pady=10)
-
-        sb = ttk.Scrollbar(frame, orient="vertical")
-        sb.pack(side="right", fill="y")
-
-        tree = ttk.Treeview(frame,
-                            columns=("Sel", "Cliente", "Fiados", "Total", "Abonado", "Pendiente"),
-                            show='headings', height=15,
-                            yscrollcommand=sb.set)
-        tree.heading("Sel", text="☐")
-        tree.column("Sel", width=40, anchor="center")
-        for c, t, w in [("Cliente", "Cliente", 240), ("Fiados", "# Fiados", 90),
-                        ("Total", "Total fiado", 140), ("Abonado", "Abonado", 140),
-                        ("Pendiente", "Pendiente", 140)]:
-            tree.heading(c, text=t)
-            tree.column(c, width=w, anchor="center")
-        tree.pack(side="left", fill="both", expand=True)
-        sb.config(command=tree.yview)
-
-        def _on_mousewheel(event):
-            try:
-                tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except Exception:
-                pass
-        tree.bind("<MouseWheel>", _on_mousewheel)
+        container = tk.Frame(win, bg=bg)
+        container.pack(fill="both", expand=True)
 
         grupos_map = {}
         marcados = set()
+        refs = {}
 
+        def build_content(parent):
+            tk.Label(parent, text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
+                     font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
+
+            resumen_lbl = tk.Label(parent, text="", font=("Arial", 12, "bold"),
+                                   bg=bg, fg=fg)
+            resumen_lbl.pack(pady=4)
+            refs["resumen_lbl"] = resumen_lbl
+
+            tree_frame = ttk.Frame(parent, bootstyle="dark")
+            tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
+
+            tf2, tree = make_scrolled_treeview(
+                tree_frame,
+                columns=("Sel", "Cliente", "Fiados", "Total", "Abonado", "Pendiente"),
+                headings=[
+                    ("Sel", "☐", 40, "center"),
+                    ("Cliente", "Cliente", 240, "center"),
+                    ("Fiados", "# Fiados", 90, "center"),
+                    ("Total", "Total fiado", 140, "center"),
+                    ("Abonado", "Abonado", 140, "center"),
+                    ("Pendiente", "Pendiente", 140, "center"),
+                ],
+                bootstyle="dark")
+            tf2.pack(fill="both", expand=True)
+
+            tree.heading("Sel", text="☐", command=toggle_all)
+            refs["tree"] = tree
+
+            tree.bind("<Double-1>", ver_detalle)
+            tree.bind("<Button-1>", on_click, add="+")
+            tree.bind("<Button-3>", on_right_click)
+            win.bind("<Control-F12>", on_ctrl_f12)
+            win.bind("<Shift-F12>", on_shift_f12)
+            tree.bind("<Control-F12>", on_ctrl_f12)
+            tree.bind("<Shift-F12>", on_shift_f12)
+
+        def build_bottom(parent):
+            ttk.Button(parent, text="📋 Más detalles",
+                       command=lambda: ver_detalle(),
+                       bootstyle="info").pack(side="left", padx=5)
+            ttk.Button(parent, text="💵 Abonar (más antigua)",
+                       command=lambda: abonar(),
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(parent, text="✅ Marcar como pagado",
+                       command=lambda: marcar_pagado(),
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(parent, text="☑ Marcar todos",
+                       command=lambda: toggle_all(),
+                       bootstyle="secondary").pack(side="left", padx=5)
+            ttk.Button(parent, text="🗑️ Eliminar marcados",
+                       command=lambda: eliminar_marcados(),
+                       bootstyle="danger").pack(side="left", padx=5)
+            ttk.Button(parent, text="🔄 Refrescar",
+                       command=lambda: recargar(),
+                       bootstyle="secondary").pack(side="left", padx=5)
+
+        # ---- Utilidades ----
         def actualizar_heading_sel():
-            if not grupos_map or len(marcados) == 0:
-                texto = "☐"
-            elif len(marcados) >= len(grupos_map):
-                texto = "☑"
-            else:
-                texto = "◪"
             try:
+                tree = refs.get("tree")
+                if not tree:
+                    return
+                if not grupos_map or len(marcados) == 0:
+                    texto = "☐"
+                elif len(marcados) >= len(grupos_map):
+                    texto = "☑"
+                else:
+                    texto = "◪"
                 tree.heading("Sel", text=texto)
             except Exception:
                 pass
@@ -1112,6 +1177,7 @@ class MainView(tk.Tk):
         def toggle_mark(iid):
             if not iid or iid not in grupos_map:
                 return
+            tree = refs.get("tree")
             if iid in marcados:
                 marcados.discard(iid)
                 try:
@@ -1127,7 +1193,8 @@ class MainView(tk.Tk):
             actualizar_heading_sel()
 
         def toggle_all():
-            if not grupos_map:
+            tree = refs.get("tree")
+            if not tree or not grupos_map:
                 return
             if len(marcados) >= len(grupos_map):
                 marcados.clear()
@@ -1147,15 +1214,15 @@ class MainView(tk.Tk):
             actualizar_heading_sel()
 
         def desmarcar_todos():
+            tree = refs.get("tree")
             marcados.clear()
-            for iid in grupos_map:
-                try:
-                    tree.set(iid, "Sel", "☐")
-                except Exception:
-                    pass
+            if tree:
+                for iid in grupos_map:
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
             actualizar_heading_sel()
-
-        tree.heading("Sel", text="☐", command=toggle_all)
 
         def restaurar_foco():
             try:
@@ -1166,6 +1233,9 @@ class MainView(tk.Tk):
                 pass
 
         def recargar():
+            tree = refs.get("tree")
+            if not tree:
+                return
             for r in tree.get_children():
                 tree.delete(r)
             grupos_map.clear()
@@ -1177,21 +1247,23 @@ class MainView(tk.Tk):
             for g in grupos:
                 total_global += g["pending"]
                 iid = tree.insert("", "end", values=(
-                    "☐",
-                    g["customer_name"],
-                    g["count"],
+                    "☐", g["customer_name"], g["count"],
                     f"${g['total']:,.0f}".replace(",", "."),
                     f"${g['paid']:,.0f}".replace(",", "."),
                     f"${g['pending']:,.0f}".replace(",", ".")))
                 grupos_map[iid] = g
-            resumen_lbl.configure(
-                text=f"👥 {len(grupos)} clientes con deuda   |   "
-                     f"💰 Total por cobrar: ${total_global:,.0f}".replace(",", "."))
+            try:
+                refs["resumen_lbl"].configure(
+                    text=f"👥 {len(grupos)} clientes con deuda   |   "
+                         f"💰 Total por cobrar: ${total_global:,.0f}".replace(",", "."))
+            except Exception:
+                pass
             actualizar_heading_sel()
 
-        recargar()
-
         def ver_detalle(event=None):
+            tree = refs.get("tree")
+            if not tree:
+                return
             sel = tree.selection()
             if not sel:
                 MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
@@ -1206,22 +1278,31 @@ class MainView(tk.Tk):
             det.transient(win)
             det.configure(bg=bg)
             det.withdraw()
+
             tk.Label(det, text=f"👤 {g['customer_name']}",
-                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=10)
-            tk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
-                               f"Abonado: ${g['paid']:,.0f}   |   "
-                               f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
-                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=5)
-            t2 = ttk.Treeview(det,
-                              columns=("ID", "Fecha", "Productos", "Total",
-                                       "Abonado", "Pendiente"),
-                              show='headings', height=12)
-            for c, t_, w in [("ID", "#", 60), ("Fecha", "Fecha", 130),
-                             ("Productos", "Productos", 280), ("Total", "Total", 90),
-                             ("Abonado", "Abonado", 90), ("Pendiente", "Pendiente", 100)]:
-                t2.heading(c, text=t_)
-                t2.column(c, width=w, anchor="center")
-            t2.pack(fill="both", expand=True, padx=15, pady=10)
+                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=8)
+            tk.Label(det,
+                     text=f"Total: ${g['total']:,.0f}   |   "
+                          f"Abonado: ${g['paid']:,.0f}   |   "
+                          f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=4)
+
+            f2 = ttk.Frame(det, bootstyle="dark")
+            f2.pack(fill="both", expand=True, padx=12, pady=6)
+            tf2, t2 = make_scrolled_treeview(
+                f2,
+                columns=("ID", "Fecha", "Productos", "Total", "Abonado", "Pendiente"),
+                headings=[
+                    ("ID", "#", 60, "center"),
+                    ("Fecha", "Fecha", 130, "center"),
+                    ("Productos", "Productos", 280, "center"),
+                    ("Total", "Total", 90, "center"),
+                    ("Abonado", "Abonado", 90, "center"),
+                    ("Pendiente", "Pendiente", 100, "center"),
+                ],
+                bootstyle="dark")
+            tf2.pack(fill="both", expand=True)
+
             for sale in sorted(g["sales"], key=lambda x: x.date):
                 resumen_items = ", ".join(
                     f"{it.quantity:g}x {it.product_name[:18]}"
@@ -1234,8 +1315,12 @@ class MainView(tk.Tk):
                     f"${sale.total:,.0f}".replace(",", "."),
                     f"${sale.amount_paid:,.0f}".replace(",", "."),
                     f"${sale.pending():,.0f}".replace(",", ".")))
-            ttk.Button(det, text="Cerrar",
-                       command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
+
+            bf2 = tk.Frame(det, bg=bg)
+            bf2.pack(side="bottom", pady=8)
+            ttk.Button(bf2, text="Cerrar",
+                       command=lambda: [det.destroy(), restaurar_foco()]).pack()
+
             show_popup_smooth(det)
             try:
                 det.grab_set()
@@ -1243,10 +1328,9 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
-        tree.bind("<Double-1>", ver_detalle)
-
         def on_click(event):
             try:
+                tree = refs.get("tree")
                 region = tree.identify("region", event.x, event.y)
                 if region != "cell":
                     return
@@ -1259,9 +1343,10 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
-        tree.bind("<Button-1>", on_click, add="+")
-
         def abonar():
+            tree = refs.get("tree")
+            if not tree:
+                return
             iid = None
             if marcados:
                 iid = next(iter(marcados))
@@ -1286,6 +1371,9 @@ class MainView(tk.Tk):
             self._abonar_dialog(win, venta, pendiente, recargar)
 
         def marcar_pagado():
+            tree = refs.get("tree")
+            if not tree:
+                return
             if not marcados and not tree.selection():
                 MD.show_warning("Marca o selecciona un cliente primero.",
                                 "Sin selección", parent=win)
@@ -1344,6 +1432,9 @@ class MainView(tk.Tk):
             restaurar_foco()
 
         def on_ctrl_f12(event=None):
+            tree = refs.get("tree")
+            if not tree:
+                return
             iid = None
             if marcados:
                 iid = next(iter(marcados))
@@ -1386,6 +1477,7 @@ class MainView(tk.Tk):
 
         def on_right_click(event):
             try:
+                tree = refs.get("tree")
                 row = tree.identify_row(event.y)
                 if row:
                     tree.selection_set(row)
@@ -1416,27 +1508,8 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
-        tree.bind("<Button-3>", on_right_click)
-
-        win.bind("<Control-F12>", on_ctrl_f12)
-        win.bind("<Shift-F12>", on_shift_f12)
-        tree.bind("<Control-F12>", on_ctrl_f12)
-        tree.bind("<Shift-F12>", on_shift_f12)
-
-        bf = tk.Frame(win, bg=bg)
-        bf.pack(pady=10)
-        ttk.Button(bf, text="📋 Más detalles", command=ver_detalle,
-                   bootstyle="info").pack(side="left", padx=5)
-        ttk.Button(bf, text="💵 Abonar (más antigua)",
-                   command=abonar, style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="✅ Marcar como pagado",
-                   command=marcar_pagado, style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="☑ Marcar todos", command=toggle_all,
-                   bootstyle="secondary").pack(side="left", padx=5)
-        ttk.Button(bf, text="🗑️ Eliminar marcados", command=eliminar_marcados,
-                   bootstyle="danger").pack(side="left", padx=5)
-        ttk.Button(bf, text="🔄 Refrescar", command=recargar,
-                   bootstyle="secondary").pack(side="left", padx=5)
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+        recargar()
 
         show_popup_smooth(win)
         try:
@@ -1446,82 +1519,103 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # ABONAR (recibe el objeto Sale directamente)
+    # ABONAR (con scroll)
     # =========================================================
     def _abonar_dialog(self, parent, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
         pop.title(f"Abonar a venta #{venta.display_number:02d}")
-        pop.geometry("420x420")
+        pop.geometry("420x480")
         pop.transient(parent)
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
         bg = self.style.colors.bg
         fg = self.style.colors.fg
 
-        tk.Label(pop, text="💵 Registrar Abono",
-                 font=("Arial", 16, "bold"), bg=bg, fg=fg).pack(pady=15)
-        cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
-        tk.Label(pop, text=f"Cliente: {cliente}", font=("Arial", 12),
-                 bg=bg, fg=fg).pack(pady=5)
-        tk.Label(pop, text=f"Venta #{venta.display_number:02d}",
-                 font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
-        tk.Label(pop, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
-                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
-        tk.Label(pop, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
-                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
-        tk.Label(pop, text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
-                 font=("Arial", 14, "bold"),
-                 bg="#0a4d1f", fg="#a8e6a8",
-                 padx=10, pady=8).pack(pady=10)
-
-        tk.Label(pop, text="Monto del abono:",
-                 bg=bg, fg=fg).pack(pady=(10, 3))
-        monto_var = tk.StringVar()
-        e = ttk.Entry(pop, textvariable=monto_var, width=20,
-                      font=("Arial", 16), justify="center")
-        e.pack(pady=5)
-
-        def aplicar(ev=None):
-            try:
-                monto = float(monto_var.get().replace("$", "").replace(".", "").replace(",", "."))
-                if monto <= 0:
-                    raise ValueError
-            except ValueError:
-                MD.show_error("Monto inválido", "Error", parent=pop)
-                return "break"
-            if monto > pendiente + 0.01:
-                if MD.yesno(
-                        f"El monto (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
-                        f"¿Registrar solo ${pendiente:,.0f}?".replace(",", "."),
-                        "Confirmar", parent=pop) != "Yes":
-                    return "break"
-                monto = pendiente
-            self.sale_use_case.add_payment(venta.sale_id, monto)
-            pop.destroy()
-            MD.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
-                         "Listo", parent=parent)
-            on_done()
-            try:
-                parent.lift()
-                parent.focus_force()
-            except Exception:
-                pass
-            return "break"
-
-        def cancelar(ev=None):
-            pop.destroy()
-            return "break"
-
-        e.bind("<Return>", aplicar)
-        e.bind("<KP_Enter>", aplicar)
-        pop.bind("<Escape>", cancelar)
-
+        # Botones primero (abajo)
         bf = tk.Frame(pop, bg=bg)
-        bf.pack(pady=15)
-        ttk.Button(bf, text="Registrar abono", command=aplicar,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cancelar",
-                   command=pop.destroy).pack(side="left", padx=5)
+        bf.pack(side="bottom", fill="x", pady=10)
+
+        container = tk.Frame(pop, bg=bg)
+        container.pack(fill="both", expand=True)
+
+        refs = {}
+
+        def build_content(parent):
+            tk.Label(parent, text="💵 Registrar Abono",
+                     font=("Arial", 16, "bold"), bg=bg, fg=fg).pack(pady=(15, 6))
+            cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
+            tk.Label(parent, text=f"Cliente: {cliente}", font=("Arial", 12),
+                     bg=bg, fg=fg).pack(pady=4)
+            tk.Label(parent, text=f"Venta #{venta.display_number:02d}",
+                     font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
+            tk.Label(parent, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
+                     font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
+            tk.Label(parent, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
+                     font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
+            tk.Label(parent, text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
+                     font=("Arial", 14, "bold"),
+                     bg="#0a4d1f", fg="#a8e6a8",
+                     padx=10, pady=8).pack(pady=10)
+
+            tk.Label(parent, text="Monto del abono:",
+                     bg=bg, fg=fg).pack(pady=(10, 3))
+            monto_var = tk.StringVar()
+            e = ttk.Entry(parent, textvariable=monto_var, width=20,
+                          font=("Arial", 16), justify="center")
+            e.pack(pady=5)
+            refs["entry"] = e
+            refs["monto_var"] = monto_var
+
+        def build_bottom(parent):
+            def aplicar(ev=None):
+                try:
+                    monto = float(refs["monto_var"].get().replace("$", "").replace(".", "").replace(",", "."))
+                    if monto <= 0:
+                        raise ValueError
+                except ValueError:
+                    MD.show_error("Monto inválido", "Error", parent=pop)
+                    return "break"
+                if monto > pendiente + 0.01:
+                    if MD.yesno(
+                            f"El monto (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
+                            f"¿Registrar solo ${pendiente:,.0f}?".replace(",", "."),
+                            "Confirmar", parent=pop) != "Yes":
+                        return "break"
+                    monto = pendiente
+                self.sale_use_case.add_payment(venta.sale_id, monto)
+                pop.destroy()
+                MD.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
+                             "Listo", parent=parent)
+                on_done()
+                try:
+                    parent.lift()
+                    parent.focus_force()
+                except Exception:
+                    pass
+                return "break"
+
+            def cancelar(ev=None):
+                pop.destroy()
+                return "break"
+
+            refs["aplicar"] = aplicar
+            pop.bind("<Escape>", cancelar)
+
+            ttk.Button(parent, text="Registrar abono", command=aplicar,
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(parent, text="Cancelar",
+                       command=pop.destroy).pack(side="left", padx=5)
+
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+
+        # Bindings después de construir
+        try:
+            e = refs.get("entry")
+            if e:
+                e.bind("<Return>", refs.get("aplicar"))
+                e.bind("<KP_Enter>", refs.get("aplicar"))
+        except Exception:
+            pass
 
         show_popup_smooth(pop)
         try:
@@ -1533,7 +1627,9 @@ class MainView(tk.Tk):
         def set_focus():
             try:
                 if pop.winfo_exists():
-                    e.focus_set()
+                    e = refs.get("entry")
+                    if e:
+                        e.focus_set()
             except Exception:
                 pass
         pop.after(50, set_focus)
