@@ -3,7 +3,7 @@
 
 **Punto de Venta e Inventario ligero, portable y 100% offline para pequeños comercios.**
 
-Sin instalación, sin servidores, sin internet. Solo descarga el `.exe`, ponlo en una carpeta o USB y ejecútalo.
+Sin instalación, sin servidores, sin internet. Solo descarga el `.exe`, ponlo en una carpeta (para guardar los datos o en una USB con su carpeta y ejecútalo.
 
 ---
 
@@ -11,7 +11,7 @@ Sin instalación, sin servidores, sin internet. Solo descarga el `.exe`, ponlo e
 
 ### 🛒 Módulo de PAGOS
 - Carrito de compras con total en tiempo real.
-- Escaneo automático con lector USB y búsqueda con autocompletado.
+- Escaneo automático con lector código de barras USB y búsqueda con autocompletado.
 - Métodos de pago: **Efectivo, Transferencia, Tarjeta, Otro y Fiado**.
 - Descuento automático de stock al confirmar la venta.
 - **Abonos a deudas anteriores** con cálculo en tiempo real.
