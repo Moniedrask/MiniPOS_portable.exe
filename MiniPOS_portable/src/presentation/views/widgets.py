@@ -178,13 +178,8 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
 def make_scrollable(container, build_content, build_bottom=None, bg=None):
     """
     Convierte `container` en una zona con scroll.
-
-    - build_content(parent): construye el contenido scrolleable dentro de `parent`.
-    - build_bottom(parent): construye los botones fijos abajo (opcional).
-    - bg: color de fondo (por defecto, el del tema).
-
-    Devuelve un dict con:
-        - canvas, inner, scrollbar, bottom, bind_wheel_recursive
+    Los widgets que YA tienen scroll propio (Treeview, Listbox, Text)
+    se saltan al aplicar la rueda del ratón para evitar doble scroll.
     """
     apply_dark_red_scrollbar_style()
     if bg is None:
@@ -195,7 +190,7 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
 
     result = {"canvas": None, "inner": None, "scrollbar": None, "bottom": None}
 
-    # 1. Botones fijos abajo (PRIORIDAD: se empaquetan primero)
+    # 1. Botones fijos abajo
     if build_bottom is not None:
         bottom_frame = tk.Frame(container, bg=bg)
         bottom_frame.pack(side="bottom", fill="x")
@@ -205,7 +200,7 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
             pass
         result["bottom"] = bottom_frame
 
-    # 2. Scrollbar a la derecha
+    # 2. Scrollbar
     scrollbar = ttk.Scrollbar(container, orient="vertical",
                               style="DarkRed.Vertical.TScrollbar")
     scrollbar.pack(side="right", fill="y")
@@ -236,7 +231,7 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     inner.bind("<Configure>", _on_inner_config)
     canvas.bind("<Configure>", _on_canvas_config)
 
-    # 5. Rueda del ratón global
+    # 5. Rueda del ratón global (evitando widgets con scroll propio)
     def _on_mousewheel(e):
         try:
             canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
@@ -244,8 +239,12 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
             pass
 
     def bind_wheel_recursive(widget):
+        # ✅ Saltar widgets que ya manejan su propia rueda
         try:
-            widget.bind("<MouseWheel>", _on_mousewheel, add="+")
+            if isinstance(widget, (ttk.Treeview, tk.Listbox, tk.Text)):
+                pass  # No agregar binding al canvas
+            else:
+                widget.bind("<MouseWheel>", _on_mousewheel, add="+")
         except Exception:
             pass
         for child in widget.winfo_children():
@@ -266,7 +265,7 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     except Exception:
         pass
 
-    # 7. Aplicar rueda del ratón a todos los hijos
+    # 7. Aplicar rueda del ratón a los hijos
     try:
         container.update_idletasks()
         bind_wheel_recursive(inner)
@@ -279,13 +278,9 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
 
 
 # =========================================================
-# AGRUPACIÓN DE PRODUCTOS: búsqueda de similares
+# AGRUPACIÓN DE PRODUCTOS
 # =========================================================
 def find_similar_products(name, products, threshold=0.5):
-    """
-    Devuelve lista de (product, score) ordenada por score descendente.
-    score va de 0 a 1.
-    """
     if not name or not str(name).strip():
         return []
     name_norm = str(name).strip().lower()
@@ -294,9 +289,7 @@ def find_similar_products(name, products, threshold=0.5):
         p_name_norm = str(getattr(p, "name", "") or "").strip().lower()
         if not p_name_norm:
             continue
-        # Comparación por ratio de similitud
         ratio = SequenceMatcher(None, name_norm, p_name_norm).ratio()
-        # Bonus si uno contiene al otro
         if name_norm in p_name_norm or p_name_norm in name_norm:
             ratio = max(ratio, 0.75)
         if ratio >= threshold:
