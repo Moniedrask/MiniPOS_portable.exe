@@ -60,10 +60,37 @@ class MainView(tk.Tk):
         self.show_page("pagos")
         self._apply_font_size()
 
+        # ✅ Configurar cierre personalizado
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
                   if self.current_page == "inventario" else None)
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
+
+    # =========== CIERRE PERSONALIZADO ===========
+    def _on_close(self):
+        """Manejo del botón X de la ventana."""
+        to_background = self.db_manager.get_setting("close_to_background", "0") == "1"
+        if to_background:
+            # Minimizar a segundo plano (barra de tareas)
+            try:
+                self.iconify()
+            except Exception:
+                self.withdraw()
+            return
+        # Confirmar salida
+        r = MD.yesno(
+            "¿Estás seguro que deseas salir de MiniPOS Portable?\n\n"
+            "Tus datos quedan guardados automáticamente.",
+            "Confirmar salida", parent=self)
+        if r == "Yes":
+            try:
+                self.db_manager.close_connection()
+            except Exception:
+                pass
+            self.destroy()
+            sys.exit(0)
 
     # =========== ESTILOS ===========
     def _setup_dark_green_style(self):
@@ -304,6 +331,16 @@ class MainView(tk.Tk):
                                 command=self._change_password)
             menu.add_cascade(label="🔑 Contraseña de inicio", menu=sub_pwd)
             menu.add_separator()
+
+            # ✅ Casilla: cerrar a segundo plano
+            self.bg_close_var = tk.BooleanVar(
+                value=self.db_manager.get_setting("close_to_background", "0") == "1")
+            menu.add_checkbutton(
+                label="🔽 Al presionar X ir a segundo plano",
+                variable=self.bg_close_var,
+                command=self._toggle_close_to_background)
+
+            # ✅ Auto-inicio con Windows
             self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
             menu.add_checkbutton(label="🚀 Iniciar con Windows",
                                  variable=self.autostart_var,
@@ -346,6 +383,18 @@ class MainView(tk.Tk):
         self.inventory_view = InventoryView(self.container, self.product_use_case,
                                             lambda: self.current_theme)
         self.current_page = None
+
+    # =========== CERRAR A SEGUNDO PLANO ===========
+    def _toggle_close_to_background(self):
+        val = "1" if self.bg_close_var.get() else "0"
+        self.db_manager.set_setting("close_to_background", val)
+        if val == "1":
+            MD.show_info("✅ Al presionar X la ventana se irá a segundo plano.\n"
+                         "Para abrirla de nuevo, haz clic en su ícono en la barra de tareas.",
+                         "Modo segundo plano", parent=self)
+        else:
+            MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
+                         "Modo normal", parent=self)
 
     def show_page(self, page):
         for w in (self.payment_view, self.inventory_view):
@@ -512,7 +561,6 @@ class MainView(tk.Tk):
 
         tree.bind("<Double-1>", ver_detalle)
 
-        # ✅ Ctrl+F12 → elimina la venta más reciente del cliente
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
@@ -544,7 +592,6 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
-        # ✅ Shift+F12 → elimina TODAS las ventas del cliente
         def on_shift_f12(event=None):
             sel = tree.selection()
             if not sel:
@@ -795,7 +842,6 @@ class MainView(tk.Tk):
             MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
             restaurar_foco()
 
-        # ✅ Ctrl+F12 → elimina el fiado más reciente
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
@@ -827,7 +873,6 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
-        # ✅ Shift+F12 → elimina TODOS los fiados del cliente
         def on_shift_f12(event=None):
             sel = tree.selection()
             if not sel:
