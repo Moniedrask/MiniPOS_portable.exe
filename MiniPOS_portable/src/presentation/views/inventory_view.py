@@ -4,7 +4,8 @@ from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
-    popup_is_open, make_scrolled_treeview
+    popup_is_open, make_scrolled_treeview, make_scrollable,
+    find_similar_products,
 )
 
 
@@ -94,11 +95,13 @@ class InventoryView(ttk.Frame):
             data.get("type", "unidad"),
             data.get("unit", "unidad"),
             auto_select=False,
-            from_draft=True)
+            from_draft=True,
+            group_name=data.get("group_name", ""))
 
     def create_widgets(self):
+        # ---- Barra de escaneo ----
         scan_frame = ttk.Frame(self, bootstyle="dark")
-        scan_frame.pack(padx=10, pady=(15, 5), fill="x")
+        scan_frame.pack(padx=10, pady=(10, 3), fill="x")
         ttk.Label(scan_frame, text="📷 Escanear código:",
                   font=("Arial", 11, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
@@ -110,8 +113,9 @@ class InventoryView(ttk.Frame):
                    command=lambda: self.lookup_barcode(None),
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
+        # ---- Búsqueda ----
         search_frame = ttk.Frame(self, bootstyle="dark")
-        search_frame.pack(padx=10, pady=5, fill="x")
+        search_frame.pack(padx=10, pady=3, fill="x")
         ttk.Label(search_frame, text="🔍 Búsqueda (autocompleta):",
                   bootstyle="inverse-dark").pack(side="left", padx=5)
 
@@ -129,19 +133,27 @@ class InventoryView(ttk.Frame):
         ttk.Button(search_frame, text="Limpiar", command=self._clear_search,
                    bootstyle="secondary").pack(side="left", padx=5)
 
-        # ✅ Treeview con scrollbar
+        # ---- Botones inferiores (primero en empacar, side="bottom") ----
+        btn_frame = ttk.Frame(self, bootstyle="dark")
+        btn_frame.pack(side="bottom", pady=6, fill="x")
+        ttk.Button(btn_frame, text="➕ Agregar Producto (F2)",
+                   command=self.add_product_popup,
+                   style="DarkGreen.TButton").pack(side="left", padx=5)
+
+        # ---- Tabla ----
         frame = ttk.Frame(self, bootstyle="dark")
-        frame.pack(padx=10, pady=5, fill="both", expand=True)
+        frame.pack(padx=10, pady=3, fill="both", expand=True)
 
         self.columns = [
             ("ID", "ID", 50, "center"),
-            ("Name", "Producto", 220, "w"),
-            ("Barcode", "Código de Barras", 150, "w"),
+            ("Name", "Producto", 200, "w"),
+            ("Group", "Grupo", 120, "w"),
+            ("Barcode", "Código de Barras", 130, "w"),
             ("Price", "Precio", 90, "e"),
             ("Unit", "Unidad", 70, "center"),
             ("Stock", "Stock", 70, "center"),
-            ("Created", "Creado", 140, "center"),
-            ("Updated", "Actualizado", 140, "center"),
+            ("Created", "Creado", 130, "center"),
+            ("Updated", "Actualizado", 130, "center"),
         ]
 
         self.tree_frame, self.tree = make_scrolled_treeview(
@@ -151,21 +163,13 @@ class InventoryView(ttk.Frame):
             bootstyle="dark")
         self.tree_frame.pack(fill="both", expand=True)
 
-        # Reasignar los comandos de los headings para que ordenen
         for key, label, w, anchor in self.columns:
             self.tree.heading(key, text=label + "  ⇅",
                               command=lambda k=key: self.sort_by(k))
 
         self.tree.bind("<Double-1>", self.view_product_popup)
         self.tree.bind("<Button-3>", self.show_context_menu)
-
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
-
-        btn_frame = ttk.Frame(self, bootstyle="dark")
-        btn_frame.pack(pady=10)
-        ttk.Button(btn_frame, text="➕ Agregar Producto (F2)",
-                   command=self.add_product_popup,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
 
     def _get_product_labels(self):
         vals = []
@@ -209,6 +213,7 @@ class InventoryView(ttk.Frame):
             keys = {
                 "ID": lambda p: p.product_id,
                 "Name": lambda p: (p.name or "").lower(),
+                "Group": lambda p: (p.group_name or "").lower(),
                 "Barcode": lambda p: (p.barcode or ""),
                 "Price": lambda p: p.price,
                 "Unit": lambda p: (p.unit or ""),
@@ -236,14 +241,16 @@ class InventoryView(ttk.Frame):
         else:
             self.filtered_products = [
                 p for p in prods
-                if q in (p.name or "").lower() or q in str(p.barcode or "").lower()]
+                if q in (p.name or "").lower()
+                or q in str(p.barcode or "").lower()
+                or q in (p.group_name or "").lower()]
         self._render_products(self.filtered_products)
 
     def _insert_product_row(self, p):
         precio = f"${p.price:,.0f}".replace(",", ".")
         self.tree.insert("", "end", values=(
-            p.product_id, p.name, p.barcode, precio, p.unit,
-            f"{p.stock:g}", p.created_at or "-", p.updated_at or "-"))
+            p.product_id, p.name, p.group_name or "-", p.barcode, precio,
+            p.unit, f"{p.stock:g}", p.created_at or "-", p.updated_at or "-"))
 
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -261,6 +268,7 @@ class InventoryView(ttk.Frame):
                        font=get_menu_font())
         menu.add_command(label="👁️  Ver detalle", command=lambda: self.view_product_popup(None))
         menu.add_command(label="✏️  Editar producto", command=lambda: self.open_edit_from_item(item))
+        menu.add_command(label="🔗  Agrupar similares", command=lambda: self.group_from_item(item))
         menu.add_separator()
         menu.add_command(label="🗑️  Eliminar producto", command=lambda: self.confirm_delete(item))
         try:
@@ -268,53 +276,87 @@ class InventoryView(ttk.Frame):
         finally:
             menu.grab_release()
 
+    def group_from_item(self, item):
+        """Abre el popup de agrupación usando el nombre de este producto."""
+        try:
+            vals = self.tree.item(item, 'values')
+            name = vals[1]
+        except Exception:
+            return
+        self._open_similar_dialog(
+            base_name=name,
+            current_product_id=None,
+            parent_toplevel=self.winfo_toplevel(),
+            on_apply=lambda ids, group: self._apply_group_to_ids(ids, group, reload=True))
+
+    def _apply_group_to_ids(self, ids, group, reload=False):
+        try:
+            if ids and group:
+                self.product_use_case.set_group_name(ids, group)
+        except Exception:
+            pass
+        if reload:
+            self.load_products()
+
     def view_product_popup(self, event=None):
         sel = self.tree.selection()
         if not sel:
             return
         vals = self.tree.item(sel[0], 'values')
-        pid, name, barcode, price, unit, stock = vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]
-        created, updated = vals[6], vals[7]
+        pid, name, group, barcode, price, unit, stock = (
+            vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6])
+        created, updated = vals[7], vals[8]
 
         popup = Toplevel(self)
         popup.title("Detalle del Producto")
-        popup.geometry("440x540")
+        popup.geometry("480x560")
         popup.transient(self.winfo_toplevel())
         popup.withdraw()
 
-        header = ttk.Frame(popup, bootstyle="dark")
-        header.pack(fill="x", pady=10)
-        ttk.Label(header, text="📋 DETALLE DEL PRODUCTO",
-                  font=("Arial", 12, "bold"), bootstyle="inverse-dark").pack()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
 
-        info = ttk.Frame(popup, bootstyle="dark")
-        info.pack(fill="both", expand=True, padx=25, pady=15)
-        for t, f in [(f"ID: {pid}", ("Arial", 10)),
-                     (f"Nombre: {name}", ("Arial", 12, "bold")),
-                     (f"Código de Barras: {barcode}", ("Arial", 10)),
-                     (f"Precio: {price}", ("Arial", 12, "bold")),
-                     (f"Unidad: {unit}", ("Arial", 11)),
-                     (f"Stock: {stock}", ("Arial", 11)),
-                     ("", ("Arial", 4)),
-                     (f"📅 Creado: {created}", ("Arial", 10, "italic")),
-                     (f"🔄 Actualizado: {updated}", ("Arial", 10, "italic"))]:
-            ttk.Label(info, text=t, font=f, bootstyle="inverse-dark").pack(anchor="w", pady=4)
+        # Título
+        tk.Label(popup, text="📋 DETALLE DEL PRODUCTO",
+                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
 
-        ttk.Separator(popup, orient="horizontal").pack(fill="x", padx=20, pady=5)
-        bf = ttk.Frame(popup, bootstyle="dark")
-        bf.pack(pady=15)
-        ttk.Button(bf, text="✏️ Editar",
-                   command=lambda: [popup.destroy(), self.open_edit_from_item(sel[0])],
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cerrar", command=popup.destroy).pack(side="left", padx=5)
-        ttk.Button(bf, text="🗑",
-                   command=lambda: [popup.destroy(), self.confirm_delete(sel[0])],
-                   bootstyle="danger", width=3).pack(side="left", padx=15)
+        # Contenido scrolleable
+        container = tk.Frame(popup, bg=bg)
+        container.pack(fill="both", expand=True, padx=10, pady=5)
+
+        def build_content(parent):
+            for t, f in [(f"ID: {pid}", ("Arial", 10)),
+                         (f"Nombre: {name}", ("Arial", 12, "bold")),
+                         (f"Grupo: {group if group != '-' else '(sin grupo)'}", ("Arial", 10, "italic")),
+                         (f"Código de Barras: {barcode}", ("Arial", 10)),
+                         (f"Precio: {price}", ("Arial", 12, "bold")),
+                         (f"Unidad: {unit}", ("Arial", 11)),
+                         (f"Stock: {stock}", ("Arial", 11)),
+                         ("", ("Arial", 4)),
+                         (f"📅 Creado: {created}", ("Arial", 10, "italic")),
+                         (f"🔄 Actualizado: {updated}", ("Arial", 10, "italic"))]:
+                tk.Label(parent, text=t, font=f, bg=bg, fg=fg,
+                         anchor="w", justify="left").pack(fill="x", pady=4, padx=10)
+
+        def build_bottom(parent):
+            bf = tk.Frame(parent, bg=bg)
+            bf.pack(pady=8)
+            ttk.Button(bf, text="✏️ Editar",
+                       command=lambda: [popup.destroy(), self.open_edit_from_item(sel[0])],
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(bf, text="Cerrar", command=popup.destroy).pack(side="left", padx=5)
+            ttk.Button(bf, text="🗑",
+                       command=lambda: [popup.destroy(), self.confirm_delete(sel[0])],
+                       bootstyle="danger", width=3).pack(side="left", padx=10)
+
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+
+        show_popup_smooth(popup)
         try:
             popup.grab_set()
+            popup.focus_force()
         except Exception:
             pass
-        show_popup_smooth(popup)
 
     def confirm_delete(self, item):
         vals = self.tree.item(item, 'values')
@@ -333,92 +375,184 @@ class InventoryView(ttk.Frame):
         vals = self.tree.item(item, 'values')
         pid = vals[0]
         name = vals[1]
-        barcode = vals[2]
-        price = float(vals[3].replace("$", "").replace(".", ""))
-        unit = vals[4]
-        stock = float(vals[5])
+        group = vals[2] if vals[2] != "-" else ""
+        barcode = vals[3]
+        price = float(vals[4].replace("$", "").replace(".", ""))
+        unit = vals[5]
+        stock = float(vals[6])
         unit_type = "unidad"
         if unit in ("kg", "gr", "mg"):
             unit_type = "peso"
         elif unit in ("Lt", "ml"):
             unit_type = "volumen"
         self.open_product_form("Editar Producto", pid, name, barcode, price,
-                               stock, unit_type, unit)
+                               stock, unit_type, unit, group_name=group)
 
     def add_product_popup(self, barcode_prefill="", auto_select=False):
         self.open_product_form("Agregar Producto", None, "", barcode_prefill,
                                0, 0, "unidad", "unidad", auto_select)
 
+    # =========================================================
+    # FORMULARIO DE PRODUCTO (con scroll + agrupación)
+    # =========================================================
     def open_product_form(self, title, product_id, name, barcode, price, stock,
-                          unit_type, unit, auto_select=False, from_draft=False):
+                          unit_type, unit, auto_select=False, from_draft=False,
+                          group_name=""):
         popup = Toplevel(self)
         popup.title(title)
-        popup.geometry("410x640")
+        # Tamaño compacto pero con espacio suficiente
+        popup.geometry("500x720")
         popup.transient(self.winfo_toplevel())
         popup.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
 
-        ttk.Label(popup, text="Código de Barras / QR:").pack(pady=5)
-        barcode_entry = ttk.Entry(popup, width=35)
-        barcode_entry.pack(pady=5)
-        if barcode:
-            barcode_entry.insert(0, barcode)
+        # Referencias compartidas entre build_content y build_bottom
+        refs = {}
+        state = {
+            "draft_timer": None,
+            "pending_group_ids": [],   # IDs a agrupar al guardar (si es nuevo)
+        }
 
-        ttk.Label(popup, text="Nombre del Producto:").pack(pady=5)
-        name_entry = ttk.Entry(popup, width=35)
-        name_entry.pack(pady=5)
-        if name:
-            name_entry.insert(0, name)
+        # ----- CONTENIDO -----
+        def build_content(parent):
+            # Código de Barras
+            ttk.Label(parent, text="Código de Barras / QR:").pack(pady=(10, 3))
+            barcode_entry = ttk.Entry(parent, width=42)
+            barcode_entry.pack(pady=3)
+            if barcode:
+                barcode_entry.insert(0, barcode)
 
-        ttk.Label(popup, text="Tipo de venta:", font=("Arial", 10, "bold")).pack(pady=(10, 3))
-        type_var = tk.StringVar(value=unit_type)
-        type_frame = ttk.Frame(popup)
-        type_frame.pack()
-        for val, txt in [("unidad", "📦 Por unidad"),
-                         ("peso", "⚖️ Por peso"),
-                         ("volumen", "💧 Por volumen")]:
-            ttk.Radiobutton(type_frame, text=txt, variable=type_var, value=val,
-                            command=lambda: self._refresh_unit_options(unit_var, unit_combo, type_var)
-                            ).pack(side="left", padx=5)
+            # Nombre
+            ttk.Label(parent, text="Nombre del Producto:").pack(pady=(10, 3))
+            name_entry = ttk.Entry(parent, width=42)
+            name_entry.pack(pady=3)
+            if name:
+                name_entry.insert(0, name)
 
-        ttk.Label(popup, text="Unidad de medida:").pack(pady=(10, 3))
-        unit_var = tk.StringVar(value=unit)
-        unit_combo = ttk.Combobox(popup, textvariable=unit_var, state="readonly", width=15)
-        unit_combo.pack(pady=5)
-        self._refresh_unit_options(unit_var, unit_combo, type_var)
+            # Aviso de similares (debajo del nombre)
+            similar_lbl = tk.Label(parent, text="", font=("Arial", 9, "italic"),
+                                   bg=bg, fg="#a8e6a8", cursor="hand2")
+            similar_lbl.pack(pady=2)
 
-        ttk.Label(popup, text="Precio por unidad:").pack(pady=5)
-        price_entry = ttk.Entry(popup, width=35)
-        price_entry.pack(pady=5)
-        if price:
-            price_entry.insert(0, str(int(price)))
+            # Grupo
+            ttk.Label(parent, text="Grupo (opcional, para agrupar similares):").pack(pady=(10, 3))
+            group_entry = ttk.Entry(parent, width=42)
+            group_entry.pack(pady=3)
+            if group_name:
+                group_entry.insert(0, group_name)
 
-        ttk.Label(popup, text="Stock (acepta decimales):").pack(pady=5)
-        stock_entry = ttk.Entry(popup, width=35)
-        stock_entry.pack(pady=5)
-        if stock:
-            stock_entry.insert(0, f"{stock:g}")
+            # Tipo de venta
+            ttk.Label(parent, text="Tipo de venta:",
+                      font=("Arial", 10, "bold")).pack(pady=(10, 3))
+            type_var = tk.StringVar(value=unit_type)
+            type_frame = ttk.Frame(parent)
+            type_frame.pack()
+            for val, txt in [("unidad", "📦 Por unidad"),
+                             ("peso", "⚖️ Por peso"),
+                             ("volumen", "💧 Por volumen")]:
+                ttk.Radiobutton(type_frame, text=txt, variable=type_var, value=val,
+                                command=lambda: self._refresh_unit_options(unit_var, unit_combo, type_var)
+                                ).pack(side="left", padx=5)
 
-        if barcode:
-            name_entry.focus_set()
-        else:
-            barcode_entry.focus_set()
+            # Unidad
+            ttk.Label(parent, text="Unidad de medida:").pack(pady=(10, 3))
+            unit_var = tk.StringVar(value=unit)
+            unit_combo = ttk.Combobox(parent, textvariable=unit_var, state="readonly", width=15)
+            unit_combo.pack(pady=3)
+            self._refresh_unit_options(unit_var, unit_combo, type_var)
 
-        draft_timer = {"id": None}
+            # Precio
+            ttk.Label(parent, text="Precio por unidad:").pack(pady=(10, 3))
+            price_entry = ttk.Entry(parent, width=42)
+            price_entry.pack(pady=3)
+            if price:
+                price_entry.insert(0, str(int(price)))
 
+            # Stock
+            ttk.Label(parent, text="Stock (acepta decimales):").pack(pady=(10, 3))
+            stock_entry = ttk.Entry(parent, width=42)
+            stock_entry.pack(pady=3)
+            if stock:
+                stock_entry.insert(0, f"{stock:g}")
+
+            # Guardar referencias
+            refs["barcode_entry"] = barcode_entry
+            refs["name_entry"] = name_entry
+            refs["similar_lbl"] = similar_lbl
+            refs["group_entry"] = group_entry
+            refs["type_var"] = type_var
+            refs["unit_var"] = unit_var
+            refs["unit_combo"] = unit_combo
+            refs["price_entry"] = price_entry
+            refs["stock_entry"] = stock_entry
+
+            # Foco inicial
+            if barcode:
+                name_entry.focus_set()
+            else:
+                barcode_entry.focus_set()
+
+        # ----- BOTONES -----
+        def build_bottom(parent):
+            bf = tk.Frame(parent, bg=bg)
+            bf.pack(pady=10, fill="x")
+
+            def buscar_similares():
+                n = refs["name_entry"].get().strip()
+                if not n:
+                    MD.show_warning("Escribe primero el nombre del producto.",
+                                    "Sin nombre", parent=popup)
+                    return
+                self._open_similar_dialog(
+                    base_name=n,
+                    current_product_id=product_id,
+                    parent_toplevel=popup,
+                    on_apply=lambda ids, group: _apply_group_from_form(ids, group))
+
+            def _apply_group_from_form(ids, group):
+                # Auto-rellenar el campo grupo
+                try:
+                    if group:
+                        refs["group_entry"].delete(0, tk.END)
+                        refs["group_entry"].insert(0, group)
+                except Exception:
+                    pass
+                # Guardar los IDs pendientes
+                state["pending_group_ids"] = list(ids) if ids else []
+                try:
+                    MD.show_info(
+                        f"✅ Se agruparán {len(ids)} producto(s) al guardar.\n"
+                        f"Grupo: {group}",
+                        "Agrupación preparada", parent=popup)
+                except Exception:
+                    pass
+
+            refs["_apply_group_from_form"] = _apply_group_from_form
+
+            ttk.Button(bf, text="🔗 Buscar similares", command=buscar_similares,
+                       bootstyle="info").pack(side="left", padx=4)
+            ttk.Button(bf, text="💾 Guardar", command=lambda: save(),
+                       style="DarkGreen.TButton").pack(side="right", padx=4)
+            ttk.Button(bf, text="Cancelar",
+                       command=lambda: _cancel()).pack(side="right", padx=4)
+
+        # ----- AUTOSAVE DEL BORRADOR -----
         def collect_draft():
             return {
                 "mode": "edit" if product_id else "create",
                 "product_id": product_id,
-                "barcode": barcode_entry.get(),
-                "name": name_entry.get(),
-                "type": type_var.get(),
-                "unit": unit_var.get(),
-                "price": price_entry.get(),
-                "stock": stock_entry.get(),
+                "barcode": refs["barcode_entry"].get(),
+                "name": refs["name_entry"].get(),
+                "group_name": refs["group_entry"].get(),
+                "type": refs["type_var"].get(),
+                "unit": refs["unit_var"].get(),
+                "price": refs["price_entry"].get(),
+                "stock": refs["stock_entry"].get(),
             }
 
         def save_draft_now():
-            draft_timer["id"] = None
+            state["draft_timer"] = None
             try:
                 data = collect_draft()
                 if not data["name"] and not data["barcode"]:
@@ -428,83 +562,344 @@ class InventoryView(ttk.Frame):
                 pass
 
         def schedule_save(*args):
-            if draft_timer["id"]:
+            if state["draft_timer"]:
                 try:
-                    popup.after_cancel(draft_timer["id"])
+                    popup.after_cancel(state["draft_timer"])
                 except Exception:
                     pass
-            draft_timer["id"] = popup.after(800, save_draft_now)
+            state["draft_timer"] = popup.after(800, save_draft_now)
 
         def cancel_pending():
-            if draft_timer["id"]:
+            if state["draft_timer"]:
                 try:
-                    popup.after_cancel(draft_timer["id"])
+                    popup.after_cancel(state["draft_timer"])
                 except Exception:
                     pass
-                draft_timer["id"] = None
+                state["draft_timer"] = None
 
-        name_entry.bind("<KeyRelease>", schedule_save, add="+")
-        barcode_entry.bind("<KeyRelease>", schedule_save, add="+")
-        price_entry.bind("<KeyRelease>", schedule_save, add="+")
-        stock_entry.bind("<KeyRelease>", schedule_save, add="+")
-        type_var.trace_add("write", schedule_save)
-        unit_var.trace_add("write", schedule_save)
+        # ----- DETECCIÓN DE SIMILARES -----
+        def update_similar_label():
+            try:
+                n = refs["name_entry"].get().strip()
+                if len(n) < 4:
+                    refs["similar_lbl"].configure(text="")
+                    return
+                products = self.product_use_case.list_products()
+                similares = find_similar_products(n, products, threshold=0.55)
+                # Excluir el propio producto si estamos editando
+                if product_id:
+                    similares = [(p, s) for p, s in similares if p.product_id != product_id]
+                if similares:
+                    refs["similar_lbl"].configure(
+                        text=f"🔗 Se encontraron {len(similares)} similares. Clic aquí para agrupar.")
+                    refs["similar_lbl"]._similar_list = similares
+                else:
+                    refs["similar_lbl"].configure(text="")
+            except Exception:
+                pass
 
-        if from_draft:
-            schedule_save()
+        # El label de similares abre el popup al hacer clic
+        def on_similar_click(event):
+            try:
+                similar_lbl = refs["similar_lbl"]
+                n = refs["name_entry"].get().strip()
+                if not n:
+                    return
+                self._open_similar_dialog(
+                    base_name=n,
+                    current_product_id=product_id,
+                    parent_toplevel=popup,
+                    on_apply=lambda ids, group: refs["_apply_group_from_form"](ids, group))
+            except Exception:
+                pass
 
-        def cerrar_sin_guardar():
-            cancel_pending()
-            save_draft_now()
-            popup.destroy()
-            self.scan_entry.focus_set()
-
-        popup.protocol("WM_DELETE_WINDOW", cerrar_sin_guardar)
-
+        # ----- GUARDAR -----
         def save():
-            n = name_entry.get().strip()
-            b = barcode_entry.get().strip()
+            n = refs["name_entry"].get().strip()
+            b = refs["barcode_entry"].get().strip()
+            g = refs["group_entry"].get().strip()
             if not n:
                 MD.show_error("El nombre es obligatorio", "Error", parent=popup)
                 return
             try:
-                pl = price_entry.get().replace("$", "").replace(".", "").replace(",", ".").strip()
+                pl = refs["price_entry"].get().replace("$", "").replace(".", "").replace(",", ".").strip()
                 p = float(pl) if pl else 0.0
-                ss = stock_entry.get().strip().replace(",", ".")
+                ss = refs["stock_entry"].get().strip().replace(",", ".")
                 s = float(ss) if ss else 0.0
             except ValueError:
                 MD.show_error("Precio/Stock inválidos", "Error", parent=popup)
                 return
+
             cancel_pending()
+
             try:
                 if product_id:
-                    self.product_use_case.update_product(product_id, n, b, p, s,
-                                                         type_var.get(), unit_var.get())
+                    # Editar
+                    self.product_use_case.update_product(
+                        product_id, n, b, p, s,
+                        refs["type_var"].get(), refs["unit_var"].get(), g)
+                    # Aplicar grupo a los pendientes
+                    if state["pending_group_ids"]:
+                        self.product_use_case.set_group_name(
+                            state["pending_group_ids"], g)
                 else:
-                    self.product_use_case.add_product(n, b, p, s,
-                                                      type_var.get(), unit_var.get())
+                    # Crear nuevo
+                    new_pid = self.product_use_case.add_product(
+                        n, b, p, s,
+                        refs["type_var"].get(), refs["unit_var"].get(), g)
+                    # Aplicar grupo a los pendientes (incluyendo el nuevo)
+                    if state["pending_group_ids"] or g:
+                        ids = list(state["pending_group_ids"])
+                        if g and new_pid not in ids:
+                            ids.append(new_pid)
+                        if ids:
+                            self.product_use_case.set_group_name(ids, g)
+
                 self.product_use_case.clear_product_draft()
             except Exception as e:
                 MD.show_error(f"Error al guardar: {e}", "Error", parent=popup)
                 return
+
             self.load_products()
             popup.destroy()
             self.scan_entry.focus_set()
+
             if auto_select and b:
                 for it in self.tree.get_children():
-                    if str(self.tree.item(it, 'values')[2]).strip() == b:
+                    if str(self.tree.item(it, 'values')[3]).strip() == b:
                         self.tree.selection_set(it)
                         self.tree.focus(it)
                         self.tree.see(it)
                         break
 
-        ttk.Button(popup, text="Guardar", command=save,
-                   style="DarkGreen.TButton").pack(pady=20)
+        def _cancel():
+            cancel_pending()
+            save_draft_now()
+            popup.destroy()
+            self.scan_entry.focus_set()
+
+        # ----- CONSTRUIR TODO -----
+        container = tk.Frame(popup, bg=bg)
+        container.pack(fill="both", expand=True)
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+
+        # Bindings después de construir
         try:
-            popup.grab_set()
+            refs["name_entry"].bind("<KeyRelease>", schedule_save, add="+")
+            refs["name_entry"].bind("<KeyRelease>", lambda e: update_similar_label(), add="+")
+            refs["barcode_entry"].bind("<KeyRelease>", schedule_save, add="+")
+            refs["price_entry"].bind("<KeyRelease>", schedule_save, add="+")
+            refs["stock_entry"].bind("<KeyRelease>", schedule_save, add="+")
+            refs["group_entry"].bind("<KeyRelease>", schedule_save, add="+")
+            refs["type_var"].trace_add("write", schedule_save)
+            refs["unit_var"].trace_add("write", schedule_save)
+
+            # Clic en el label de similares
+            refs["similar_lbl"].bind("<Button-1>", on_similar_click)
+
+            popup.protocol("WM_DELETE_WINDOW", _cancel)
+
+            if from_draft:
+                schedule_save()
+                update_similar_label()
         except Exception:
             pass
+
         show_popup_smooth(popup)
+        try:
+            popup.grab_set()
+            popup.focus_force()
+        except Exception:
+            pass
+
+    # =========================================================
+    # POPUP DE SIMILARES (con checkboxes)
+    # =========================================================
+    def _open_similar_dialog(self, base_name, current_product_id,
+                             parent_toplevel, on_apply):
+        """
+        Abre un popup con los productos similares a `base_name`.
+        El usuario marca los que quiere agrupar y presiona "Agrupar".
+        Llama a on_apply(ids_seleccionados, group_name).
+        """
+        try:
+            products = self.product_use_case.list_products()
+            similares = find_similar_products(base_name, products, threshold=0.45)
+            if current_product_id:
+                similares = [(p, s) for p, s in similares if p.product_id != current_product_id]
+        except Exception:
+            similares = []
+
+        if not similares:
+            MD.show_info(
+                f"No se encontraron productos similares a:\n\n{base_name}",
+                "Sin coincidencias", parent=parent_toplevel)
+            return
+
+        dialog = Toplevel(parent_toplevel)
+        dialog.title("🔗 Agrupar productos similares")
+        dialog.geometry("720x560")
+        dialog.transient(parent_toplevel)
+        dialog.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
+
+        # Título
+        tk.Label(dialog, text="🔗 PRODUCTOS SIMILARES",
+                 font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=(12, 4))
+        tk.Label(dialog,
+                 text=f"Producto base: {base_name}",
+                 font=("Arial", 10, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
+
+        # Sugerencia de nombre de grupo
+        sugerencia = self._suggest_group_name(similares, base_name)
+        tk.Label(dialog, text="Nombre del grupo:",
+                 font=("Arial", 10, "bold"), bg=bg, fg=fg).pack(pady=(8, 2))
+        group_var = tk.StringVar(value=sugerencia)
+        group_entry = ttk.Entry(dialog, textvariable=group_var, width=50,
+                                font=("Arial", 11), justify="center")
+        group_entry.pack(pady=2)
+
+        tk.Label(dialog, text="Marca los productos que quieras agrupar:",
+                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(8, 2))
+
+        # Treeview con los similares
+        frame = ttk.Frame(dialog, bootstyle="dark")
+        frame.pack(fill="both", expand=True, padx=12, pady=4)
+
+        tree_frame, tree = make_scrolled_treeview(
+            frame,
+            columns=("Sel", "ID", "Nombre", "Precio"),
+            headings=[
+                ("Sel", "☐", 40, "center"),
+                ("ID", "ID", 50, "center"),
+                ("Nombre", "Producto", 400, "w"),
+                ("Precio", "Precio", 100, "e"),
+            ],
+            bootstyle="dark")
+        tree_frame.pack(fill="both", expand=True)
+
+        # Cargar similares
+        marcados = set()
+        item_to_pid = {}
+
+        def toggle_mark(iid):
+            if iid in marcados:
+                marcados.discard(iid)
+                try:
+                    tree.set(iid, "Sel", "☐")
+                except Exception:
+                    pass
+            else:
+                marcados.add(iid)
+                try:
+                    tree.set(iid, "Sel", "☑")
+                except Exception:
+                    pass
+
+        def toggle_all():
+            if not item_to_pid:
+                return
+            if len(marcados) >= len(item_to_pid):
+                marcados.clear()
+                for iid in item_to_pid:
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
+            else:
+                marcados.clear()
+                for iid in item_to_pid:
+                    marcados.add(iid)
+                    try:
+                        tree.set(iid, "Sel", "☑")
+                    except Exception:
+                        pass
+
+        tree.heading("Sel", text="☐", command=toggle_all)
+
+        for p, score in similares:
+            iid = tree.insert("", "end", values=(
+                "☐",
+                p.product_id,
+                p.name,
+                f"${p.price:,.0f}".replace(",", ".")))
+            item_to_pid[iid] = p.product_id
+
+        def on_click(event):
+            try:
+                region = tree.identify("region", event.x, event.y)
+                if region != "cell":
+                    return
+                col = tree.identify_column(event.x)
+                row = tree.identify_row(event.y)
+                if not row:
+                    return
+                if col == "#1":
+                    toggle_mark(row)
+            except Exception:
+                pass
+
+        tree.bind("<Button-1>", on_click, add="+")
+
+        # Rueda del ratón en el diálogo
+        def _on_mousewheel(event):
+            try:
+                tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        tree.bind("<MouseWheel>", _on_mousewheel)
+
+        # Botones
+        def aplicar():
+            if not marcados:
+                MD.show_warning("Marca al menos un producto.",
+                                "Sin selección", parent=dialog)
+                return
+            group = group_var.get().strip()
+            if not group:
+                MD.show_warning("Escribe el nombre del grupo.",
+                                "Sin nombre de grupo", parent=dialog)
+                return
+            ids = [item_to_pid[i] for i in marcados if i in item_to_pid]
+            dialog.destroy()
+            try:
+                on_apply(ids, group)
+            except Exception:
+                pass
+
+        def cancelar():
+            dialog.destroy()
+
+        bf = tk.Frame(dialog, bg=bg)
+        bf.pack(side="bottom", pady=10)
+        ttk.Button(bf, text="🔗 Agrupar seleccionados",
+                   command=aplicar, style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="Cancelar",
+                   command=cancelar).pack(side="left", padx=5)
+
+        dialog.bind("<Escape>", lambda e: cancelar())
+
+        show_popup_smooth(dialog)
+        try:
+            dialog.grab_set()
+            dialog.focus_force()
+        except Exception:
+            pass
+
+        dialog.after(100, lambda: group_entry.focus_set() if dialog.winfo_exists() else None)
+
+    def _suggest_group_name(self, similares, base_name):
+        """Sugiere un nombre de grupo basado en los similares."""
+        try:
+            names = [p.name for p, _ in similares] + [base_name]
+            if not names:
+                return base_name
+            # Tomar el nombre más corto
+            candidatos = sorted(names, key=lambda x: len(x))
+            return candidatos[0]
+        except Exception:
+            return base_name
 
     def _refresh_unit_options(self, unit_var, combo, type_var):
         t = type_var.get()
@@ -518,6 +913,9 @@ class InventoryView(ttk.Frame):
         if unit_var.get() not in opciones:
             unit_var.set(opciones[0])
 
+    # =========================================================
+    # ESCANEO
+    # =========================================================
     def lookup_barcode(self, event=None):
         codigo = self.scan_var.get().strip()
         if not codigo:
@@ -532,7 +930,7 @@ class InventoryView(ttk.Frame):
             self.search_var.set("")
             self.load_products()
             for it in self.tree.get_children():
-                if str(self.tree.item(it, 'values')[2]).strip() == codigo:
+                if str(self.tree.item(it, 'values')[3]).strip() == codigo:
                     self.tree.selection_set(it)
                     self.tree.focus(it)
                     self.tree.see(it)
