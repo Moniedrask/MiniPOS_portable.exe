@@ -48,7 +48,7 @@ class MainView(tk.Tk):
         self.product_use_case = ProductCase(self.db_manager)
         self.sale_use_case = SaleCase(self.db_manager)
 
-        # ✅ Contraseña de inicio (ocultar la ventana mientras se pide)
+        # ✅ Contraseña de inicio
         if not self._check_startup_password():
             self.destroy()
             return
@@ -67,17 +67,13 @@ class MainView(tk.Tk):
         pwd = self.db_manager.get_setting("startup_password", "")
         if not pwd:
             return True
-
-        # Ocultar ventana principal mientras se pide contraseña
         self.withdraw()
-
         pop = Toplevel(self)
         pop.title("MiniPOS - Iniciar sesión")
         pop.geometry("380x230")
         pop.transient(self)
         pop.grab_set()
         pop.protocol("WM_DELETE_WINDOW", lambda: self._cancel_login(pop))
-
         ttk.Label(pop, text="🔒 Contraseña requerida",
                   font=("Arial", 14, "bold")).pack(pady=15)
         v = tk.StringVar()
@@ -85,7 +81,6 @@ class MainView(tk.Tk):
                       font=("Arial", 14), justify="center")
         e.pack(pady=10)
         e.focus_set()
-
         resultado = {"ok": False}
 
         def verificar():
@@ -99,11 +94,9 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Ingresar", command=verificar,
                    bootstyle="success").pack(pady=10)
         e.bind("<Return>", lambda e: verificar())
-
         pop.after(100, lambda: center_window(pop))
         pop.after(200, lambda: apply_titlebar_theme(pop, self.current_theme == 'darkly'))
         self.wait_window(pop)
-
         if resultado["ok"]:
             self.deiconify()
             return True
@@ -124,7 +117,6 @@ class MainView(tk.Tk):
         pop.geometry("400x400")
         pop.transient(self)
         pop.grab_set()
-
         ttk.Label(pop, text="🔐 Cambiar contraseña",
                   font=("Arial", 14, "bold")).pack(pady=15)
         ttk.Label(pop, text="Contraseña actual:").pack()
@@ -171,7 +163,6 @@ class MainView(tk.Tk):
         pop.geometry("380x280")
         pop.transient(self)
         pop.grab_set()
-
         ttk.Label(pop, text="🔐 Crear contraseña de inicio",
                   font=("Arial", 14, "bold")).pack(pady=15)
         ttk.Label(pop, text="Nueva contraseña (mín. 4 caracteres):").pack()
@@ -207,12 +198,32 @@ class MainView(tk.Tk):
             except Exception:
                 pass
         self.font_size = size
+        # ✅ Ajustar altura de filas de Treeview para que el texto no se corte
+        self._update_tree_rowheights(size)
+
+    def _update_tree_rowheights(self, size):
+        """Ajusta la altura de fila de todas las tablas para que el texto no se corte."""
+        row_height = size + 14  # Altura de fila proporcional al tamaño de letra
+        try:
+            self.style.configure("Treeview", rowheight=row_height, font=("Arial", size))
+            self.style.configure("Treeview.Heading", font=("Arial", size, "bold"))
+        except Exception:
+            pass
 
     def _change_font_size(self, delta):
         new = max(8, min(20, self.font_size + delta))
         self.db_manager.set_setting("font_size", str(new))
         self.font_size = new
         self._apply_font_size()
+        # Forzar refresco de las tablas para que tomen la nueva altura
+        try:
+            self.payment_view.refresh_cart()
+        except Exception:
+            pass
+        try:
+            self.inventory_view.load_products()
+        except Exception:
+            pass
 
     # =========== UI ===========
     def create_widgets(self):
@@ -221,15 +232,12 @@ class MainView(tk.Tk):
                           activebackground=self.style.colors.selectbg,
                           activeforeground=self.style.colors.selectfg, bd=0)
 
-        # ---- Opciones ----
         om = tk.Menu(menubar, tearoff=0,
                      bg=self.style.colors.bg, fg=self.style.colors.fg,
                      activebackground=self.style.colors.selectbg,
                      activeforeground=self.style.colors.selectfg)
         om.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
         om.add_separator()
-
-        # Fuente
         fm = tk.Menu(om, tearoff=0,
                      bg=self.style.colors.bg, fg=self.style.colors.fg,
                      activebackground=self.style.colors.selectbg,
@@ -237,8 +245,6 @@ class MainView(tk.Tk):
         fm.add_command(label="➕ Aumentar letra", command=lambda: self._change_font_size(1))
         fm.add_command(label="➖ Reducir letra", command=lambda: self._change_font_size(-1))
         om.add_cascade(label="🔤 Tamaño de letra", menu=fm)
-
-        # Contraseña
         pm = tk.Menu(om, tearoff=0,
                      bg=self.style.colors.bg, fg=self.style.colors.fg,
                      activebackground=self.style.colors.selectbg,
@@ -248,7 +254,6 @@ class MainView(tk.Tk):
         pm.add_command(label="🔐 Cambiar contraseña (admin)",
                        command=self._change_password)
         om.add_cascade(label="🔑 Contraseña de inicio", menu=pm)
-
         om.add_separator()
         self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
         om.add_checkbutton(label="🚀 Iniciar con Windows",
@@ -262,7 +267,6 @@ class MainView(tk.Tk):
         om.add_command(label="📥 Importar Base de Datos", command=self.import_db)
         menubar.add_cascade(label="Opciones", menu=om)
 
-        # ---- Ventas ----
         vm = tk.Menu(menubar, tearoff=0,
                      bg=self.style.colors.bg, fg=self.style.colors.fg,
                      activebackground=self.style.colors.selectbg,
@@ -270,10 +274,8 @@ class MainView(tk.Tk):
         vm.add_command(label="📊 Resumen de Ventas", command=self.show_sales_summary)
         vm.add_command(label="💳 Fiados (cuentas por cobrar)", command=self.show_credit_sales)
         menubar.add_cascade(label="Ventas", menu=vm)
-
         self.config(menu=menubar)
 
-        # --- Pestañas ---
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(10, 0))
         self.btn_pagos = ttk.Button(tabs, text="🛒  PAGOS", bootstyle="success",
@@ -286,7 +288,6 @@ class MainView(tk.Tk):
         self.bind('<Control-Key-1>', lambda e: self.show_page("pagos"))
         self.bind('<Control-Key-2>', lambda e: self.show_page("inventario"))
 
-        # --- Contenedor ---
         self.container = ttk.Frame(self, bootstyle="dark")
         self.container.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -320,6 +321,8 @@ class MainView(tk.Tk):
         self.style.theme_use(self.current_theme)
         self.configure(bg=self.style.colors.bg)
         apply_titlebar_theme(self, self.current_theme == 'darkly')
+        # Reaplicar tamaño de fuente porque al cambiar tema se pierden los estilos
+        self._apply_font_size()
 
     # =========== RESUMEN DE VENTAS ===========
     def show_sales_summary(self):
@@ -328,10 +331,8 @@ class MainView(tk.Tk):
         win.geometry("1000x650")
         win.transient(self)
         win.grab_set()
-
         ttk.Label(win, text="📊 RESUMEN DE VENTAS",
                   font=("Arial", 18, "bold")).pack(pady=15)
-
         s = self.sale_use_case.get_summary()
         cards = ttk.Frame(win)
         cards.pack(pady=10)
@@ -397,7 +398,6 @@ class MainView(tk.Tk):
 
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
-
         win.after(100, lambda: center_window(win))
         win.after(200, lambda: apply_titlebar_theme(win, self.current_theme == 'darkly'))
 
@@ -437,10 +437,8 @@ class MainView(tk.Tk):
         win.geometry("900x600")
         win.transient(self)
         win.grab_set()
-
         ttk.Label(win, text="💳 CUENTAS POR COBRAR (FIADOS)",
                   font=("Arial", 18, "bold")).pack(pady=15)
-
         tree = ttk.Treeview(win,
                             columns=("ID", "Fecha", "Cliente", "Total", "Estado"),
                             show='headings', height=15)
