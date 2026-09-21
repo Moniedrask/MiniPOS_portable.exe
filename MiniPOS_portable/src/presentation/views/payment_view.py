@@ -1,10 +1,9 @@
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
-from ttkbootstrap.dialogs import Messagebox
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry
+    get_menu_font, AutoCompleteEntry, MD
 )
 
 
@@ -19,6 +18,9 @@ class PaymentView(ttk.Frame):
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
         self._keep_scanner_focused()
+
+    def _is_dark(self):
+        return self.get_theme() == 'darkly'
 
     def _keep_scanner_focused(self):
         try:
@@ -50,15 +52,13 @@ class PaymentView(ttk.Frame):
             values_getter=self._get_product_labels,
             on_select=self.add_by_search_value,
             width=30,
-            font=("Arial", 11)
-        )
+            font=("Arial", 11))
         self.search_entry.configure(textvariable=self.search_var)
         self.search_entry.pack(side="left", padx=5)
 
         ttk.Button(top, text="Agregar", command=self.add_by_search,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
-        # --- CARRITO ---
         cart_frame = ttk.Frame(self, bootstyle="dark")
         cart_frame.pack(padx=10, pady=5, fill="both", expand=True)
         self.tree = ttk.Treeview(cart_frame,
@@ -75,7 +75,6 @@ class PaymentView(ttk.Frame):
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Button-3>", self._cart_context_menu)
 
-        # --- TOTAL Y BOTONES ---
         bottom = ttk.Frame(self, bootstyle="dark")
         bottom.pack(fill="x", padx=10, pady=10)
         tf = ttk.Frame(bottom, bootstyle="dark")
@@ -103,7 +102,6 @@ class PaymentView(ttk.Frame):
         return vals
 
     def add_by_search_value(self, value):
-        """Cuando el usuario selecciona del autocompletado o presiona Enter."""
         self.after(10, lambda: self._do_add_by_search(value))
 
     def _do_add_by_search(self, value):
@@ -120,8 +118,7 @@ class PaymentView(ttk.Frame):
                     enc = p
                     break
         if not enc:
-            Messagebox.show_warning(f"⚠️ No se encontró '{q}'.",
-                                    "No encontrado", parent=self)
+            MD.show_warning(f"⚠️ No se encontró '{q}'.", "No encontrado", parent=self)
             return
         self.search_var.set("")
         if enc.unit_type in ("peso", "volumen"):
@@ -163,8 +160,7 @@ class PaymentView(ttk.Frame):
             m.grab_release()
 
     def _confirm_remove_one(self, pid, name):
-        if Messagebox.yesno(f"¿Quitar 1 de '{name}' del carrito?",
-                            "Confirmar", parent=self) == "Yes":
+        if MD.yesno(f"¿Quitar 1 de '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
             for i, it in enumerate(self.cart):
                 if it["product_id"] == pid:
                     it["quantity"] -= 1
@@ -177,8 +173,7 @@ class PaymentView(ttk.Frame):
             self.scan_entry.focus_set()
 
     def _confirm_remove_all(self, pid, name):
-        if Messagebox.yesno(f"¿Quitar TODO '{name}' del carrito?",
-                            "Confirmar", parent=self) == "Yes":
+        if MD.yesno(f"¿Quitar TODO '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
             self.cart = [i for i in self.cart if i["product_id"] != pid]
             self.refresh_cart()
             self.scan_entry.focus_set()
@@ -194,8 +189,7 @@ class PaymentView(ttk.Frame):
                 enc = p
                 break
         if not enc:
-            Messagebox.show_warning(f"⚠️ '{codigo}' no registrado.",
-                                    "No encontrado", parent=self)
+            MD.show_warning(f"⚠️ '{codigo}' no registrado.", "No encontrado", parent=self)
             self.scan_var.set("")
             self.scan_entry.focus_set()
             return
@@ -231,7 +225,7 @@ class PaymentView(ttk.Frame):
                 if c <= 0:
                     raise ValueError
             except ValueError:
-                Messagebox.show_error("Cantidad inválida", "Error", parent=pop)
+                MD.show_error("Cantidad inválida", "Error", parent=pop)
                 return
             pop.destroy()
             self.add_to_cart(product, c)
@@ -243,7 +237,7 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="Cancelar",
                    command=lambda: [pop.destroy(), self.scan_entry.focus_set()]).pack(side="left", padx=5)
         e.bind("<Return>", lambda e: ok())
-        show_popup_smooth(pop, self.get_theme() == 'darkly')
+        show_popup_smooth(pop, self._is_dark())
 
     def add_to_cart(self, product, cantidad):
         for it in self.cart:
@@ -278,7 +272,7 @@ class PaymentView(ttk.Frame):
     def clear_cart(self):
         if not self.cart:
             return
-        if Messagebox.yesno("¿Vaciar el carrito?", "Confirmar", parent=self) == "Yes":
+        if MD.yesno("¿Vaciar el carrito?", "Confirmar", parent=self) == "Yes":
             self.cart = []
             self.refresh_cart()
             self.scan_entry.focus_set()
@@ -286,13 +280,13 @@ class PaymentView(ttk.Frame):
     # ================= COBRAR =================
     def pay(self):
         if not self.cart:
-            Messagebox.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
+            MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
             return
         total = sum(i["subtotal"] for i in self.cart)
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("560x620")
+        pop.geometry("560x680")
         pop.transient(self.winfo_toplevel())
         pop.grab_set()
         pop.withdraw()
@@ -311,13 +305,38 @@ class PaymentView(ttk.Frame):
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 12)).pack(pady=5)
 
+        # ✅ Etiqueta dinámica para mostrar deuda existente
+        deuda_lbl = ttk.Label(pop, text="", font=("Arial", 11, "bold"),
+                              foreground="#ffd166")
+        deuda_lbl.pack(pady=5)
+
+        def actualizar_deuda(*args):
+            nombre = nombre_var.get().strip()
+            if not nombre:
+                deuda_lbl.configure(text="")
+                return
+            try:
+                deuda = self.sale_use_case.get_pending_by_customer(nombre)
+            except Exception:
+                deuda = 0
+            if deuda > 0:
+                total_nuevo = deuda + total
+                deuda_lbl.configure(
+                    text=f"⚠️ {nombre} ya debe ${deuda:,.0f}. "
+                         f"Con esta venta serían ${total_nuevo:,.0f}.".replace(",", "."))
+            else:
+                deuda_lbl.configure(text=f"ℹ️ {nombre} no tiene deudas previas.")
+
+        nombre_var.trace_add("write", actualizar_deuda)
+
         ttk.Label(pop, text="Método de pago:", font=("Arial", 11)).pack(pady=(10, 3))
         metodo_var = tk.StringVar(value="Efectivo")
         mf = ttk.Frame(pop)
         mf.pack(pady=5)
         for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
             ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m,
-                            bootstyle="info").grid(row=i // 3, column=i % 3, padx=8, pady=3, sticky="w")
+                            bootstyle="info").grid(row=i // 3, column=i % 3,
+                                                    padx=8, pady=3, sticky="w")
 
         ttk.Label(pop, text="Notas (opcional):").pack(pady=(10, 3))
         notas_var = tk.StringVar()
@@ -338,17 +357,19 @@ class PaymentView(ttk.Frame):
                 msg = f"✅ Venta #{sid} registrada.\nTotal: ${tot:,.0f}".replace(",", ".")
                 if es_fiado:
                     quien = nombre if nombre else "(sin nombre)"
-                    msg += f"\n\n📌 FIADO a: {quien}\n(Recuerda cobrarle)"
-                Messagebox.show_info(msg, "Venta Exitosa", parent=self)
+                    deuda = self.sale_use_case.get_pending_by_customer(quien) if nombre else tot
+                    msg += f"\n\n📌 FIADO a: {quien}"
+                    msg += f"\n💰 Deuda total: ${deuda:,.0f}".replace(",", ".")
+                MD.show_info(msg, "Venta Exitosa", parent=self)
                 self.cart = []
                 self.refresh_cart()
                 self.scan_entry.focus_set()
             except Exception as e:
-                Messagebox.show_error(f"Error: {e}", "Error", parent=pop)
+                MD.show_error(f"Error: {e}", "Error", parent=pop)
 
         bf = ttk.Frame(pop)
         bf.pack(pady=20)
         ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
                    style="DarkGreen.TButton").pack(side="left", padx=10, ipady=10, ipadx=20)
         ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
-        show_popup_smooth(pop, self.get_theme() == 'darkly')
+        show_popup_smooth(pop, self._is_dark())
