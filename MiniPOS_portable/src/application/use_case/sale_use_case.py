@@ -7,6 +7,31 @@ class SaleCase:
     def __init__(self, db_manager):
         self.db = db_manager
 
+    # ============ CONTADOR VISUAL DE VENTAS ============
+    def get_sale_number_offset(self):
+        try:
+            val = self.db.get_setting("sale_number_offset", "0")
+            return int(val or "0")
+        except Exception:
+            return 0
+
+    def set_sale_number_offset(self, value):
+        try:
+            self.db.set_setting("sale_number_offset", str(int(value)))
+        except Exception:
+            pass
+
+    def reset_sale_number_counter(self):
+        """
+        Reinicia el contador VISUAL de ventas a #01.
+        NO borra ventas, fiados ni abonos. Solo afecta a las nuevas ventas.
+        """
+        cur = self.db.get_connection().cursor()
+        cur.execute("SELECT COALESCE(MAX(sale_id), 0) m FROM sales")
+        max_id = cur.fetchone()["m"]
+        self.set_sale_number_offset(max_id)
+
+    # ============ CREAR VENTA ============
     def create_sale(self, items, payment_method="Efectivo", notes="",
                     customer_name="", is_credit=False):
         conn = self.db.get_connection()
@@ -15,11 +40,12 @@ class SaleCase:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         is_paid = 0 if is_credit else 1
         amount_paid = 0.0 if is_credit else total
+        offset = self.get_sale_number_offset()
         cur.execute(
             "INSERT INTO sales (date, total, payment_method, notes, customer_name, "
-            "is_credit, is_paid, amount_paid) VALUES (?,?,?,?,?,?,?,?)",
+            "is_credit, is_paid, amount_paid, display_offset) VALUES (?,?,?,?,?,?,?,?,?)",
             (now, total, payment_method, notes, customer_name,
-             1 if is_credit else 0, is_paid, amount_paid))
+             1 if is_credit else 0, is_paid, amount_paid, offset))
         sale_id = cur.lastrowid
         for it in items:
             sub = it["quantity"] * it["unit_price"]
@@ -32,7 +58,8 @@ class SaleCase:
                 cur.execute("UPDATE products SET stock = stock - ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
         conn.commit()
-        return sale_id, total
+        display_number = sale_id - offset
+        return sale_id, total, display_number
 
     def _rows_to_sales(self, rows):
         conn = self.db.get_connection()
@@ -50,6 +77,8 @@ class SaleCase:
             sale.is_credit = s["is_credit"] if "is_credit" in keys else 0
             sale.is_paid = s["is_paid"] if "is_paid" in keys else 1
             sale.amount_paid = s["amount_paid"] if "amount_paid" in keys else 0.0
+            offset = s["display_offset"] if "display_offset" in keys else 0
+            sale.display_number = s["sale_id"] - (offset or 0)
             sales.append(sale)
         return sales
 
@@ -200,27 +229,6 @@ class SaleCase:
             "total": (ventas_tot, total_tot),
             "fiados": (fiados_c, fiados_t),
         }
-
-    # ============ NUEVO: Reiniciar contador de ventas ============
-    def reset_sales_counter(self):
-        """
-        Elimina TODAS las ventas y fiados, y reinicia el contador AUTOINCREMENT a 1.
-        Los productos del inventario NO se tocan.
-        """
-        conn = self.db.get_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM sale_items")
-        cur.execute("DELETE FROM sales")
-        # Resetear el contador AUTOINCREMENT (si existe la tabla)
-        try:
-            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'sales'")
-        except Exception:
-            pass
-        try:
-            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'sale_items'")
-        except Exception:
-            pass
-        conn.commit()
 
     # ============ BORRADOR DE CARRITO ============
     def save_cart_draft(self, items):
