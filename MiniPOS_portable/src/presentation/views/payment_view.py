@@ -3,7 +3,8 @@ import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip
+    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
+    popup_is_open
 )
 
 
@@ -21,13 +22,18 @@ class PaymentView(ttk.Frame):
         self._keep_scanner_focused()
 
     def _is_dark(self):
-        return True  # Forzado oscuro
+        return True
 
     def _keep_scanner_focused(self):
         try:
-            fw = self.focus_get()
-            if fw is not None and not isinstance(fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
-                self.scan_entry.focus_set()
+            if not popup_is_open():
+                fw = self.focus_get()
+                if fw is not None and not isinstance(fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
+                    try:
+                        if fw.winfo_toplevel() is self.winfo_toplevel():
+                            self.scan_entry.focus_set()
+                    except Exception:
+                        pass
         except Exception:
             pass
         self.after(700, self._keep_scanner_focused)
@@ -95,7 +101,6 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="❌ Cancelar", command=self.clear_cart,
                    bootstyle="danger").pack(side="left", padx=5, ipady=15)
 
-    # ================= AUTOCOMPLETAR =================
     def _get_product_labels(self):
         vals = []
         for p in self.product_use_case.list_products():
@@ -135,7 +140,6 @@ class PaymentView(ttk.Frame):
             return
         self._do_add_by_search(raw)
 
-    # ================= MENÚ CONTEXTUAL CARRITO =================
     def _cart_context_menu(self, event):
         row = self.tree.identify_row(event.y)
         if not row:
@@ -180,7 +184,6 @@ class PaymentView(ttk.Frame):
             self.refresh_cart()
             self.scan_entry.focus_set()
 
-    # ================= ESCANEO =================
     def add_by_barcode(self, event=None):
         codigo = self.scan_var.get().strip()
         if not codigo:
@@ -241,6 +244,10 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="Cancelar",
                    command=lambda: [pop.destroy(), self.scan_entry.focus_set()]).pack(side="left", padx=5)
         e.bind("<Return>", lambda e: ok())
+        try:
+            pop.grab_set()
+        except Exception:
+            pass
         show_popup_smooth(pop)
 
     def add_to_cart(self, product, cantidad):
@@ -281,7 +288,6 @@ class PaymentView(ttk.Frame):
             self.refresh_cart()
             self.scan_entry.focus_set()
 
-    # ================= COBRAR =================
     def pay(self):
         if not self.cart:
             MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
@@ -290,7 +296,7 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("600x760")
+        pop.geometry("600x780")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
@@ -311,21 +317,17 @@ class PaymentView(ttk.Frame):
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 12)).pack(pady=5)
 
-        # ---- Etiqueta de deuda previa ----
         deuda_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
                              bg=bg, fg="#ffd166", wraplength=520, justify="center")
         deuda_lbl.pack(pady=5)
 
-        # ---- Frame de abono (oculto por defecto) ----
         abono_frame = tk.Frame(pop, bg=bg)
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar()
         saldo_lbl = tk.Label(pop, text="", font=("Arial", 11),
                              bg=bg, fg="#a8e6a8", wraplength=520, justify="center")
-        chk_abono = None
 
         def recalcular_saldo(*args):
-            """Actualiza la etiqueta de saldo restante según el monto a abonar."""
             try:
                 nombre = nombre_var.get().strip()
                 if not nombre:
@@ -353,7 +355,6 @@ class PaymentView(ttk.Frame):
 
         def actualizar_deuda(*args):
             nombre = nombre_var.get().strip()
-            # Limpiar frame de abono
             for w in abono_frame.winfo_children():
                 w.destroy()
             abono_var.set(False)
@@ -371,7 +372,6 @@ class PaymentView(ttk.Frame):
                 deuda_lbl.configure(
                     text=f"⚠️ {nombre} ya debe ${deuda:,.0f} de fiados anteriores.\n"
                          f"Esta venta es aparte.".replace(",", "."))
-                # Mostrar checkbox y campo de abono
                 chk = ttk.Checkbutton(
                     abono_frame,
                     text=f"💵 Abonar a la deuda anterior",
@@ -407,11 +407,12 @@ class PaymentView(ttk.Frame):
         notas_var = tk.StringVar()
         ttk.Entry(pop, textvariable=notas_var, width=40).pack(pady=5)
 
+        saldo_lbl.pack(pady=5)
+
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
             es_fiado = (metodo == "Fiado")
-            # Validar abono
             monto_abono = 0.0
             if abono_var.get() and not es_fiado and nombre:
                 try:
@@ -420,7 +421,6 @@ class PaymentView(ttk.Frame):
                 except ValueError:
                     monto_abono = 0.0
             try:
-                # 1) Registrar la venta actual
                 sid, tot = self.sale_use_case.create_sale(
                     self.cart,
                     payment_method=metodo,
@@ -434,7 +434,6 @@ class PaymentView(ttk.Frame):
                     deuda = self.sale_use_case.get_pending_by_customer(quien) if nombre else tot
                     msg += f"\n\n📌 FIADO a: {quien}"
                     msg += f"\n💰 Deuda total: ${deuda:,.0f}".replace(",", ".")
-                # 2) Aplicar abono a deuda anterior (si hay)
                 if monto_abono > 0 and nombre:
                     aplicado, saldo = self.sale_use_case.apply_payment_to_customer(
                         nombre, monto_abono)
@@ -456,4 +455,8 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
                    style="DarkGreen.TButton").pack(side="left", padx=10, ipady=10, ipadx=20)
         ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
+        try:
+            pop.grab_set()
+        except Exception:
+            pass
         show_popup_smooth(pop)
