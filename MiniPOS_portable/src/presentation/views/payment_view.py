@@ -4,16 +4,19 @@ from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
-    popup_is_open, make_scrolled_treeview
+    popup_is_open, make_scrolled_treeview, make_business_header,
 )
 
 
 class PaymentView(ttk.Frame):
-    def __init__(self, parent, product_use_case, sale_use_case, get_theme_func):
+    def __init__(self, parent, product_use_case, sale_use_case, db_manager,
+                 get_theme_func, on_business_click=None):
         super().__init__(parent, bootstyle="dark")
         self.product_use_case = product_use_case
         self.sale_use_case = sale_use_case
+        self.db_manager = db_manager
         self.get_theme = get_theme_func
+        self.on_business_click = on_business_click
         self.cart = []
         self.tooltip = None
         self._draft_loaded = False
@@ -25,6 +28,13 @@ class PaymentView(ttk.Frame):
 
     def _is_dark(self):
         return True
+
+    def refresh_business_header(self):
+        try:
+            if hasattr(self, "business_header") and self.business_header:
+                self.business_header["refresh"]()
+        except Exception:
+            pass
 
     def _keep_scanner_focused(self):
         try:
@@ -88,8 +98,17 @@ class PaymentView(ttk.Frame):
             pass
 
     def create_widgets(self):
+        # ✅ Encabezado del negocio
+        try:
+            bg = ttk.Style().colors.bg
+        except Exception:
+            bg = "#1a1a1a"
+        self.business_header = make_business_header(
+            self, self.db_manager, self.on_business_click, bg=bg)
+        self.business_header["frame"].pack(padx=10, pady=(8, 0), anchor="w")
+
         top = ttk.Frame(self, bootstyle="dark")
-        top.pack(padx=10, pady=(15, 5), fill="x")
+        top.pack(padx=10, pady=(6, 5), fill="x")
 
         ttk.Label(top, text="📷 Escanear:", font=("Arial", 14, "bold"),
                   bootstyle="inverse-dark").pack(side="left", padx=5)
@@ -346,7 +365,6 @@ class PaymentView(ttk.Frame):
             self.sale_use_case.clear_cart_draft()
             self.scan_entry.focus_set()
 
-    # ============ COBRAR ============
     def pay(self):
         try:
             self._pay_internal()
@@ -372,11 +390,9 @@ class PaymentView(ttk.Frame):
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # ===== Título =====
         tk.Label(pop, text="💰 CONFIRMAR PAGO",
                  font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(10, 3))
 
-        # ===== Total (verde) =====
         total_frame = tk.Frame(pop, bg="#0a4d1f", padx=20, pady=8)
         total_frame.pack(pady=(0, 6))
         tk.Label(total_frame, text="TOTAL A PAGAR",
@@ -386,14 +402,12 @@ class PaymentView(ttk.Frame):
                  font=("Arial", 24, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
 
-        # ===== Cliente =====
         tk.Label(pop, text="Nombre del cliente (opcional):",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(3, 2))
         nombre_var = tk.StringVar()
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
-        # ===== Método =====
         tk.Label(pop, text="Método de pago:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
         metodo_var = tk.StringVar(value="Efectivo")
@@ -406,19 +420,16 @@ class PaymentView(ttk.Frame):
                             bootstyle="info").grid(row=r, column=c,
                                                     padx=6, pady=1, sticky="w")
 
-        # ===== Aviso deuda =====
         deuda_lbl = tk.Label(pop, text="", font=("Arial", 10, "bold"),
                              bg=bg, fg="#ffd166", wraplength=580, justify="center")
         deuda_lbl.pack(pady=3, padx=10)
 
-        # ===== Notas =====
         tk.Label(pop, text="Notas (opcional):",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
         notas_var = tk.StringVar()
         ttk.Entry(pop, textvariable=notas_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
-        # ===== Contenedor inferior: botones → saldo → abono =====
         bottom_container = tk.Frame(pop, bg=bg)
         bottom_container.pack(side="bottom", fill="x", pady=8)
 
@@ -432,18 +443,14 @@ class PaymentView(ttk.Frame):
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar(value="")
 
-        chk_abono = ttk.Checkbutton(
+        ttk.Checkbutton(
             abono_frame, text="💵 Abonar",
-            variable=abono_var, bootstyle="success-round-toggle")
-        chk_abono.pack(side="left", padx=5)
-
+            variable=abono_var, bootstyle="success-round-toggle").pack(side="left", padx=5)
         tk.Label(abono_frame, text="Monto:", bg=bg, fg=fg,
                  font=("Arial", 10)).pack(side="left", padx=5)
-        ent_abono = ttk.Entry(abono_frame, textvariable=abono_monto_var,
-                              width=12, font=("Arial", 11), justify="center")
-        ent_abono.pack(side="left", padx=5)
+        ttk.Entry(abono_frame, textvariable=abono_monto_var,
+                  width=12, font=("Arial", 11), justify="center").pack(side="left", padx=5)
 
-        # ===== Confirmar =====
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -456,7 +463,6 @@ class PaymentView(ttk.Frame):
                 except ValueError:
                     monto_abono = 0.0
             try:
-                # ✅ Variable descartada con "_sid"
                 _sid, tot, display_num = self.sale_use_case.create_sale(
                     self.cart,
                     payment_method=metodo,
