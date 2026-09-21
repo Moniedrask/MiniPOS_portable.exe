@@ -244,11 +244,12 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="Cancelar",
                    command=lambda: [pop.destroy(), self.scan_entry.focus_set()]).pack(side="left", padx=5)
         e.bind("<Return>", lambda e: ok())
+        show_popup_smooth(pop)
         try:
             pop.grab_set()
+            pop.focus_force()
         except Exception:
             pass
-        show_popup_smooth(pop)
 
     def add_to_cart(self, product, cantidad):
         for it in self.cart:
@@ -288,7 +289,20 @@ class PaymentView(ttk.Frame):
             self.refresh_cart()
             self.scan_entry.focus_set()
 
+    # ============ COBRAR ============
     def pay(self):
+        # ✅ Defensivo: cualquier error se muestra al usuario
+        try:
+            self._pay_internal()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            try:
+                MD.show_error(f"Error al abrir el pago:\n{e}", "Error", parent=self)
+            except Exception:
+                pass
+
+    def _pay_internal(self):
         if not self.cart:
             MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
             return
@@ -374,7 +388,7 @@ class PaymentView(ttk.Frame):
                          f"Esta venta es aparte.".replace(",", "."))
                 chk = ttk.Checkbutton(
                     abono_frame,
-                    text=f"💵 Abonar a la deuda anterior",
+                    text="💵 Abonar a la deuda anterior",
                     variable=abono_var,
                     bootstyle="success-round-toggle",
                     command=recalcular_saldo)
@@ -439,7 +453,7 @@ class PaymentView(ttk.Frame):
                         nombre, monto_abono)
                     msg += f"\n\n💵 Abono aplicado: ${aplicado:,.0f}".replace(",", ".")
                     if saldo <= 0.01:
-                        msg += f"\n✅ Deuda anterior SALDADA por completo."
+                        msg += "\n✅ Deuda anterior SALDADA por completo."
                     else:
                         msg += f"\n📌 Saldo pendiente: ${saldo:,.0f}".replace(",", ".")
                 pop.destroy()
@@ -455,8 +469,11 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
                    style="DarkGreen.TButton").pack(side="left", padx=10, ipady=10, ipadx=20)
         ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
+
+        # ✅ Mostrar primero, luego grab
+        show_popup_smooth(pop)
         try:
             pop.grab_set()
+            pop.focus_force()
         except Exception:
             pass
-        show_popup_smooth(pop)
