@@ -576,7 +576,7 @@ class MainView(tk.Tk):
         self._apply_font_size()
 
     # =========================================================
-    # RESUMEN DE VENTAS (con scroll universal)
+    # RESUMEN DE VENTAS
     # =========================================================
     def show_sales_summary(self):
         win = tk.Toplevel(self)
@@ -588,11 +588,6 @@ class MainView(tk.Tk):
         bg = self.style.colors.bg
         fg = self.style.colors.fg
 
-        # ---- Botones PRIMERO (abajo) ----
-        bf = tk.Frame(win, bg=bg)
-        bf.pack(side="bottom", fill="x", pady=8)
-
-        # ---- Contenedor con scroll ----
         container = tk.Frame(win, bg=bg)
         container.pack(fill="both", expand=True)
 
@@ -601,11 +596,9 @@ class MainView(tk.Tk):
         refs = {}
 
         def build_content(parent):
-            # Título
             tk.Label(parent, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
                      font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
 
-            # Cards
             cards = tk.Frame(parent, bg=bg)
             cards.pack(pady=5)
             cards_labels = {}
@@ -633,7 +626,6 @@ class MainView(tk.Tk):
                 lt.pack()
                 cards_labels[titulo] = (lc, lt)
 
-            # Filtros
             filt_frame = tk.Frame(parent, bg=bg)
             filt_frame.pack(pady=5)
             filtro_var = tk.StringVar(value="all")
@@ -643,7 +635,6 @@ class MainView(tk.Tk):
                                 value=val, bootstyle="info",
                                 command=lambda: recargar()).pack(side="left", padx=8)
 
-            # Treeview
             tree_frame = ttk.Frame(parent, bootstyle="dark")
             tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
 
@@ -664,7 +655,6 @@ class MainView(tk.Tk):
             tree.heading("Sel", text="☐", command=toggle_all)
             refs["tree"] = tree
 
-            # Eventos del tree
             tree.bind("<Double-1>", ver_detalle)
             tree.bind("<Button-3>", on_right_click)
             tree.bind("<Button-1>", on_click, add="+")
@@ -687,7 +677,6 @@ class MainView(tk.Tk):
                        command=lambda: recargar(),
                        bootstyle="secondary").pack(side="left", padx=5)
 
-        # ---- Utilidades ----
         def actualizar_cards():
             try:
                 s = self.sale_use_case.get_summary()
@@ -823,7 +812,6 @@ class MainView(tk.Tk):
             det.configure(bg=bg)
             det.withdraw()
 
-            # Header
             tk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
                      font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=8)
             tk.Label(det,
@@ -832,7 +820,6 @@ class MainView(tk.Tk):
                           f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
                      font=("Arial", 11), bg=bg, fg=fg).pack(pady=4)
 
-            # Treeview con scroll
             f2 = ttk.Frame(det, bootstyle="dark")
             f2.pack(fill="both", expand=True, padx=12, pady=6)
             tf2, t2 = make_scrolled_treeview(
@@ -863,7 +850,6 @@ class MainView(tk.Tk):
                     sale.date, sale.payment_method, resumen_items,
                     f"${sale.total:,.0f}".replace(",", "."), estado))
 
-            # Botón cerrar
             bf2 = tk.Frame(det, bg=bg)
             bf2.pack(side="bottom", pady=8)
             ttk.Button(bf2, text="Cerrar",
@@ -999,7 +985,6 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
-        # ---- Construir ----
         make_scrollable(container, build_content, build_bottom, bg=bg)
         recargar()
 
@@ -1078,7 +1063,7 @@ class MainView(tk.Tk):
         return ok["v"]
 
     # =========================================================
-    # FIADOS (con scroll universal)
+    # FIADOS
     # =========================================================
     def show_credit_sales(self):
         win = tk.Toplevel(self)
@@ -1089,10 +1074,6 @@ class MainView(tk.Tk):
         win.withdraw()
         bg = self.style.colors.bg
         fg = self.style.colors.fg
-
-        # Botones primero (abajo)
-        bf = tk.Frame(win, bg=bg)
-        bf.pack(side="bottom", fill="x", pady=8)
 
         container = tk.Frame(win, bg=bg)
         container.pack(fill="both", expand=True)
@@ -1158,7 +1139,6 @@ class MainView(tk.Tk):
                        command=lambda: recargar(),
                        bootstyle="secondary").pack(side="left", padx=5)
 
-        # ---- Utilidades ----
         def actualizar_heading_sel():
             try:
                 tree = refs.get("tree")
@@ -1519,7 +1499,7 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # ABONAR (con scroll)
+    # ABONAR
     # =========================================================
     def _abonar_dialog(self, parent, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
@@ -1530,10 +1510,6 @@ class MainView(tk.Tk):
         pop.withdraw()
         bg = self.style.colors.bg
         fg = self.style.colors.fg
-
-        # Botones primero (abajo)
-        bf = tk.Frame(pop, bg=bg)
-        bf.pack(side="bottom", fill="x", pady=10)
 
         container = tk.Frame(pop, bg=bg)
         container.pack(fill="both", expand=True)
@@ -1608,7 +1584,6 @@ class MainView(tk.Tk):
 
         make_scrollable(container, build_content, build_bottom, bg=bg)
 
-        # Bindings después de construir
         try:
             e = refs.get("entry")
             if e:
