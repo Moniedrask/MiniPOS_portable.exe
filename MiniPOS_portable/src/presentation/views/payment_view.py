@@ -359,7 +359,6 @@ class PaymentView(ttk.Frame):
                 pass
 
     def _pay_internal(self):
-        """Popup de cobro compacto, abono justo encima de los botones."""
         if not self.cart:
             MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
             return
@@ -419,20 +418,16 @@ class PaymentView(ttk.Frame):
         ttk.Entry(pop, textvariable=notas_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
-        # ===== CONTENEDOR INFERIOR (de abajo hacia arriba) =====
-        # Orden visual: abono (arriba), saldo (medio), botones (abajo)
+        # ===== Contenedor inferior: botones → saldo → abono =====
         bottom_container = tk.Frame(pop, bg=bg)
         bottom_container.pack(side="bottom", fill="x", pady=8)
 
-        # 1) Botones (los primeros en packear van al fondo)
         bf = tk.Frame(bottom_container, bg=bg)
         bf.pack(side="bottom", pady=4)
 
-        # 2) Saldo (se empaquetará antes de abono con side="bottom")
         saldo_lbl = tk.Label(bottom_container, text="", font=("Arial", 11, "bold"),
                              bg=bg, fg="#a8e6a8", wraplength=580, justify="center")
 
-        # 3) Abono (arriba de todo del contenedor)
         abono_frame = tk.Frame(bottom_container, bg=bg)
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar(value="")
@@ -448,7 +443,7 @@ class PaymentView(ttk.Frame):
                               width=12, font=("Arial", 11), justify="center")
         ent_abono.pack(side="left", padx=5)
 
-        # ===== Función confirmar (debe definirse antes de botones) =====
+        # ===== Confirmar =====
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -461,13 +456,13 @@ class PaymentView(ttk.Frame):
                 except ValueError:
                     monto_abono = 0.0
             try:
-                sid, tot = self.sale_use_case.create_sale(
+                sid, tot, display_num = self.sale_use_case.create_sale(
                     self.cart,
                     payment_method=metodo,
                     notes=notas_var.get().strip(),
                     customer_name=nombre,
                     is_credit=es_fiado)
-                msg = f"✅ Venta #{sid} registrada.\n"
+                msg = f"✅ Venta #{display_num:02d} registrada.\n"
                 msg += f"Total: ${tot:,.0f}".replace(",", ".")
                 if es_fiado:
                     quien = nombre if nombre else "(sin nombre)"
@@ -496,12 +491,9 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="Cancelar",
                    command=pop.destroy).pack(side="left", padx=8, ipady=8)
 
-        # ===== Actualización en tiempo real =====
         def refresh_ui(*args):
             nombre = nombre_var.get().strip()
             es_fiado = (metodo_var.get() == "Fiado")
-
-            # Limpiar widgets del contenedor inferior
             abono_frame.pack_forget()
             saldo_lbl.pack_forget()
 
@@ -536,9 +528,6 @@ class PaymentView(ttk.Frame):
             if not (deuda > 0 or es_fiado):
                 return
 
-            # Mostrar abono y saldo
-            # Orden de empaquetado (bottom-up): saldo primero, abono después
-            # Resultado visual (top-down): abono, saldo, bf
             saldo_lbl.pack(side="bottom", pady=2)
             abono_frame.pack(side="bottom", pady=4)
 
