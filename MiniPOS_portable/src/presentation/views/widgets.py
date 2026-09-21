@@ -2,8 +2,30 @@ import tkinter as tk
 import ttkbootstrap as ttk
 
 
+# =========================================================
+# CONTADOR GLOBAL DE POPUPS (clave para no romper el foco)
+# =========================================================
+_popup_depth = 0
+
+
+def _inc_popup():
+    global _popup_depth
+    _popup_depth += 1
+
+
+def _dec_popup():
+    global _popup_depth
+    _popup_depth = max(0, _popup_depth - 1)
+
+
+def popup_is_open():
+    return _popup_depth > 0
+
+
+# =========================================================
+# BARRA DE TÍTULO OSCURA
+# =========================================================
 def force_dark_titlebar(win):
-    """Fuerza modo oscuro en la barra de título (Windows 10/11)."""
     try:
         import ctypes
         win.update_idletasks()
@@ -17,9 +39,8 @@ def force_dark_titlebar(win):
                     hwnd, a, ctypes.byref(v), ctypes.sizeof(v))
             except Exception:
                 pass
-        return True
     except Exception:
-        return False
+        pass
 
 
 def apply_titlebar_theme(window, is_dark=True):
@@ -40,52 +61,37 @@ def center_window(win):
     win.geometry(f"{w}x{h}+{x}+{y}")
 
 
-def force_focus(win):
-    """Fuerza el foco, trae al frente y bloquea interacción con otras ventanas."""
-    try:
-        win.lift()
-        win.focus_force()
-    except Exception:
-        pass
-    try:
-        win.grab_set()
-    except Exception:
-        pass
-    try:
-        win.attributes('-topmost', True)
-    except Exception:
-        pass
-    def quitar_topmost():
-        try:
-            if win.winfo_exists():
-                win.attributes('-topmost', False)
-                win.lift()
-                win.focus_force()
-        except Exception:
-            pass
-    win.after(150, quitar_topmost)
-
-
 def show_popup_smooth(popup, is_dark=True):
-    """Muestra un popup sin parpadeo y en modo oscuro forzado."""
+    """Muestra un popup SIN robar el grab. Solo centra, aplica tema y enfoca."""
+    _inc_popup()
+
+    def on_destroy(e):
+        if e.widget is popup:
+            _dec_popup()
+
     try:
-        popup.attributes('-alpha', 0)
+        popup.bind("<Destroy>", on_destroy, add="+")
     except Exception:
         pass
+
     try:
         style = ttk.Style()
         popup.configure(bg=style.colors.bg)
     except Exception:
         pass
+
     center_window(popup)
     popup.deiconify()
     popup.update_idletasks()
     force_dark_titlebar(popup)
+
     try:
-        popup.attributes('-alpha', 1)
+        popup.lift()
+        popup.focus_force()
     except Exception:
         pass
-    force_focus(popup)
+
+    # Reaplicar tema en la barra de título (a veces Windows tarda)
     popup.after(80, lambda: force_dark_titlebar(popup))
     popup.after(160, lambda: force_dark_titlebar(popup))
 
@@ -151,6 +157,13 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     w = max(420, pop.winfo_reqwidth())
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
+
+    # ✅ grab_set ANTES de mostrar
+    try:
+        pop.grab_set()
+    except Exception:
+        pass
+
     show_popup_smooth(pop)
 
     try:
@@ -158,9 +171,14 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     except Exception:
         pass
 
+    # ✅ Restaurar grab al padre SOLO si existe y no hay otro popup abierto
     try:
-        if parent and parent.winfo_exists():
-            force_focus(parent)
+        if not popup_is_open() and parent and parent.winfo_exists():
+            parent_tl = parent.winfo_toplevel()
+            if parent_tl.winfo_exists():
+                parent_tl.grab_set()
+                parent_tl.lift()
+                parent_tl.focus_force()
     except Exception:
         pass
 
