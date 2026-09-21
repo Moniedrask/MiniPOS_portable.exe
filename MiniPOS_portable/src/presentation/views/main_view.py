@@ -63,7 +63,6 @@ class MainView(tk.Tk):
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
                   if self.current_page == "inventario" else None)
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
-        # ✅ Solo aplicamos el tema de barra UNA VEZ al arrancar
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
     # =========== ESTILOS ===========
@@ -92,10 +91,10 @@ class MainView(tk.Tk):
         pop.title("MiniPOS - Iniciar sesión")
         pop.geometry("380x230")
         pop.transient(self)
-        pop.grab_set()
         pop.configure(bg=self.style.colors.bg)
         pop.protocol("WM_DELETE_WINDOW", lambda: self._cancel_login(pop))
         pop.withdraw()
+
         tk.Label(pop, text="🔒 Contraseña requerida",
                  font=("Arial", 14, "bold"),
                  bg=self.style.colors.bg, fg=self.style.colors.fg).pack(pady=15)
@@ -117,7 +116,15 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Ingresar", command=verificar,
                    style="DarkGreen.TButton").pack(pady=10)
         e.bind("<Return>", lambda e: verificar())
+
+        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+            pop.focus_force()
+        except Exception:
+            pass
+
         self.wait_window(pop)
         if resultado["ok"]:
             self.deiconify()
@@ -138,7 +145,6 @@ class MainView(tk.Tk):
         pop.title("Cambiar contraseña")
         pop.geometry("400x400")
         pop.transient(self)
-        pop.grab_set()
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
         bg = self.style.colors.bg
@@ -182,14 +188,20 @@ class MainView(tk.Tk):
 
         ttk.Button(pop, text="Guardar", command=aplicar,
                    style="DarkGreen.TButton").pack(pady=12)
+
+        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+            pop.focus_force()
+        except Exception:
+            pass
 
     def _setup_password_first_time(self):
         pop = tk.Toplevel(self)
         pop.title("Configurar contraseña")
         pop.geometry("380x280")
         pop.transient(self)
-        pop.grab_set()
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
         bg = self.style.colors.bg
@@ -219,7 +231,14 @@ class MainView(tk.Tk):
 
         ttk.Button(pop, text="Guardar", command=guardar,
                    style="DarkGreen.TButton").pack(pady=12)
+
+        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+            pop.focus_force()
+        except Exception:
+            pass
 
     # =========== TAMAÑO DE FUENTE ===========
     def _apply_font_size(self):
@@ -364,7 +383,6 @@ class MainView(tk.Tk):
         win.title("Resumen de Ventas")
         win.geometry("1150x720")
         win.transient(self)
-        win.grab_set()
         win.configure(bg=self.style.colors.bg)
         win.withdraw()
         bg = self.style.colors.bg
@@ -419,9 +437,8 @@ class MainView(tk.Tk):
 
         def restaurar_foco():
             try:
-                win.grab_set()
-                win.focus_force()
                 win.lift()
+                win.focus_force()
             except Exception:
                 pass
 
@@ -459,7 +476,6 @@ class MainView(tk.Tk):
             det.title(f"Detalle - {g['customer_name']}")
             det.geometry("950x560")
             det.transient(win)
-            det.grab_set()
             det.configure(bg=bg)
             det.withdraw()
             tk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
@@ -492,7 +508,14 @@ class MainView(tk.Tk):
                     f"${sale.total:,.0f}".replace(",", "."), estado))
             ttk.Button(det, text="Cerrar",
                        command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
+
+            # ✅ Mostrar primero, luego grab
             show_popup_smooth(det)
+            try:
+                det.grab_set()
+                det.focus_force()
+            except Exception:
+                pass
 
         tree.bind("<Double-1>", ver_detalle)
 
@@ -522,7 +545,6 @@ class MainView(tk.Tk):
             self.sale_use_case.delete_sale(sid)
             MD.show_info(f"Venta #{sid} eliminada y stock restaurado.",
                          "Listo", parent=win)
-            # ✅ Solo recargamos, NO destruimos la ventana
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
@@ -538,14 +560,19 @@ class MainView(tk.Tk):
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
+        # ✅ Mostrar primero, luego grab
         show_popup_smooth(win)
+        try:
+            win.grab_set()
+            win.focus_force()
+        except Exception:
+            pass
 
     def _ask_password_1234(self, parent):
         pop = tk.Toplevel(parent)
         pop.title("Contraseña requerida")
         pop.geometry("340x200")
         pop.transient(parent)
-        pop.grab_set()
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
         bg = self.style.colors.bg
@@ -571,7 +598,15 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Aceptar", command=ver,
                    style="DarkGreen.TButton").pack(pady=15)
         e.bind("<Return>", lambda e: ver())
+
+        # ✅ Mostrar primero, luego grab
         show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+            pop.focus_force()
+        except Exception:
+            pass
+
         parent.wait_window(pop)
         return ok["v"]
 
@@ -581,7 +616,6 @@ class MainView(tk.Tk):
         win.title("Fiados - Cuentas por cobrar")
         win.geometry("1100x700")
         win.transient(self)
-        win.grab_set()
         win.configure(bg=self.style.colors.bg)
         win.withdraw()
         bg = self.style.colors.bg
@@ -611,9 +645,8 @@ class MainView(tk.Tk):
 
         def restaurar_foco():
             try:
-                win.grab_set()
-                win.focus_force()
                 win.lift()
+                win.focus_force()
             except Exception:
                 pass
 
@@ -651,7 +684,6 @@ class MainView(tk.Tk):
             det.title(f"Fiados de {g['customer_name']}")
             det.geometry("950x560")
             det.transient(win)
-            det.grab_set()
             det.configure(bg=bg)
             det.withdraw()
             tk.Label(det, text=f"👤 {g['customer_name']}",
@@ -683,7 +715,13 @@ class MainView(tk.Tk):
                     f"${sale.pending():,.0f}".replace(",", ".")))
             ttk.Button(det, text="Cerrar",
                        command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
+
             show_popup_smooth(det)
+            try:
+                det.grab_set()
+                det.focus_force()
+            except Exception:
+                pass
 
         tree.bind("<Double-1>", ver_detalle)
 
@@ -755,7 +793,6 @@ class MainView(tk.Tk):
             self.sale_use_case.delete_sale(sid)
             MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.",
                          "Listo", parent=win)
-            # ✅ Solo recargamos, NO destruimos la ventana
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
@@ -776,13 +813,17 @@ class MainView(tk.Tk):
                    bootstyle="secondary").pack(side="left", padx=5)
 
         show_popup_smooth(win)
+        try:
+            win.grab_set()
+            win.focus_force()
+        except Exception:
+            pass
 
     def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
         pop.title(f"Abonar a venta #{sale_id}")
         pop.geometry("420x400")
         pop.transient(parent)
-        pop.grab_set()
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
         bg = self.style.colors.bg
@@ -831,9 +872,8 @@ class MainView(tk.Tk):
                          "Listo", parent=parent)
             on_done()
             try:
-                parent.grab_set()
-                parent.focus_force()
                 parent.lift()
+                parent.focus_force()
             except Exception:
                 pass
 
@@ -843,11 +883,14 @@ class MainView(tk.Tk):
         ttk.Button(bf, text="Registrar abono", command=aplicar,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
         ttk.Button(bf, text="Cancelar",
-                   command=lambda: [pop.destroy(),
-                                    parent.grab_set() if parent else None,
-                                    parent.focus_force() if parent else None]
-                   ).pack(side="left", padx=5)
+                   command=pop.destroy).pack(side="left", padx=5)
+
         show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+            pop.focus_force()
+        except Exception:
+            pass
 
     # =========== AUTO-INICIO ===========
     def _get_startup_bat_path(self):
