@@ -4,7 +4,7 @@ from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
-    popup_is_open
+    popup_is_open, make_scrolled_treeview
 )
 
 
@@ -40,7 +40,6 @@ class PaymentView(ttk.Frame):
             pass
         self.after(700, self._keep_scanner_focused)
 
-    # ============ AUTO-GUARDADO DEL CARRITO ============
     def _check_cart_draft(self):
         if self._draft_loaded:
             return
@@ -115,20 +114,23 @@ class PaymentView(ttk.Frame):
         ttk.Button(top, text="Agregar", command=self.add_by_search,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
+        # ✅ Treeview con scrollbar
         cart_frame = ttk.Frame(self, bootstyle="dark")
         cart_frame.pack(padx=10, pady=5, fill="both", expand=True)
-        self.tree = ttk.Treeview(cart_frame,
-                                 columns=("ID", "Name", "Barcode", "Price", "Qty", "Subtotal"),
-                                 show='headings')
-        for c, t, w, a in [("ID", "ID", 50, "center"),
-                           ("Name", "Producto", 300, "w"),
-                           ("Barcode", "Código", 150, "w"),
-                           ("Price", "P. Unit.", 110, "e"),
-                           ("Qty", "Cantidad", 110, "center"),
-                           ("Subtotal", "Subtotal", 120, "e")]:
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor=a)
-        self.tree.pack(fill="both", expand=True)
+
+        self.tree_frame, self.tree = make_scrolled_treeview(
+            cart_frame,
+            columns=("ID", "Name", "Barcode", "Price", "Qty", "Subtotal"),
+            headings=[
+                ("ID", "ID", 50, "center"),
+                ("Name", "Producto", 300, "w"),
+                ("Barcode", "Código", 150, "w"),
+                ("Price", "P. Unit.", 110, "e"),
+                ("Qty", "Cantidad", 110, "center"),
+                ("Subtotal", "Subtotal", 120, "e"),
+            ],
+            bootstyle="dark")
+        self.tree_frame.pack(fill="both", expand=True)
         self.tree.bind("<Button-3>", self._cart_context_menu)
 
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
@@ -364,169 +366,79 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("640x900")
+        pop.geometry("640x720")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # ---------- ENCABEZADO ----------
-        tk.Label(pop, text="💰 CONFIRMAR PAGO", font=("Arial", 20, "bold"),
-                 bg=bg, fg=fg).pack(pady=15)
-        tk.Label(pop, text="TOTAL A PAGAR", font=("Arial", 14),
+        header = tk.Frame(pop, bg=bg)
+        header.pack(fill="x", pady=(10, 5))
+        tk.Label(header, text="💰 CONFIRMAR PAGO", font=("Arial", 15, "bold"),
                  bg=bg, fg=fg).pack()
-        tk.Label(pop, text=f"${total:,.0f}".replace(",", "."),
-                 font=("Arial", 40, "bold"),
-                 background="#0a4d1f", foreground="#a8e6a8",
-                 anchor="center", padx=20, pady=15).pack(pady=10)
 
-        # ---------- NOMBRE DEL CLIENTE ----------
-        tk.Label(pop, text="Nombre del cliente (opcional):",
-                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=(15, 3))
+        total_frame = tk.Frame(pop, bg="#0a4d1f", padx=15, pady=8)
+        total_frame.pack(pady=(0, 8))
+        tk.Label(total_frame, text="TOTAL A PAGAR", font=("Arial", 10, "bold"),
+                 bg="#0a4d1f", fg="#a8e6a8").pack()
+        tk.Label(total_frame, text=f"${total:,.0f}".replace(",", "."),
+                 font=("Arial", 26, "bold"),
+                 bg="#0a4d1f", fg="#a8e6a8").pack()
+
+        row1 = tk.Frame(pop, bg=bg)
+        row1.pack(fill="x", padx=20, pady=(5, 2))
+        tk.Label(row1, text="Cliente:", font=("Arial", 10),
+                 bg=bg, fg=fg).pack(side="left", padx=(0, 5))
         nombre_var = tk.StringVar()
-        ttk.Entry(pop, textvariable=nombre_var, width=40,
-                  font=("Arial", 12)).pack(pady=5)
+        ttk.Entry(row1, textvariable=nombre_var, width=30,
+                  font=("Arial", 11)).pack(side="left", fill="x", expand=True)
 
-        # ---------- AVISO DE DEUDA ----------
-        deuda_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
-                             bg=bg, fg="#ffd166", wraplength=580, justify="center")
-        deuda_lbl.pack(pady=8)
-
-        # ---------- MÉTODO DE PAGO ----------
-        tk.Label(pop, text="Método de pago:", font=("Arial", 11),
-                 bg=bg, fg=fg).pack(pady=(10, 3))
+        row2 = tk.Frame(pop, bg=bg)
+        row2.pack(fill="x", padx=20, pady=(5, 2))
+        tk.Label(row2, text="Método:", font=("Arial", 10),
+                 bg=bg, fg=fg).pack(side="left", padx=(0, 5))
         metodo_var = tk.StringVar(value="Efectivo")
-        mf = tk.Frame(pop, bg=bg)
-        mf.pack(pady=5)
-        for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
-            ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m,
-                            bootstyle="info").grid(row=i // 3, column=i % 3,
-                                                    padx=8, pady=3, sticky="w")
+        metodos_frame = tk.Frame(row2, bg=bg)
+        metodos_frame.pack(side="left")
+        for m in ["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]:
+            ttk.Radiobutton(metodos_frame, text=m, variable=metodo_var,
+                            value=m, bootstyle="info").pack(side="left", padx=4)
 
-        # ---------- FRAME DE ABONO (siempre visible, se muestra/oculta) ----------
+        deuda_lbl = tk.Label(pop, text="", font=("Arial", 10, "bold"),
+                             bg=bg, fg="#ffd166", wraplength=600, justify="center")
+        deuda_lbl.pack(pady=4, padx=10)
+
         abono_frame = tk.Frame(pop, bg=bg)
         abono_var = tk.BooleanVar(value=False)
         abono_monto_var = tk.StringVar(value="")
 
         chk_abono = ttk.Checkbutton(
             abono_frame,
-            text="💵 Abonar a deuda anterior",
+            text="💵 Abonar",
             variable=abono_var,
             bootstyle="success-round-toggle")
         chk_abono.pack(side="left", padx=5)
 
-        tk.Label(abono_frame, text="Monto:", bg=bg, fg=fg).pack(side="left", padx=5)
+        tk.Label(abono_frame, text="Monto:", bg=bg, fg=fg,
+                 font=("Arial", 10)).pack(side="left", padx=5)
         ent_abono = ttk.Entry(abono_frame, textvariable=abono_monto_var,
                               width=12, font=("Arial", 12), justify="center")
         ent_abono.pack(side="left", padx=5)
 
-        # ---------- SALDO EN TIEMPO REAL ----------
-        saldo_lbl = tk.Label(pop, text="", font=("Arial", 12, "bold"),
-                             bg=bg, fg="#a8e6a8", wraplength=580, justify="center")
-        saldo_lbl.pack(pady=8)
+        saldo_lbl = tk.Label(pop, text="", font=("Arial", 11, "bold"),
+                             bg=bg, fg="#a8e6a8", wraplength=600, justify="center")
+        saldo_lbl.pack(pady=4, padx=10)
 
-        # ---------- NOTAS ----------
-        tk.Label(pop, text="Notas (opcional):", bg=bg, fg=fg).pack(pady=(5, 3))
+        row3 = tk.Frame(pop, bg=bg)
+        row3.pack(fill="x", padx=20, pady=(5, 2))
+        tk.Label(row3, text="Notas:", font=("Arial", 10),
+                 bg=bg, fg=fg).pack(side="left", padx=(0, 5))
         notas_var = tk.StringVar()
-        ttk.Entry(pop, textvariable=notas_var, width=40).pack(pady=5)
+        ttk.Entry(row3, textvariable=notas_var, width=40,
+                  font=("Arial", 11)).pack(side="left", fill="x", expand=True)
 
-        # =========================================================
-        # LÓGICA DE ACTUALIZACIÓN EN TIEMPO REAL
-        # =========================================================
-        def refresh_ui(*args):
-            """Recalcula todo: mensaje, visibilidad del abono y saldo."""
-            nombre = nombre_var.get().strip()
-            es_fiado = (metodo_var.get() == "Fiado")
+        tk.Frame(pop, bg=bg).pack(fill="both", expand=True)
 
-            # 1) Sin nombre → todo limpio
-            if not nombre:
-                deuda_lbl.configure(text="")
-                abono_frame.pack_forget()
-                saldo_lbl.configure(text="")
-                return
-
-            # 2) Consultar deuda previa
-            try:
-                deuda = self.sale_use_case.get_pending_by_customer(nombre)
-            except Exception:
-                deuda = 0
-
-            # 3) Mensaje según caso
-            if es_fiado:
-                if deuda > 0:
-                    total_nuevo = deuda + total
-                    deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}\n"
-                             f"Deuda anterior: ${deuda:,.0f}  +  Esta venta: ${total:,.0f}\n"
-                             f"➡️ Nueva deuda total: ${total_nuevo:,.0f}".replace(",", "."),
-                        fg="#ffd166")
-                else:
-                    deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}  |  Total: ${total:,.0f}".replace(",", "."),
-                        fg="#ffd166")
-            else:
-                # Efectivo / Transferencia / Tarjeta / Otro
-                if deuda > 0:
-                    deuda_lbl.configure(
-                        text=f"⚠️ {nombre} debe ${deuda:,.0f} de fiados anteriores.\n"
-                             f"Esta venta se paga por aparte.".replace(",", "."),
-                        fg="#ffd166")
-                else:
-                    deuda_lbl.configure(
-                        text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
-
-            # 4) Mostrar/ocultar el frame de abono
-            #    Se muestra si hay deuda previa O es fiado
-            if deuda > 0 or es_fiado:
-                abono_frame.pack(pady=5)
-            else:
-                abono_frame.pack_forget()
-                abono_var.set(False)
-                abono_monto_var.set("")
-                saldo_lbl.configure(text="")
-                return
-
-            # 5) Calcular y mostrar el saldo en tiempo real
-            try:
-                monto = 0.0
-                if abono_var.get():
-                    try:
-                        monto = float(abono_monto_var.get()
-                                      .replace("$", "").replace(".", "").replace(",", ".") or 0)
-                    except ValueError:
-                        monto = 0.0
-                    if monto > deuda:
-                        monto = deuda
-
-                if es_fiado:
-                    # Deuda previa + esta venta - abono
-                    total_acum = deuda + total
-                    saldo = max(0, total_acum - monto)
-                    if abono_var.get() and monto > 0:
-                        saldo_lbl.configure(
-                            text=f"💵 Nueva deuda después del abono: ${saldo:,.0f}".replace(",", "."))
-                    else:
-                        saldo_lbl.configure(
-                            text=f"💵 Nueva deuda total: ${total_acum:,.0f}".replace(",", "."))
-                else:
-                    # Solo se abona a la deuda anterior
-                    if abono_var.get() and monto > 0:
-                        saldo = max(0, deuda - monto)
-                        saldo_lbl.configure(
-                            text=f"💵 Saldo de la deuda anterior: ${saldo:,.0f}".replace(",", "."))
-                    else:
-                        saldo_lbl.configure(
-                            text=f"💵 Deuda anterior: ${deuda:,.0f}".replace(",", "."))
-            except Exception:
-                saldo_lbl.configure(text="")
-
-        # Un solo handler para todos los cambios
-        nombre_var.trace_add("write", refresh_ui)
-        metodo_var.trace_add("write", refresh_ui)
-        abono_var.trace_add("write", refresh_ui)
-        abono_monto_var.trace_add("write", refresh_ui)
-
-        # ---------- BOTONES ----------
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -570,10 +482,89 @@ class PaymentView(ttk.Frame):
                 MD.show_error(f"Error: {e}", "Error", parent=pop)
 
         bf = tk.Frame(pop, bg=bg)
-        bf.pack(pady=20)
+        bf.pack(pady=12)
         ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
-                   style="DarkGreen.TButton").pack(side="left", padx=10, ipady=10, ipadx=20)
-        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=10)
+                   style="DarkGreen.TButton").pack(side="left", padx=10, ipady=8, ipadx=15)
+        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=10, ipady=8)
+
+        def refresh_ui(*args):
+            nombre = nombre_var.get().strip()
+            es_fiado = (metodo_var.get() == "Fiado")
+
+            if not nombre:
+                deuda_lbl.configure(text="")
+                abono_frame.pack_forget()
+                saldo_lbl.configure(text="")
+                return
+
+            try:
+                deuda = self.sale_use_case.get_pending_by_customer(nombre)
+            except Exception:
+                deuda = 0
+
+            if es_fiado:
+                if deuda > 0:
+                    total_nuevo = deuda + total
+                    deuda_lbl.configure(
+                        text=f"📌 FIADO a: {nombre}  |  Deuda: ${deuda:,.0f} + Venta: ${total:,.0f} = ${total_nuevo:,.0f}".replace(",", "."),
+                        fg="#ffd166")
+                else:
+                    deuda_lbl.configure(
+                        text=f"📌 FIADO a: {nombre}  |  Total: ${total:,.0f}".replace(",", "."),
+                        fg="#ffd166")
+            else:
+                if deuda > 0:
+                    deuda_lbl.configure(
+                        text=f"⚠️ {nombre} debe ${deuda:,.0f} de fiados anteriores (esta venta es aparte).".replace(",", "."),
+                        fg="#ffd166")
+                else:
+                    deuda_lbl.configure(
+                        text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
+
+            if deuda > 0 or es_fiado:
+                abono_frame.pack(pady=4)
+            else:
+                abono_frame.pack_forget()
+                abono_var.set(False)
+                abono_monto_var.set("")
+                saldo_lbl.configure(text="")
+                return
+
+            try:
+                monto = 0.0
+                if abono_var.get():
+                    try:
+                        monto = float(abono_monto_var.get()
+                                      .replace("$", "").replace(".", "").replace(",", ".") or 0)
+                    except ValueError:
+                        monto = 0.0
+                    if monto > deuda:
+                        monto = deuda
+
+                if es_fiado:
+                    total_acum = deuda + total
+                    saldo = max(0, total_acum - monto)
+                    if abono_var.get() and monto > 0:
+                        saldo_lbl.configure(
+                            text=f"💵 Nueva deuda después del abono: ${saldo:,.0f}".replace(",", "."))
+                    else:
+                        saldo_lbl.configure(
+                            text=f"💵 Nueva deuda total: ${total_acum:,.0f}".replace(",", "."))
+                else:
+                    if abono_var.get() and monto > 0:
+                        saldo = max(0, deuda - monto)
+                        saldo_lbl.configure(
+                            text=f"💵 Saldo de la deuda anterior: ${saldo:,.0f}".replace(",", "."))
+                    else:
+                        saldo_lbl.configure(
+                            text=f"💵 Deuda anterior: ${deuda:,.0f}".replace(",", "."))
+            except Exception:
+                saldo_lbl.configure(text="")
+
+        nombre_var.trace_add("write", refresh_ui)
+        metodo_var.trace_add("write", refresh_ui)
+        abono_var.trace_add("write", refresh_ui)
+        abono_monto_var.trace_add("write", refresh_ui)
 
         show_popup_smooth(pop)
         try:
