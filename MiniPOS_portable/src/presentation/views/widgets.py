@@ -185,11 +185,29 @@ def save_business_info(db_manager, data):
             pass
 
 
-def make_business_header(parent, db_manager, on_click, bg=None):
+def get_business_display_text(db_manager):
+    """Devuelve el texto 'tipo, nombre' ya formateado."""
+    try:
+        info = get_business_info(db_manager)
+        tipo = (info.get("type") or "").strip()
+        nombre = (info.get("name") or "").strip()
+        if tipo and nombre:
+            return f"{tipo}, {nombre}"
+        if nombre:
+            return nombre
+        if tipo:
+            return tipo
+        return ""
+    except Exception:
+        return ""
+
+
+def make_inline_business_header(parent, db_manager, bg=None):
     """
-    Crea un header con formato: 'tipo, nombre' clickeable.
-    tipo va en gris, nombre en verde subrayado (como link).
-    Devuelve dict con widgets + función refresh().
+    Header compacto para la barra superior: 'tipo, nombre'
+    tipo en gris, nombre en verde subrayado.
+    NO es clickeable.
+    Devuelve dict con widgets + refresh().
     """
     if bg is None:
         try:
@@ -198,18 +216,13 @@ def make_business_header(parent, db_manager, on_click, bg=None):
             bg = "#1a1a1a"
 
     frame = tk.Frame(parent, bg=bg)
-
-    tipo_lbl = tk.Label(frame, text="", font=("Arial", 13), bg=bg, fg="#888888")
+    tipo_lbl = tk.Label(frame, text="", font=("Arial", 11), bg=bg, fg="#888888")
     tipo_lbl.pack(side="left")
-
-    coma_lbl = tk.Label(frame, text="", font=("Arial", 13), bg=bg, fg="#888888")
+    coma_lbl = tk.Label(frame, text="", font=("Arial", 11), bg=bg, fg="#888888")
     coma_lbl.pack(side="left")
-
-    nombre_lbl = tk.Label(frame, text="", font=("Arial", 13, "underline"),
-                          bg=bg, fg="#7dd87d", cursor="hand2")
+    nombre_lbl = tk.Label(frame, text="", font=("Arial", 11, "underline"),
+                          bg=bg, fg="#7dd87d")
     nombre_lbl.pack(side="left")
-
-    nombre_lbl.bind("<Button-1>", lambda e: on_click() if on_click else None)
 
     def refresh():
         info = get_business_info(db_manager)
@@ -230,17 +243,15 @@ def make_business_header(parent, db_manager, on_click, bg=None):
         else:
             tipo_lbl.configure(text="")
             coma_lbl.configure(text="")
-            nombre_lbl.configure(text="⚙️ Configurar negocio")
+            nombre_lbl.configure(text="")
 
     refresh()
+    return {"frame": frame, "refresh": refresh}
 
-    return {
-        "frame": frame,
-        "tipo_lbl": tipo_lbl,
-        "coma_lbl": coma_lbl,
-        "nombre_lbl": nombre_lbl,
-        "refresh": refresh,
-    }
+
+# Alias de compatibilidad: por si algún archivo viejo aún llama a make_business_header
+def make_business_header(parent, db_manager, on_click=None, bg=None):
+    return make_inline_business_header(parent, db_manager, bg=bg)
 
 
 # =========================================================
