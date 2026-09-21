@@ -3,7 +3,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry, MD
+    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip
 )
 
 
@@ -14,6 +14,7 @@ class PaymentView(ttk.Frame):
         self.sale_use_case = sale_use_case
         self.get_theme = get_theme_func
         self.cart = []
+        self.tooltip = None
         self.create_widgets()
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
@@ -31,7 +32,6 @@ class PaymentView(ttk.Frame):
             pass
         self.after(700, self._keep_scanner_focused)
 
-    # ================= UI =================
     def create_widgets(self):
         top = ttk.Frame(self, bootstyle="dark")
         top.pack(padx=10, pady=(15, 5), fill="x")
@@ -74,6 +74,9 @@ class PaymentView(ttk.Frame):
             self.tree.column(c, width=w, anchor=a)
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Button-3>", self._cart_context_menu)
+
+        # ✅ Tooltip para nombres largos en el carrito
+        self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
         bottom = ttk.Frame(self, bootstyle="dark")
         bottom.pack(fill="x", padx=10, pady=10)
@@ -305,7 +308,6 @@ class PaymentView(ttk.Frame):
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 12)).pack(pady=5)
 
-        # ✅ Etiqueta dinámica para mostrar deuda existente
         deuda_lbl = ttk.Label(pop, text="", font=("Arial", 11, "bold"),
                               foreground="#ffd166")
         deuda_lbl.pack(pady=5)
