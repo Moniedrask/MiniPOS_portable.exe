@@ -1,10 +1,9 @@
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
-from ttkbootstrap.dialogs import Messagebox
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry
+    get_menu_font, AutoCompleteEntry, MD
 )
 
 
@@ -22,6 +21,9 @@ class InventoryView(ttk.Frame):
         self.after(300, lambda: self.scan_entry.focus_set())
         self._keep_scanner_focused()
 
+    def _is_dark(self):
+        return self.get_theme() == 'darkly'
+
     def _keep_scanner_focused(self):
         try:
             fw = self.focus_get()
@@ -37,7 +39,8 @@ class InventoryView(ttk.Frame):
         ttk.Label(scan_frame, text="📷 Escanear código:",
                   font=("Arial", 11, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
-        self.scan_entry = ttk.Entry(scan_frame, textvariable=self.scan_var, width=35, font=("Arial", 11))
+        self.scan_entry = ttk.Entry(scan_frame, textvariable=self.scan_var,
+                                    width=35, font=("Arial", 11))
         self.scan_entry.pack(side="left", padx=5)
         self.scan_entry.bind("<Return>", self.lookup_barcode)
         ttk.Button(scan_frame, text="🔍 Buscar Código",
@@ -55,8 +58,7 @@ class InventoryView(ttk.Frame):
             values_getter=self._get_product_labels,
             on_select=self._on_search_select,
             width=40,
-            font=("Arial", 11)
-        )
+            font=("Arial", 11))
         self.search_entry.configure(textvariable=self.search_var)
         self.search_entry.pack(side="left", padx=5)
         self.search_entry.bind('<KeyRelease>', self._on_search_key, add='+')
@@ -101,7 +103,6 @@ class InventoryView(ttk.Frame):
         return vals
 
     def _on_search_key(self, event=None):
-        # AutoCompleteEntry ya maneja el popup, aquí solo filtramos la tabla
         self.filter_products()
 
     def _on_search_select(self, value):
@@ -150,7 +151,6 @@ class InventoryView(ttk.Frame):
         for p in products:
             self._insert_product_row(p)
 
-    # ============ DATOS ============
     def load_products(self):
         self.filtered_products = self.product_use_case.list_products()
         self._render_products(self.filtered_products)
@@ -165,8 +165,7 @@ class InventoryView(ttk.Frame):
         else:
             self.filtered_products = [
                 p for p in prods
-                if q in (p.name or "").lower() or q in str(p.barcode or "").lower()
-            ]
+                if q in (p.name or "").lower() or q in str(p.barcode or "").lower()]
         self._render_products(self.filtered_products)
 
     def _insert_product_row(self, p):
@@ -242,19 +241,19 @@ class InventoryView(ttk.Frame):
         ttk.Button(bf, text="🗑",
                    command=lambda: [popup.destroy(), self.confirm_delete(sel[0])],
                    bootstyle="danger", width=3).pack(side="left", padx=15)
-        show_popup_smooth(popup, self.get_theme() == 'darkly')
+        show_popup_smooth(popup, self._is_dark())
 
     def confirm_delete(self, item):
         vals = self.tree.item(item, 'values')
         pid, name = vals[0], vals[1]
-        if Messagebox.yesno(f"⚠️ ¿ELIMINAR '{name}'?", "Confirmar", parent=self) != "Yes":
+        if MD.yesno(f"⚠️ ¿ELIMINAR '{name}'?", "Confirmar", parent=self) != "Yes":
             return
-        if Messagebox.yesno(f"🚨 ÚLTIMA ADVERTENCIA\n\n¿Realmente eliminar '{name}'?",
-                            "Confirmación final", parent=self) != "Yes":
+        if MD.yesno(f"🚨 ÚLTIMA ADVERTENCIA\n\n¿Realmente eliminar '{name}'?",
+                    "Confirmación final", parent=self) != "Yes":
             return
         self.product_use_case.delete_product(pid)
         self.load_products()
-        Messagebox.show_info(f"'{name}' eliminado.", "Listo", parent=self)
+        MD.show_info(f"'{name}' eliminado.", "Listo", parent=self)
         self.scan_entry.focus_set()
 
     def open_edit_from_item(self, item):
@@ -270,13 +269,13 @@ class InventoryView(ttk.Frame):
             unit_type = "peso"
         elif unit in ("Lt", "ml"):
             unit_type = "volumen"
-        self.open_product_form("Editar Producto", pid, name, barcode, price, stock, unit_type, unit)
+        self.open_product_form("Editar Producto", pid, name, barcode, price,
+                               stock, unit_type, unit)
 
     def add_product_popup(self, barcode_prefill="", auto_select=False):
-        self.open_product_form("Agregar Producto", None, "", barcode_prefill, 0, 0,
-                               "unidad", "unidad", auto_select)
+        self.open_product_form("Agregar Producto", None, "", barcode_prefill,
+                               0, 0, "unidad", "unidad", auto_select)
 
-    # ============ FORMULARIO AGREGAR/EDITAR ============
     def open_product_form(self, title, product_id, name, barcode, price, stock,
                           unit_type, unit, auto_select=False):
         popup = Toplevel(self)
@@ -336,7 +335,7 @@ class InventoryView(ttk.Frame):
             n = name_entry.get().strip()
             b = barcode_entry.get().strip()
             if not n:
-                Messagebox.show_error("El nombre es obligatorio", "Error", parent=popup)
+                MD.show_error("El nombre es obligatorio", "Error", parent=popup)
                 return
             try:
                 pl = price_entry.get().replace("$", "").replace(".", "").replace(",", ".").strip()
@@ -344,7 +343,7 @@ class InventoryView(ttk.Frame):
                 ss = stock_entry.get().strip().replace(",", ".")
                 s = float(ss) if ss else 0.0
             except ValueError:
-                Messagebox.show_error("Precio/Stock inválidos", "Error", parent=popup)
+                MD.show_error("Precio/Stock inválidos", "Error", parent=popup)
                 return
             if product_id:
                 self.product_use_case.update_product(product_id, n, b, p, s,
@@ -365,7 +364,7 @@ class InventoryView(ttk.Frame):
 
         ttk.Button(popup, text="Guardar", command=save,
                    style="DarkGreen.TButton").pack(pady=20)
-        show_popup_smooth(popup, self.get_theme() == 'darkly')
+        show_popup_smooth(popup, self._is_dark())
 
     def _refresh_unit_options(self, unit_var, combo, type_var):
         t = type_var.get()
@@ -400,8 +399,7 @@ class InventoryView(ttk.Frame):
                     self.tree.see(it)
                     enc_item = it
                     break
-            # ✅ Ofrecer editar
-            r = Messagebox.yesno(
+            r = MD.yesno(
                 f"✅ Producto encontrado:\n\n"
                 f"Nombre: {enc.name}\n"
                 f"Precio: ${enc.price:,.0f}\n"
@@ -411,8 +409,8 @@ class InventoryView(ttk.Frame):
             if r == "Yes" and enc_item:
                 self.open_edit_from_item(enc_item)
         else:
-            r = Messagebox.yesno(f"⚠️ '{codigo}' NO está registrado.\n\n¿Agregarlo?",
-                                 "No encontrado", parent=self)
+            r = MD.yesno(f"⚠️ '{codigo}' NO está registrado.\n\n¿Agregarlo?",
+                         "No encontrado", parent=self)
             if r == "Yes":
                 self.add_product_popup(barcode_prefill=codigo, auto_select=True)
         self.scan_var.set("")
