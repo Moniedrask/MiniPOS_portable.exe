@@ -224,20 +224,20 @@ class MainView(tk.Tk):
         e = ttk.Entry(pop, textvariable=v, show="•", width=25,
                       font=("Arial", 14), justify="center")
         e.pack(pady=10)
-        e.focus_set()
         resultado = {"ok": False}
 
-        def verificar():
+        def verificar(ev=None):
             if v.get() == pwd:
                 resultado["ok"] = True
                 pop.destroy()
             else:
                 MD.show_error("Contraseña incorrecta", "Error", parent=pop)
                 v.set("")
+            return "break"
 
         ttk.Button(pop, text="Ingresar", command=verificar,
                    style="DarkGreen.TButton").pack(pady=10)
-        e.bind("<Return>", lambda e: verificar())
+        e.bind("<Return>", verificar)
 
         show_popup_smooth(pop)
         try:
@@ -246,7 +246,14 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
-        pop.after(100, lambda: e.focus_set())
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e.focus_set()
+            except Exception:
+                pass
+        pop.after(50, set_focus)
+        pop.after(250, set_focus)
 
         self.wait_window(pop)
         if resultado["ok"]:
@@ -278,7 +285,6 @@ class MainView(tk.Tk):
         tk.Label(pop, text="Contraseña actual:", bg=bg, fg=fg).pack()
         e1 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e1.pack(pady=5)
-        e1.focus_set()
         tk.Label(pop, text="Nueva contraseña:", bg=bg, fg=fg).pack()
         e2 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e2.pack(pady=5)
@@ -289,35 +295,46 @@ class MainView(tk.Tk):
         ttk.Checkbutton(pop, text="Quitar contraseña (dejar vacío)",
                         variable=vaciar).pack(pady=8)
 
-        def aplicar():
+        def aplicar(ev=None):
             if vaciar.get():
                 self.db_manager.set_setting("startup_password", "")
                 MD.show_info("Contraseña eliminada.", "Listo", parent=pop)
                 pop.destroy()
-                return
+                return "break"
             if e1.get() != actual:
                 MD.show_error("La contraseña actual no coincide.", "Error", parent=pop)
-                return
+                return "break"
             if len(e2.get()) < 4:
                 MD.show_error("La nueva contraseña debe tener al menos 4 caracteres.",
                               "Error", parent=pop)
-                return
+                return "break"
             if e2.get() != e3.get():
                 MD.show_error("Las contraseñas nuevas no coinciden.", "Error", parent=pop)
-                return
+                return "break"
             self.db_manager.set_setting("startup_password", e2.get())
             MD.show_info("Contraseña cambiada.", "Listo", parent=pop)
             pop.destroy()
+            return "break"
 
         ttk.Button(pop, text="Guardar", command=aplicar,
                    style="DarkGreen.TButton").pack(pady=12)
-        pop.bind("<Return>", lambda e: aplicar())
+        e1.bind("<Return>", aplicar)
+        e2.bind("<Return>", aplicar)
+        e3.bind("<Return>", aplicar)
         show_popup_smooth(pop)
         try:
             pop.grab_set()
             pop.focus_force()
         except Exception:
             pass
+
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e1.focus_set()
+            except Exception:
+                pass
+        pop.after(50, set_focus)
 
     def _setup_password_first_time(self):
         pop = tk.Toplevel(self)
@@ -335,31 +352,40 @@ class MainView(tk.Tk):
                  bg=bg, fg=fg).pack()
         e1 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e1.pack(pady=5)
-        e1.focus_set()
         tk.Label(pop, text="Confirmar:", bg=bg, fg=fg).pack()
         e2 = ttk.Entry(pop, show="•", width=25, font=("Arial", 12))
         e2.pack(pady=5)
 
-        def guardar():
+        def guardar(ev=None):
             if len(e1.get()) < 4:
                 MD.show_error("Mínimo 4 caracteres.", "Error", parent=pop)
-                return
+                return "break"
             if e1.get() != e2.get():
                 MD.show_error("No coinciden.", "Error", parent=pop)
-                return
+                return "break"
             self.db_manager.set_setting("startup_password", e1.get())
             MD.show_info("Contraseña activada. Se pedirá al iniciar.", "Listo", parent=pop)
             pop.destroy()
+            return "break"
 
         ttk.Button(pop, text="Guardar", command=guardar,
                    style="DarkGreen.TButton").pack(pady=12)
-        pop.bind("<Return>", lambda e: guardar())
+        e1.bind("<Return>", guardar)
+        e2.bind("<Return>", guardar)
         show_popup_smooth(pop)
         try:
             pop.grab_set()
             pop.focus_force()
         except Exception:
             pass
+
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e1.focus_set()
+            except Exception:
+                pass
+        pop.after(50, set_focus)
 
     # =========== TAMAÑO DE FUENTE ===========
     def _apply_font_size(self):
@@ -569,7 +595,6 @@ class MainView(tk.Tk):
                             value=val, bootstyle="info",
                             command=lambda: recargar()).pack(side="left", padx=8)
 
-        # ✅ Treeview con columna de selección
         tree_frame = ttk.Frame(win, bootstyle="dark")
         tree_frame.pack(fill="both", expand=True, padx=15, pady=10)
 
@@ -597,51 +622,74 @@ class MainView(tk.Tk):
                 pass
         tree.bind("<MouseWheel>", _on_mousewheel)
 
-        grupos_map = {}      # iid -> group
-        marcados = set()     # iid de los marcados
+        grupos_map = {}
+        marcados = set()
 
         def actualizar_heading_sel():
-            """Actualiza el encabezado de la columna Sel."""
-            if not grupos_map:
-                texto = "☐"
-            elif len(marcados) == 0:
+            if not grupos_map or len(marcados) == 0:
                 texto = "☐"
             elif len(marcados) >= len(grupos_map):
                 texto = "☑"
             else:
                 texto = "◪"
-            tree.heading("Sel", text=texto)
+            try:
+                tree.heading("Sel", text=texto)
+            except Exception:
+                pass
 
         def toggle_mark(iid):
+            if not iid or iid not in grupos_map:
+                return
             if iid in marcados:
                 marcados.discard(iid)
-                tree.set(iid, "Sel", "☐")
+                try:
+                    tree.set(iid, "Sel", "☐")
+                except Exception:
+                    pass
             else:
                 marcados.add(iid)
-                tree.set(iid, "Sel", "☑")
+                try:
+                    tree.set(iid, "Sel", "☑")
+                except Exception:
+                    pass
             actualizar_heading_sel()
 
         def toggle_all():
+            if not grupos_map:
+                return
             if len(marcados) >= len(grupos_map):
                 marcados.clear()
                 for iid in grupos_map:
-                    tree.set(iid, "Sel", "☐")
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
             else:
                 marcados.clear()
                 for iid in grupos_map:
                     marcados.add(iid)
-                    tree.set(iid, "Sel", "☑")
+                    try:
+                        tree.set(iid, "Sel", "☑")
+                    except Exception:
+                        pass
             actualizar_heading_sel()
 
-        def click_heading_sel():
-            toggle_all()
+        def desmarcar_todos():
+            marcados.clear()
+            for iid in grupos_map:
+                try:
+                    tree.set(iid, "Sel", "☐")
+                except Exception:
+                    pass
+            actualizar_heading_sel()
 
-        tree.heading("Sel", text="☐", command=click_heading_sel)
+        tree.heading("Sel", text="☐", command=toggle_all)
 
         def restaurar_foco():
             try:
-                win.lift()
-                win.focus_force()
+                if win.winfo_exists():
+                    win.lift()
+                    win.focus_force()
             except Exception:
                 pass
 
@@ -725,52 +773,21 @@ class MainView(tk.Tk):
 
         tree.bind("<Double-1>", ver_detalle)
 
-        # ✅ Clic en la columna Sel (o cualquier celda) para marcar
         def on_click(event):
-            region = tree.identify("region", event.x, event.y)
-            if region != "cell":
-                return
-            col = tree.identify_column(event.x)
-            row = tree.identify_row(event.y)
-            if not row:
-                return
-            if col == "#1":
-                toggle_mark(row)
+            try:
+                region = tree.identify("region", event.x, event.y)
+                if region != "cell":
+                    return
+                col = tree.identify_column(event.x)
+                row = tree.identify_row(event.y)
+                if not row:
+                    return
+                if col == "#1":
+                    toggle_mark(row)
+            except Exception:
+                pass
 
         tree.bind("<Button-1>", on_click, add="+")
-
-        # ✅ Menú contextual (clic derecho)
-        def on_right_click(event):
-            row = tree.identify_row(event.y)
-            if row:
-                tree.selection_set(row)
-                tree.focus(row)
-            style = ttk.Style()
-            m = tk.Menu(win, tearoff=0,
-                        bg=style.colors.bg, fg=style.colors.fg,
-                        activebackground=style.colors.selectbg,
-                        activeforeground=style.colors.selectfg,
-                        bd=1, relief="solid",
-                        font=get_menu_font())
-            m.add_command(label="👁️  Ver detalle", command=ver_detalle)
-            m.add_separator()
-            if row:
-                marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
-                m.add_command(label=marca, command=lambda: toggle_mark(row))
-            m.add_command(label="☑ Marcar todos", command=toggle_all)
-            m.add_command(label="☐ Desmarcar todos",
-                          command=lambda: [marcados.clear(),
-                                           [tree.set(i, "Sel", "☐") for i in grupos_map],
-                                           actualizar_heading_sel()])
-            m.add_separator()
-            m.add_command(label=f"🗑️  Eliminar marcados ({len(marcados)})",
-                          command=eliminar_marcados)
-            try:
-                m.tk_popup(event.x_root, event.y_root)
-            finally:
-                m.grab_release()
-
-        tree.bind("<Button-3>", on_right_click)
 
         def eliminar_marcados():
             if not marcados:
@@ -805,7 +822,6 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
-        # ✅ Ctrl+F12: elimina la venta más reciente del primer marcado/seleccionado
         def on_ctrl_f12(event=None):
             iid = None
             if marcados:
@@ -842,9 +858,40 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
-        # ✅ Shift+F12: elimina todos los marcados
         def on_shift_f12(event=None):
             eliminar_marcados()
+
+        def on_right_click(event):
+            try:
+                row = tree.identify_row(event.y)
+                if row:
+                    tree.selection_set(row)
+                    tree.focus(row)
+                style = ttk.Style()
+                m = tk.Menu(win, tearoff=0,
+                            bg=style.colors.bg, fg=style.colors.fg,
+                            activebackground=style.colors.selectbg,
+                            activeforeground=style.colors.selectfg,
+                            bd=1, relief="solid",
+                            font=get_menu_font())
+                m.add_command(label="👁️  Ver detalle", command=ver_detalle)
+                m.add_separator()
+                if row:
+                    marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
+                    m.add_command(label=marca, command=lambda r=row: toggle_mark(r))
+                m.add_command(label="☑ Marcar todos", command=toggle_all)
+                m.add_command(label="☐ Desmarcar todos", command=desmarcar_todos)
+                m.add_separator()
+                m.add_command(label=f"🗑️  Eliminar marcados ({len(marcados)})",
+                              command=eliminar_marcados)
+                try:
+                    m.tk_popup(event.x_root, event.y_root)
+                finally:
+                    m.grab_release()
+            except Exception:
+                pass
+
+        tree.bind("<Button-3>", on_right_click)
 
         win.bind("<Control-F12>", on_ctrl_f12)
         win.bind("<Shift-F12>", on_shift_f12)
@@ -869,10 +916,13 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
+    # =========================================================
+    # PEDIR CONTRASEÑA 1234 (CORREGIDO - sin doble binding)
+    # =========================================================
     def _ask_password_1234(self, parent):
         pop = tk.Toplevel(parent)
         pop.title("Contraseña requerida")
-        pop.geometry("340x200")
+        pop.geometry("340x220")
         pop.transient(parent)
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
@@ -880,28 +930,41 @@ class MainView(tk.Tk):
         fg = self.style.colors.fg
 
         tk.Label(pop, text="🔒 Contraseña de administrador:",
-                 font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(pady=20)
+                 font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(pady=15)
+
         v = tk.StringVar()
         e = ttk.Entry(pop, textvariable=v, show="•", width=20,
                       font=("Arial", 14), justify="center")
         e.pack(pady=5)
         ok = {"v": False}
 
-        def ver():
+        def ver(ev=None):
+            # ✅ CORRECCIÓN: retornar "break" para no propagar el evento al popup
             if v.get() == "1234":
                 ok["v"] = True
                 pop.destroy()
             else:
                 MD.show_error("Contraseña incorrecta", "Error", parent=pop)
                 v.set("")
+                try:
+                    e.focus_set()
+                    e.select_range(0, tk.END)
+                except Exception:
+                    pass
+            return "break"
 
-        btn = ttk.Button(pop, text="Aceptar", command=ver,
-                         style="DarkGreen.TButton")
-        btn.pack(pady=15)
+        def cancelar(ev=None):
+            pop.destroy()
+            return "break"
 
-        e.bind("<Return>", lambda ev: ver())
-        pop.bind("<Return>", lambda ev: ver())
-        pop.bind("<Escape>", lambda ev: pop.destroy())
+        # ✅ SOLO un binding a Return en el Entry
+        e.bind("<Return>", ver)
+        e.bind("<KP_Enter>", ver)
+        # ✅ Escape para cancelar
+        pop.bind("<Escape>", cancelar)
+
+        ttk.Button(pop, text="Aceptar", command=ver,
+                   style="DarkGreen.TButton").pack(pady=15)
 
         show_popup_smooth(pop)
         try:
@@ -910,11 +973,11 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
-        # ✅ Forzar foco al Entry
         def set_focus():
             try:
                 if pop.winfo_exists():
                     e.focus_set()
+                    e.select_range(0, tk.END)
             except Exception:
                 pass
         pop.after(50, set_focus)
@@ -974,43 +1037,70 @@ class MainView(tk.Tk):
         marcados = set()
 
         def actualizar_heading_sel():
-            if not grupos_map:
-                texto = "☐"
-            elif len(marcados) == 0:
+            if not grupos_map or len(marcados) == 0:
                 texto = "☐"
             elif len(marcados) >= len(grupos_map):
                 texto = "☑"
             else:
                 texto = "◪"
-            tree.heading("Sel", text=texto)
+            try:
+                tree.heading("Sel", text=texto)
+            except Exception:
+                pass
 
         def toggle_mark(iid):
+            if not iid or iid not in grupos_map:
+                return
             if iid in marcados:
                 marcados.discard(iid)
-                tree.set(iid, "Sel", "☐")
+                try:
+                    tree.set(iid, "Sel", "☐")
+                except Exception:
+                    pass
             else:
                 marcados.add(iid)
-                tree.set(iid, "Sel", "☑")
+                try:
+                    tree.set(iid, "Sel", "☑")
+                except Exception:
+                    pass
             actualizar_heading_sel()
 
         def toggle_all():
+            if not grupos_map:
+                return
             if len(marcados) >= len(grupos_map):
                 marcados.clear()
                 for iid in grupos_map:
-                    tree.set(iid, "Sel", "☐")
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
             else:
                 marcados.clear()
                 for iid in grupos_map:
                     marcados.add(iid)
-                    tree.set(iid, "Sel", "☑")
+                    try:
+                        tree.set(iid, "Sel", "☑")
+                    except Exception:
+                        pass
+            actualizar_heading_sel()
+
+        def desmarcar_todos():
+            marcados.clear()
+            for iid in grupos_map:
+                try:
+                    tree.set(iid, "Sel", "☐")
+                except Exception:
+                    pass
             actualizar_heading_sel()
 
         tree.heading("Sel", text="☐", command=toggle_all)
 
         def restaurar_foco():
             try:
-                win.lift()
-                win.focus_force()
+                if win.winfo_exists():
+                    win.lift()
+                    win.focus_force()
             except Exception:
                 pass
 
@@ -1094,15 +1184,18 @@ class MainView(tk.Tk):
         tree.bind("<Double-1>", ver_detalle)
 
         def on_click(event):
-            region = tree.identify("region", event.x, event.y)
-            if region != "cell":
-                return
-            col = tree.identify_column(event.x)
-            row = tree.identify_row(event.y)
-            if not row:
-                return
-            if col == "#1":
-                toggle_mark(row)
+            try:
+                region = tree.identify("region", event.x, event.y)
+                if region != "cell":
+                    return
+                col = tree.identify_column(event.x)
+                row = tree.identify_row(event.y)
+                if not row:
+                    return
+                if col == "#1":
+                    toggle_mark(row)
+            except Exception:
+                pass
 
         tree.bind("<Button-1>", on_click, add="+")
 
@@ -1188,40 +1281,6 @@ class MainView(tk.Tk):
                 self.inventory_view.load_products()
             restaurar_foco()
 
-        def on_right_click(event):
-            row = tree.identify_row(event.y)
-            if row:
-                tree.selection_set(row)
-                tree.focus(row)
-            style = ttk.Style()
-            m = tk.Menu(win, tearoff=0,
-                        bg=style.colors.bg, fg=style.colors.fg,
-                        activebackground=style.colors.selectbg,
-                        activeforeground=style.colors.selectfg,
-                        bd=1, relief="solid",
-                        font=get_menu_font())
-            m.add_command(label="👁️  Ver detalle", command=ver_detalle)
-            m.add_command(label="💵 Abonar (más antigua)", command=abonar)
-            m.add_command(label="✅ Marcar como pagado", command=marcar_pagado)
-            m.add_separator()
-            if row:
-                marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
-                m.add_command(label=marca, command=lambda: toggle_mark(row))
-            m.add_command(label="☑ Marcar todos", command=toggle_all)
-            m.add_command(label="☐ Desmarcar todos",
-                          command=lambda: [marcados.clear(),
-                                           [tree.set(i, "Sel", "☐") for i in grupos_map],
-                                           actualizar_heading_sel()])
-            m.add_separator()
-            m.add_command(label=f"🗑️  Eliminar marcados ({len(marcados)})",
-                          command=eliminar_marcados)
-            try:
-                m.tk_popup(event.x_root, event.y_root)
-            finally:
-                m.grab_release()
-
-        tree.bind("<Button-3>", on_right_click)
-
         def on_ctrl_f12(event=None):
             iid = None
             if marcados:
@@ -1261,6 +1320,40 @@ class MainView(tk.Tk):
         def on_shift_f12(event=None):
             eliminar_marcados()
 
+        def on_right_click(event):
+            try:
+                row = tree.identify_row(event.y)
+                if row:
+                    tree.selection_set(row)
+                    tree.focus(row)
+                style = ttk.Style()
+                m = tk.Menu(win, tearoff=0,
+                            bg=style.colors.bg, fg=style.colors.fg,
+                            activebackground=style.colors.selectbg,
+                            activeforeground=style.colors.selectfg,
+                            bd=1, relief="solid",
+                            font=get_menu_font())
+                m.add_command(label="👁️  Ver detalle", command=ver_detalle)
+                m.add_command(label="💵 Abonar (más antigua)", command=abonar)
+                m.add_command(label="✅ Marcar como pagado", command=marcar_pagado)
+                m.add_separator()
+                if row:
+                    marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
+                    m.add_command(label=marca, command=lambda r=row: toggle_mark(r))
+                m.add_command(label="☑ Marcar todos", command=toggle_all)
+                m.add_command(label="☐ Desmarcar todos", command=desmarcar_todos)
+                m.add_separator()
+                m.add_command(label=f"🗑️  Eliminar marcados ({len(marcados)})",
+                              command=eliminar_marcados)
+                try:
+                    m.tk_popup(event.x_root, event.y_root)
+                finally:
+                    m.grab_release()
+            except Exception:
+                pass
+
+        tree.bind("<Button-3>", on_right_click)
+
         win.bind("<Control-F12>", on_ctrl_f12)
         win.bind("<Shift-F12>", on_shift_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
@@ -1288,10 +1381,13 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
+    # =========================================================
+    # ABONAR (CORREGIDO - sin doble binding)
+    # =========================================================
     def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
         pop.title(f"Abonar a venta #{sale_id}")
-        pop.geometry("420x400")
+        pop.geometry("420x420")
         pop.transient(parent)
         pop.configure(bg=self.style.colors.bg)
         pop.withdraw()
@@ -1319,20 +1415,20 @@ class MainView(tk.Tk):
                       font=("Arial", 16), justify="center")
         e.pack(pady=5)
 
-        def aplicar():
+        def aplicar(ev=None):
             try:
                 monto = float(monto_var.get().replace("$", "").replace(".", "").replace(",", "."))
                 if monto <= 0:
                     raise ValueError
             except ValueError:
                 MD.show_error("Monto inválido", "Error", parent=pop)
-                return
+                return "break"
             if monto > pendiente + 0.01:
                 if MD.yesno(
                         f"El monto (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
                         f"¿Registrar solo ${pendiente:,.0f}?".replace(",", "."),
                         "Confirmar", parent=pop) != "Yes":
-                    return
+                    return "break"
                 monto = pendiente
             self.sale_use_case.add_payment(sale_id, monto)
             pop.destroy()
@@ -1344,10 +1440,16 @@ class MainView(tk.Tk):
                 parent.focus_force()
             except Exception:
                 pass
+            return "break"
 
-        e.bind("<Return>", lambda e: aplicar())
-        pop.bind("<Return>", lambda e: aplicar())
-        pop.bind("<Escape>", lambda e: pop.destroy())
+        def cancelar(ev=None):
+            pop.destroy()
+            return "break"
+
+        # ✅ SOLO un binding Return en el Entry
+        e.bind("<Return>", aplicar)
+        e.bind("<KP_Enter>", aplicar)
+        pop.bind("<Escape>", cancelar)
 
         bf = tk.Frame(pop, bg=bg)
         bf.pack(pady=15)
