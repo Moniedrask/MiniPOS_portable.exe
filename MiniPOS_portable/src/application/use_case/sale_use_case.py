@@ -101,6 +101,46 @@ class SaleCase:
         conn.commit()
         return True, "Abono registrado"
 
+    # ============ NUEVO: aplicar abono a todas las deudas del cliente ============
+    def apply_payment_to_customer(self, name, amount):
+        """
+        Aplica un abono a las ventas fiadas pendientes del cliente,
+        empezando por la más antigua. Devuelve (aplicado, saldo_restante).
+        """
+        if not name or amount <= 0:
+            # Calcular saldo actual sin aplicar nada
+            return 0.0, self.get_pending_by_customer(name)
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT sale_id, total, amount_paid FROM sales "
+            "WHERE is_credit = 1 AND is_paid = 0 AND customer_name = ? "
+            "ORDER BY sale_id ASC", (name,))
+        rows = cur.fetchall()
+        restante = amount
+        aplicado = 0.0
+        for r in rows:
+            if restante <= 0:
+                break
+            pendiente = r["total"] - (r["amount_paid"] or 0)
+            if pendiente <= 0:
+                continue
+            pagar = min(pendiente, restante)
+            nuevo_pagado = (r["amount_paid"] or 0) + pagar
+            is_paid = 1 if nuevo_pagado >= r["total"] - 0.01 else 0
+            cur.execute(
+                "UPDATE sales SET amount_paid = ?, is_paid = ? WHERE sale_id = ?",
+                (nuevo_pagado, is_paid, r["sale_id"]))
+            restante -= pagar
+            aplicado += pagar
+        conn.commit()
+        # Calcular saldo restante del cliente
+        cur.execute(
+            "SELECT COALESCE(SUM(total - amount_paid), 0) t FROM sales "
+            "WHERE is_credit = 1 AND is_paid = 0 AND customer_name = ?", (name,))
+        saldo = cur.fetchone()["t"]
+        return aplicado, saldo
+
     def delete_sale(self, sale_id):
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -114,9 +154,7 @@ class SaleCase:
         cur.execute("DELETE FROM sales WHERE sale_id = ?", (sale_id,))
         conn.commit()
 
-    # ============ NUEVO: pendiente por cliente ============
     def get_pending_by_customer(self, name):
-        """Devuelve el total pendiente de un cliente."""
         if not name:
             return 0.0
         cur = self.db.get_connection().cursor()
@@ -125,14 +163,7 @@ class SaleCase:
             "WHERE is_credit = 1 AND is_paid = 0 AND customer_name = ?", (name,))
         return cur.fetchone()["t"]
 
-    # ============ NUEVO: agrupar ventas por cliente ============
     def group_sales_by_customer(self, sales):
-        """
-        Agrupa una lista de ventas por nombre de cliente.
-        Devuelve: lista de dicts con:
-            customer_name, count, total, paid, pending, sales (lista original)
-        Los clientes sin nombre se agrupan aparte como "(sin nombre)".
-        """
         grupos = {}
         for s in sales:
             nombre = s.customer_name.strip() if s.customer_name else "(sin nombre)"
@@ -151,7 +182,6 @@ class SaleCase:
             g["paid"] += (s.amount_paid or 0)
             g["pending"] += max(0.0, s.total - (s.amount_paid or 0))
             g["sales"].append(s)
-        # Ordenar por pendiente descendente y luego por nombre
         return sorted(grupos.values(),
                       key=lambda x: (-x["pending"], x["customer_name"].lower()))
 
