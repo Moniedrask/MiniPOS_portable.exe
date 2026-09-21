@@ -62,7 +62,10 @@ def center_window(win):
 
 
 def show_popup_smooth(popup, is_dark=True):
-    """Muestra un popup SIN robar el grab. Solo centra, aplica tema y enfoca."""
+    """
+    Muestra un popup de forma robusta: se asegura de que aparezca al frente,
+    forzando topmost temporal y aplicando modo oscuro a la barra de título.
+    """
     _inc_popup()
 
     def on_destroy(e):
@@ -74,25 +77,58 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
+    # Asegurar opacidad total
+    try:
+        popup.attributes('-alpha', 1.0)
+    except Exception:
+        pass
+
+    popup.update_idletasks()
+    center_window(popup)
+
+    # Mostrar la ventana
+    try:
+        popup.deiconify()
+    except Exception:
+        pass
+    try:
+        popup.update()
+    except Exception:
+        pass
+
+    # Fondo correcto
     try:
         style = ttk.Style()
         popup.configure(bg=style.colors.bg)
     except Exception:
         pass
 
-    center_window(popup)
-    popup.deiconify()
-    popup.update_idletasks()
+    # Aplicar modo oscuro a la barra de título
     force_dark_titlebar(popup)
 
+    # Traer al frente con topmost temporal
     try:
         popup.lift()
+        popup.attributes('-topmost', True)
         popup.focus_force()
     except Exception:
         pass
 
-    popup.after(80, lambda: force_dark_titlebar(popup))
-    popup.after(160, lambda: force_dark_titlebar(popup))
+    # Quitar topmost tras 300ms (para no quedar bloqueado arriba siempre)
+    def quitar_topmost():
+        try:
+            if popup.winfo_exists():
+                popup.attributes('-topmost', False)
+                popup.lift()
+                popup.focus_force()
+        except Exception:
+            pass
+
+    popup.after(300, quitar_topmost)
+
+    # Reaplicar tema (Windows tarda en procesar el atributo)
+    popup.after(80, lambda: force_dark_titlebar(popup) if popup.winfo_exists() else None)
+    popup.after(160, lambda: force_dark_titlebar(popup) if popup.winfo_exists() else None)
 
 
 def get_menu_font():
@@ -157,12 +193,13 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
 
+    show_popup_smooth(pop)
+
     try:
         pop.grab_set()
+        pop.focus_force()
     except Exception:
         pass
-
-    show_popup_smooth(pop)
 
     try:
         root.wait_window(pop)
