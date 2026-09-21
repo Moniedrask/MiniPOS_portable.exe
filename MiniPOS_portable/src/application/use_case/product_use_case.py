@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from domain.models.product import Product
 from infrastucture.db.db_manager import DBManager
@@ -51,3 +52,42 @@ class ProductCase:
         cur = conn.cursor()
         cur.execute("DELETE FROM products WHERE product_id = ?", (product_id,))
         conn.commit()
+
+    # ============ BORRADOR DE PRODUCTO ============
+    def save_product_draft(self, data):
+        """Guarda el formulario de producto a medio llenar."""
+        try:
+            conn = self.db.get_connection()
+            cur = conn.cursor()
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            payload = json.dumps(data, ensure_ascii=False)
+            cur.execute(
+                "INSERT OR REPLACE INTO product_draft (id, data, updated_at) VALUES (1, ?, ?)",
+                (payload, now))
+            conn.commit()
+        except Exception:
+            pass
+
+    def load_product_draft(self):
+        """Devuelve (dict_data, fecha) o (None, None)."""
+        try:
+            cur = self.db.get_connection().cursor()
+            cur.execute("SELECT data, updated_at FROM product_draft WHERE id = 1")
+            row = cur.fetchone()
+            if not row:
+                return None, None
+            data = json.loads(row["data"])
+            if not data:
+                return None, None
+            return data, row["updated_at"]
+        except Exception:
+            return None, None
+
+    def clear_product_draft(self):
+        try:
+            conn = self.db.get_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM product_draft WHERE id = 1")
+            conn.commit()
+        except Exception:
+            pass
