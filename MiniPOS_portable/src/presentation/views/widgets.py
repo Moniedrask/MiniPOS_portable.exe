@@ -62,10 +62,6 @@ def center_window(win):
 
 
 def show_popup_smooth(popup, is_dark=True):
-    """
-    Muestra un popup de forma robusta: se asegura de que aparezca al frente,
-    forzando topmost temporal y aplicando modo oscuro a la barra de título.
-    """
     _inc_popup()
 
     def on_destroy(e):
@@ -77,7 +73,6 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    # Asegurar opacidad total
     try:
         popup.attributes('-alpha', 1.0)
     except Exception:
@@ -86,7 +81,6 @@ def show_popup_smooth(popup, is_dark=True):
     popup.update_idletasks()
     center_window(popup)
 
-    # Mostrar la ventana
     try:
         popup.deiconify()
     except Exception:
@@ -96,17 +90,14 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    # Fondo correcto
     try:
         style = ttk.Style()
         popup.configure(bg=style.colors.bg)
     except Exception:
         pass
 
-    # Aplicar modo oscuro a la barra de título
     force_dark_titlebar(popup)
 
-    # Traer al frente con topmost temporal
     try:
         popup.lift()
         popup.attributes('-topmost', True)
@@ -114,7 +105,6 @@ def show_popup_smooth(popup, is_dark=True):
     except Exception:
         pass
 
-    # Quitar topmost tras 300ms (para no quedar bloqueado arriba siempre)
     def quitar_topmost():
         try:
             if popup.winfo_exists():
@@ -125,8 +115,6 @@ def show_popup_smooth(popup, is_dark=True):
             pass
 
     popup.after(300, quitar_topmost)
-
-    # Reaplicar tema (Windows tarda en procesar el atributo)
     popup.after(80, lambda: force_dark_titlebar(popup) if popup.winfo_exists() else None)
     popup.after(160, lambda: force_dark_titlebar(popup) if popup.winfo_exists() else None)
 
@@ -138,6 +126,39 @@ def get_menu_font():
         return (f.cget("family"), f.cget("size"))
     except Exception:
         return ("Arial", 11)
+
+
+# =========================================================
+# TREEVIEW CON SCROLLBAR
+# =========================================================
+def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
+    """
+    Crea un Treeview con scrollbar vertical y soporte de rueda del ratón.
+    Devuelve (frame, treeview).
+    """
+    frame = ttk.Frame(parent, bootstyle=bootstyle)
+
+    sb = ttk.Scrollbar(frame, orient="vertical")
+    sb.pack(side="right", fill="y")
+
+    tree = ttk.Treeview(frame, columns=columns, show='headings',
+                        yscrollcommand=sb.set)
+    for c, t, w, a in headings:
+        tree.heading(c, text=t)
+        tree.column(c, width=w, anchor=a)
+    tree.pack(side="left", fill="both", expand=True)
+    sb.config(command=tree.yview)
+
+    # Rueda del ratón
+    def _on_mousewheel(event):
+        try:
+            tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except Exception:
+            pass
+
+    tree.bind("<MouseWheel>", _on_mousewheel)
+
+    return frame, tree
 
 
 # =========================================================
@@ -433,7 +454,7 @@ class ListboxTooltip(HoverTooltip):
 
 
 # =========================================================
-# AUTOCOMPLETADO ENTRY
+# AUTOCOMPLETADO ENTRY CON LISTBOX OSCURO + SCROLLBAR
 # =========================================================
 class AutoCompleteEntry(ttk.Entry):
     def __init__(self, parent, values_getter, on_select, width=40, font=None, **kwargs):
@@ -468,7 +489,8 @@ class AutoCompleteEntry(ttk.Entry):
             vals = self.values_getter()
         except Exception:
             vals = []
-        filtered = [v for v in vals if text in v.lower()][:15]
+        # ✅ Permitir hasta 500 sugerencias (antes 15), la scrollbar maneja el resto
+        filtered = [v for v in vals if text in v.lower()][:500]
         if not filtered:
             self._hide()
             return
@@ -484,8 +506,16 @@ class AutoCompleteEntry(ttk.Entry):
             except Exception:
                 pass
             self.popup.configure(bg=style.colors.bg)
+
+            # Contenedor interno con scrollbar
+            container = tk.Frame(self.popup, bg=style.colors.bg)
+            container.pack(fill='both', expand=True)
+
+            sb = tk.Scrollbar(container, orient="vertical")
+            sb.pack(side="right", fill="y")
+
             self.listbox = tk.Listbox(
-                self.popup,
+                container,
                 activestyle='none',
                 exportselection=False,
                 bg=style.colors.bg,
@@ -495,8 +525,19 @@ class AutoCompleteEntry(ttk.Entry):
                 font=("Arial", 11),
                 borderwidth=0,
                 relief="flat",
-                highlightthickness=0)
-            self.listbox.pack(fill='both', expand=True)
+                highlightthickness=0,
+                yscrollcommand=sb.set)
+            self.listbox.pack(side="left", fill='both', expand=True)
+            sb.config(command=self.listbox.yview)
+
+            # ✅ Rueda del ratón en el listbox
+            def _on_mousewheel(event):
+                try:
+                    self.listbox.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                except Exception:
+                    pass
+            self.listbox.bind("<MouseWheel>", _on_mousewheel)
+
             self.listbox.bind('<<ListboxSelect>>', self._on_select)
             self.listbox.bind('<Return>', self._on_select)
             self.listbox.bind('<Escape>', lambda e: (self._hide(), "break"))
@@ -514,6 +555,7 @@ class AutoCompleteEntry(ttk.Entry):
         y = self.winfo_rooty() + self.winfo_height()
         w = self.winfo_width()
         item_h = 22
+        # ✅ Altura limitada a 300px (aprox 13 ítems); el resto se ve con scroll
         h = min(len(values) * item_h + 6, 300)
         self.popup.geometry(f"{w}x{h}+{x}+{y}")
         self.popup.deiconify()
