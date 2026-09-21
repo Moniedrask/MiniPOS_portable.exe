@@ -63,6 +63,7 @@ class MainView(tk.Tk):
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
                   if self.current_page == "inventario" else None)
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
+        # ✅ Solo aplicamos el tema de barra UNA VEZ al arrancar
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
     # =========== ESTILOS ===========
@@ -116,7 +117,7 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Ingresar", command=verificar,
                    style="DarkGreen.TButton").pack(pady=10)
         e.bind("<Return>", lambda e: verificar())
-        show_popup_smooth(pop, self.current_theme == 'darkly')
+        show_popup_smooth(pop)
         self.wait_window(pop)
         if resultado["ok"]:
             self.deiconify()
@@ -181,7 +182,7 @@ class MainView(tk.Tk):
 
         ttk.Button(pop, text="Guardar", command=aplicar,
                    style="DarkGreen.TButton").pack(pady=12)
-        show_popup_smooth(pop, self.current_theme == 'darkly')
+        show_popup_smooth(pop)
 
     def _setup_password_first_time(self):
         pop = tk.Toplevel(self)
@@ -218,7 +219,7 @@ class MainView(tk.Tk):
 
         ttk.Button(pop, text="Guardar", command=guardar,
                    style="DarkGreen.TButton").pack(pady=12)
-        show_popup_smooth(pop, self.current_theme == 'darkly')
+        show_popup_smooth(pop)
 
     # =========== TAMAÑO DE FUENTE ===========
     def _apply_font_size(self):
@@ -377,10 +378,10 @@ class MainView(tk.Tk):
         cards.pack(pady=5)
 
         cards_data = [
-            ("HOY", s["hoy"], "#0d6efd"),        # azul
+            ("HOY", s["hoy"], "#0d6efd"),
             ("MES", s["mes"], "#0d6efd"),
-            ("TOTAL", s["total"], "#0a4d1f"),    # ✅ verde oscuro
-            ("FIADOS", s["fiados"], "#d97706"),  # naranja oscuro
+            ("TOTAL", s["total"], "#0a4d1f"),
+            ("FIADOS", s["fiados"], "#d97706"),
         ]
         for i, (titulo, (cnt, tot), color) in enumerate(cards_data):
             c = tk.Frame(cards, bg=color, padx=18, pady=12)
@@ -401,8 +402,7 @@ class MainView(tk.Tk):
                             value=val, bootstyle="info",
                             command=lambda: recargar()).pack(side="left", padx=8)
 
-        tk.Label(win, text="Doble clic para ver el detalle del cliente. "
-                           "Ctrl+F12 para eliminar la venta más reciente.",
+        tk.Label(win, text="Doble clic para ver detalle. Ctrl+F12 para eliminar la venta más reciente.",
                  font=("Arial", 10, "italic"), bg=bg, fg=fg).pack(pady=5)
 
         tree = ttk.Treeview(win,
@@ -416,6 +416,14 @@ class MainView(tk.Tk):
         tree.pack(fill="both", expand=True, padx=15, pady=10)
 
         grupos_map = {}
+
+        def restaurar_foco():
+            try:
+                win.grab_set()
+                win.focus_force()
+                win.lift()
+            except Exception:
+                pass
 
         def recargar():
             for r in tree.get_children():
@@ -452,11 +460,10 @@ class MainView(tk.Tk):
             det.geometry("950x560")
             det.transient(win)
             det.grab_set()
-            det.configure(bg=self.style.colors.bg)
+            det.configure(bg=bg)
             det.withdraw()
             tk.Label(det, text=f"👤 {g['customer_name']}  |  {g['count']} ventas",
-                     font=("Arial", 14, "bold"),
-                     bg=bg, fg=fg).pack(pady=10)
+                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=10)
             tk.Label(det, text=f"Total: ${g['total']:,.0f}   |   "
                                f"Pagado: ${g['paid']:,.0f}   |   "
                                f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
@@ -483,15 +490,18 @@ class MainView(tk.Tk):
                     sale.sale_id, sale.date, sale.payment_method,
                     resumen_items,
                     f"${sale.total:,.0f}".replace(",", "."), estado))
-            ttk.Button(det, text="Cerrar", command=det.destroy).pack(pady=10)
-            show_popup_smooth(det, self.current_theme == 'darkly')
+            ttk.Button(det, text="Cerrar",
+                       command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
+            show_popup_smooth(det)
 
         tree.bind("<Double-1>", ver_detalle)
 
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
                 return
             g = grupos_map.get(sel[0])
             if not g or not g["sales"]:
@@ -503,15 +513,20 @@ class MainView(tk.Tk):
                     f"Venta #{sid} - ${venta_reciente.total:,.0f}\n"
                     f"Esto restaurará el stock.".replace(",", "."),
                     "Confirmar eliminación", parent=win) != "Yes":
+                restaurar_foco()
                 return
             pw = self._ask_password_1234(win)
             if not pw:
+                restaurar_foco()
                 return
             self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"Venta #{sid} eliminada y stock restaurado.", "Listo", parent=win)
+            MD.show_info(f"Venta #{sid} eliminada y stock restaurado.",
+                         "Listo", parent=win)
+            # ✅ Solo recargamos, NO destruimos la ventana
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
+            restaurar_foco()
 
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
@@ -523,7 +538,7 @@ class MainView(tk.Tk):
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
-        show_popup_smooth(win, self.current_theme == 'darkly')
+        show_popup_smooth(win)
 
     def _ask_password_1234(self, parent):
         pop = tk.Toplevel(parent)
@@ -556,7 +571,7 @@ class MainView(tk.Tk):
         ttk.Button(pop, text="Aceptar", command=ver,
                    style="DarkGreen.TButton").pack(pady=15)
         e.bind("<Return>", lambda e: ver())
-        show_popup_smooth(pop, self.current_theme == 'darkly')
+        show_popup_smooth(pop)
         parent.wait_window(pop)
         return ok["v"]
 
@@ -593,6 +608,14 @@ class MainView(tk.Tk):
         tree.pack(fill="both", expand=True)
 
         grupos_map = {}
+
+        def restaurar_foco():
+            try:
+                win.grab_set()
+                win.focus_force()
+                win.lift()
+            except Exception:
+                pass
 
         def recargar():
             for r in tree.get_children():
@@ -658,15 +681,18 @@ class MainView(tk.Tk):
                     f"${sale.total:,.0f}".replace(",", "."),
                     f"${sale.amount_paid:,.0f}".replace(",", "."),
                     f"${sale.pending():,.0f}".replace(",", ".")))
-            ttk.Button(det, text="Cerrar", command=det.destroy).pack(pady=10)
-            show_popup_smooth(det, self.current_theme == 'darkly')
+            ttk.Button(det, text="Cerrar",
+                       command=lambda: [det.destroy(), restaurar_foco()]).pack(pady=10)
+            show_popup_smooth(det)
 
         tree.bind("<Double-1>", ver_detalle)
 
         def abonar():
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
                 return
             g = grupos_map.get(sel[0])
             if not g:
@@ -674,6 +700,7 @@ class MainView(tk.Tk):
             ventas_pend = [v for v in g["sales"] if v.pending() > 0.01]
             if not ventas_pend:
                 MD.show_info("Este cliente no tiene deudas pendientes.", "Listo", parent=win)
+                restaurar_foco()
                 return
             venta = sorted(ventas_pend, key=lambda x: x.sale_id)[0]
             pendiente = venta.pending()
@@ -682,7 +709,9 @@ class MainView(tk.Tk):
         def marcar_pagado():
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
                 return
             g = grupos_map.get(sel[0])
             if not g:
@@ -691,17 +720,21 @@ class MainView(tk.Tk):
                     f"¿Marcar TODOS los fiados pendientes de '{g['customer_name']}' como PAGADOS?\n"
                     f"Total a marcar: ${g['pending']:,.0f}".replace(",", "."),
                     "Confirmar", parent=win) != "Yes":
+                restaurar_foco()
                 return
             for v in g["sales"]:
                 if v.pending() > 0.01:
                     self.sale_use_case.mark_as_paid(v.sale_id)
             recargar()
             MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
+            restaurar_foco()
 
         def on_ctrl_f12(event=None):
             sel = tree.selection()
             if not sel:
-                MD.show_warning("Selecciona un cliente primero.", "Sin selección", parent=win)
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
                 return
             g = grupos_map.get(sel[0])
             if not g or not g["sales"]:
@@ -713,15 +746,20 @@ class MainView(tk.Tk):
                     f"Venta #{sid} - ${venta_reciente.total:,.0f}\n"
                     f"Esto restaurará el stock.".replace(",", "."),
                     "Confirmar eliminación", parent=win) != "Yes":
+                restaurar_foco()
                 return
             pw = self._ask_password_1234(win)
             if not pw:
+                restaurar_foco()
                 return
             self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.", "Listo", parent=win)
+            MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.",
+                         "Listo", parent=win)
+            # ✅ Solo recargamos, NO destruimos la ventana
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
+            restaurar_foco()
 
         win.bind("<Control-F12>", on_ctrl_f12)
         tree.bind("<Control-F12>", on_ctrl_f12)
@@ -737,7 +775,7 @@ class MainView(tk.Tk):
         ttk.Button(bf, text="🔄 Refrescar", command=recargar,
                    bootstyle="secondary").pack(side="left", padx=5)
 
-        show_popup_smooth(win, self.current_theme == 'darkly')
+        show_popup_smooth(win)
 
     def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
@@ -792,14 +830,24 @@ class MainView(tk.Tk):
             MD.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
                          "Listo", parent=parent)
             on_done()
+            try:
+                parent.grab_set()
+                parent.focus_force()
+                parent.lift()
+            except Exception:
+                pass
 
         e.bind("<Return>", lambda e: aplicar())
         bf = tk.Frame(pop, bg=bg)
         bf.pack(pady=15)
         ttk.Button(bf, text="Registrar abono", command=aplicar,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(side="left", padx=5)
-        show_popup_smooth(pop, self.current_theme == 'darkly')
+        ttk.Button(bf, text="Cancelar",
+                   command=lambda: [pop.destroy(),
+                                    parent.grab_set() if parent else None,
+                                    parent.focus_force() if parent else None]
+                   ).pack(side="left", padx=5)
+        show_popup_smooth(pop)
 
     # =========== AUTO-INICIO ===========
     def _get_startup_bat_path(self):
