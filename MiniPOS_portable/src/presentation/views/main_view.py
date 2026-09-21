@@ -467,7 +467,7 @@ class MainView(tk.Tk):
                                  variable=self.autostart_var,
                                  command=self.toggle_autostart)
             menu.add_separator()
-            menu.add_command(label="🔄 Reiniciar # de ventas",
+            menu.add_command(label="🔄 Reiniciar contador de ventas (#)",
                              command=self.reset_sales_counter)
             menu.add_separator()
             menu.add_command(label="📄 Reporte del Día (TXT)",
@@ -526,34 +526,29 @@ class MainView(tk.Tk):
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
                          "Modo normal", parent=self)
 
-    # =========== REINICIAR # DE VENTAS ===========
+    # =========== REINICIAR CONTADOR DE VENTAS (#) ===========
     def reset_sales_counter(self):
-        """Borra TODAS las ventas y reinicia el contador a #1. Requiere contraseña."""
+        """
+        Reinicia SOLO el número que se muestra como 'Venta #X'.
+        NO borra ventas, fiados, abonos ni productos.
+        """
         r1 = MD.yesno(
-            "⚠️ ¿Reiniciar el contador de ventas?\n\n"
-            "Esta acción ELIMINARÁ TODAS las ventas, fiados y abonos registrados.\n"
-            "Los productos del inventario NO se borran.\n\n"
+            "🔄 ¿Reiniciar el contador de ventas?\n\n"
+            "Las ventas y fiados NO se borran.\n"
+            "Solo el número que aparece como 'Venta #XX' se reiniciará.\n"
+            "La próxima venta aparecerá como #01.\n\n"
             "¿Deseas continuar?",
-            "Confirmar reinicio", parent=self, default_yes=False)
+            "Confirmar reinicio", parent=self, default_yes=True)
         if r1 != "Yes":
-            return
-        r2 = MD.yesno(
-            "🚨 ÚLTIMA ADVERTENCIA 🚨\n\n"
-            "No se puede deshacer. Se perderá TODO el historial de ventas y fiados.\n\n"
-            "¿Estás COMPLETAMENTE seguro?",
-            "Confirmación final", parent=self, default_yes=False)
-        if r2 != "Yes":
             return
         pw = self._ask_password_1234(self)
         if not pw:
             return
         try:
-            self.sale_use_case.reset_sales_counter()
+            self.sale_use_case.reset_sale_number_counter()
             MD.show_info(
-                "✅ Contador reiniciado. La próxima venta será #1.",
+                "✅ Contador reiniciado.\nLa próxima venta será #01.",
                 "Listo", parent=self)
-            if self.current_page == "inventario":
-                self.inventory_view.load_products()
         except Exception as e:
             MD.show_error(f"Error al reiniciar: {e}", "Error", parent=self)
 
@@ -780,7 +775,6 @@ class MainView(tk.Tk):
                     f"${g['pending']:,.0f}".replace(",", ".")))
                 grupos_map[iid] = g
             actualizar_heading_sel()
-            # ✅ Actualizar los cards
             actualizar_cards()
 
         recargar()
@@ -809,7 +803,7 @@ class MainView(tk.Tk):
             t2 = ttk.Treeview(det,
                               columns=("ID", "Fecha", "Método", "Productos", "Total", "Estado"),
                               show='headings', height=12)
-            for c, t_, w in [("ID", "#", 50), ("Fecha", "Fecha", 140),
+            for c, t_, w in [("ID", "#", 60), ("Fecha", "Fecha", 140),
                              ("Método", "Método", 110), ("Productos", "Productos", 260),
                              ("Total", "Total", 100), ("Estado", "Estado", 120)]:
                 t2.heading(c, text=t_)
@@ -824,8 +818,10 @@ class MainView(tk.Tk):
                 estado = "✅ Pagado"
                 if sale.is_credit:
                     estado = "💳 Fiado" if not sale.is_paid else "✅ Fiado pagado"
+                # ✅ Mostrar número visual (#XX)
                 t2.insert("", "end", values=(
-                    sale.sale_id, sale.date, sale.payment_method,
+                    f"#{sale.display_number:02d}",
+                    sale.date, sale.payment_method,
                     resumen_items,
                     f"${sale.total:,.0f}".replace(",", "."), estado))
             ttk.Button(det, text="Cerrar",
@@ -906,9 +902,10 @@ class MainView(tk.Tk):
                 return
             venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
             sid = venta_reciente.sale_id
+            display = venta_reciente.display_number
             if MD.yesno(
                     f"⚠️ ¿Eliminar la venta más reciente de '{g['customer_name']}'?\n\n"
-                    f"Venta #{sid} - ${venta_reciente.total:,.0f}\n"
+                    f"Venta #{display:02d} - ${venta_reciente.total:,.0f}\n"
                     f"Esto restaurará el stock.".replace(",", "."),
                     "Confirmar eliminación", parent=win) != "Yes":
                 restaurar_foco()
@@ -918,7 +915,8 @@ class MainView(tk.Tk):
                 restaurar_foco()
                 return
             self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"Venta #{sid} eliminada y stock restaurado.", "Listo", parent=win)
+            MD.show_info(f"Venta #{display:02d} eliminada y stock restaurado.",
+                         "Listo", parent=win)
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
@@ -1218,7 +1216,7 @@ class MainView(tk.Tk):
                               columns=("ID", "Fecha", "Productos", "Total",
                                        "Abonado", "Pendiente"),
                               show='headings', height=12)
-            for c, t_, w in [("ID", "#", 50), ("Fecha", "Fecha", 130),
+            for c, t_, w in [("ID", "#", 60), ("Fecha", "Fecha", 130),
                              ("Productos", "Productos", 280), ("Total", "Total", 90),
                              ("Abonado", "Abonado", 90), ("Pendiente", "Pendiente", 100)]:
                 t2.heading(c, text=t_)
@@ -1231,7 +1229,8 @@ class MainView(tk.Tk):
                 if len(sale.items) > 3:
                     resumen_items += f" (+{len(sale.items) - 3} más)"
                 t2.insert("", "end", values=(
-                    sale.sale_id, sale.date, resumen_items,
+                    f"#{sale.display_number:02d}",
+                    sale.date, resumen_items,
                     f"${sale.total:,.0f}".replace(",", "."),
                     f"${sale.amount_paid:,.0f}".replace(",", "."),
                     f"${sale.pending():,.0f}".replace(",", ".")))
@@ -1284,7 +1283,7 @@ class MainView(tk.Tk):
                 return
             venta = sorted(ventas_pend, key=lambda x: x.sale_id)[0]
             pendiente = venta.pending()
-            self._abonar_dialog(win, venta.sale_id, venta, pendiente, recargar)
+            self._abonar_dialog(win, venta, pendiente, recargar)
 
         def marcar_pagado():
             if not marcados and not tree.selection():
@@ -1362,9 +1361,10 @@ class MainView(tk.Tk):
                 return
             venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
             sid = venta_reciente.sale_id
+            display = venta_reciente.display_number
             if MD.yesno(
                     f"⚠️ ¿Eliminar el fiado más reciente de '{g['customer_name']}'?\n\n"
-                    f"Venta #{sid} - ${venta_reciente.total:,.0f}\n"
+                    f"Venta #{display:02d} - ${venta_reciente.total:,.0f}\n"
                     f"Esto restaurará el stock.".replace(",", "."),
                     "Confirmar eliminación", parent=win) != "Yes":
                 restaurar_foco()
@@ -1374,7 +1374,8 @@ class MainView(tk.Tk):
                 restaurar_foco()
                 return
             self.sale_use_case.delete_sale(sid)
-            MD.show_info(f"Fiado #{sid} eliminado y stock restaurado.", "Listo", parent=win)
+            MD.show_info(f"Fiado #{display:02d} eliminado y stock restaurado.",
+                         "Listo", parent=win)
             recargar()
             if self.current_page == "inventario":
                 self.inventory_view.load_products()
@@ -1445,11 +1446,11 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # ABONAR
+    # ABONAR (recibe el objeto Sale directamente)
     # =========================================================
-    def _abonar_dialog(self, parent, sale_id, venta, pendiente, on_done):
+    def _abonar_dialog(self, parent, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
-        pop.title(f"Abonar a venta #{sale_id}")
+        pop.title(f"Abonar a venta #{venta.display_number:02d}")
         pop.geometry("420x420")
         pop.transient(parent)
         pop.configure(bg=self.style.colors.bg)
@@ -1462,6 +1463,8 @@ class MainView(tk.Tk):
         cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
         tk.Label(pop, text=f"Cliente: {cliente}", font=("Arial", 12),
                  bg=bg, fg=fg).pack(pady=5)
+        tk.Label(pop, text=f"Venta #{venta.display_number:02d}",
+                 font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
         tk.Label(pop, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
                  font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
         tk.Label(pop, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
@@ -1493,7 +1496,7 @@ class MainView(tk.Tk):
                         "Confirmar", parent=pop) != "Yes":
                     return "break"
                 monto = pendiente
-            self.sale_use_case.add_payment(sale_id, monto)
+            self.sale_use_case.add_payment(venta.sale_id, monto)
             pop.destroy()
             MD.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
                          "Listo", parent=parent)
@@ -1586,7 +1589,7 @@ class MainView(tk.Tk):
             hora = s.date.split(" ")[1] if " " in s.date else ""
             cliente = f" - {s.customer_name}" if s.customer_name else ""
             fiado = " [FIADO]" if s.is_credit else ""
-            L.append(f"Venta #{s.sale_id}  -  {hora}  -  {s.payment_method}{cliente}{fiado}")
+            L.append(f"Venta #{s.display_number:02d}  -  {hora}  -  {s.payment_method}{cliente}{fiado}")
             L.append(f"  {'Cant.':>8}  {'Producto':<30} {'P.Unit':>10} {'Subtotal':>12}")
             for it in s.items:
                 L.append(f"  {it.quantity:>8g}  {it.product_name[:30]:<30} "
@@ -1624,7 +1627,7 @@ class MainView(tk.Tk):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = f"Ventas {ym}"
-        ws.append(["Fecha", "Venta #", "Cliente", "Método", "Fiado", "Producto",
+        ws.append(["Venta #", "Fecha", "Cliente", "Método", "Fiado", "Producto",
                    "Código", "Cantidad", "Unidad", "P. Unit.", "Subtotal"])
         for c in ws[1]:
             c.font = Font(bold=True, color="FFFFFF")
@@ -1632,13 +1635,14 @@ class MainView(tk.Tk):
             c.alignment = Alignment(horizontal="center")
         for s in sales:
             for it in s.items:
-                ws.append([s.date, s.sale_id, s.customer_name, s.payment_method,
-                           "Sí" if s.is_credit else "No", it.product_name, it.barcode,
+                ws.append([f"#{s.display_number:02d}", s.date, s.customer_name,
+                           s.payment_method, "Sí" if s.is_credit else "No",
+                           it.product_name, it.barcode,
                            it.quantity, "unidad", it.unit_price, it.subtotal])
         total = sum(s.total for s in sales)
         ws.append([])
         ws.append(["", "", "", "", "", "", "", "", "", "TOTAL:", total])
-        for col, w in zip("ABCDEFGHIJK", [20, 10, 25, 15, 10, 30, 20, 10, 10, 12, 12]):
+        for col, w in zip("ABCDEFGHIJK", [12, 20, 25, 15, 10, 30, 20, 10, 10, 12, 12]):
             ws.column_dimensions[col].width = w
         try:
             wb.save(arch)
