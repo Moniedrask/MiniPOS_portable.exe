@@ -14,7 +14,7 @@ from infrastucture.db.db_manager import DBManager
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, DarkMenuBar, MD, make_scrollable, make_scrolled_treeview,
-    get_business_info, save_business_info
+    get_business_info, save_business_info, make_inline_business_header
 )
 from presentation.views.payment_view import PaymentView
 from presentation.views.inventory_view import InventoryView
@@ -58,7 +58,6 @@ class MainView(tk.Tk):
         self.tray_thread = None
         self.tray_queue = queue.Queue()
 
-        # ✅ Título inicial con info del negocio
         self._update_window_title()
 
         if not self._check_startup_password():
@@ -77,7 +76,6 @@ class MainView(tk.Tk):
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
 
-    # =========== TÍTULO DINÁMICO ===========
     def _update_window_title(self):
         try:
             info = get_business_info(self.db_manager)
@@ -94,6 +92,13 @@ class MainView(tk.Tk):
                 self.title(base)
         except Exception:
             self.title("MiniPOS Portable v2.0")
+
+    def _refresh_business_header(self):
+        try:
+            if hasattr(self, "business_header") and self.business_header:
+                self.business_header["refresh"]()
+        except Exception:
+            pass
 
     # =========== BANDEJA ===========
     def _poll_tray_queue(self):
@@ -408,7 +413,7 @@ class MainView(tk.Tk):
                 pass
         pop.after(50, set_focus)
 
-    # =========== DATOS DEL NEGOCIO ===========
+    # =========== DATOS DEL NEGOCIO (con contraseña al guardar) ===========
     def _open_business_popup(self):
         pop = tk.Toplevel(self)
         pop.title("🏪 Datos del negocio")
@@ -430,7 +435,7 @@ class MainView(tk.Tk):
             tk.Label(parent, text="🏪 DATOS DEL NEGOCIO",
                      font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(15, 4))
             tk.Label(parent,
-                     text="Estos datos aparecen en la barra de título y en Pagos/Inventario.",
+                     text="Estos datos aparecen en la barra de título, en Pagos e Inventario.",
                      font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8").pack(pady=(0, 10))
 
             campos = [
@@ -462,6 +467,11 @@ class MainView(tk.Tk):
 
         def build_bottom(parent):
             def guardar():
+                # ✅ Pedir contraseña antes de guardar
+                pw = self._ask_password_1234(pop)
+                if not pw:
+                    return
+
                 data = {}
                 for k in ("type", "name", "owner", "place", "phone", "employees"):
                     try:
@@ -476,14 +486,7 @@ class MainView(tk.Tk):
                 try:
                     save_business_info(self.db_manager, data)
                     self._update_window_title()
-                    try:
-                        self.payment_view.refresh_business_header()
-                    except Exception:
-                        pass
-                    try:
-                        self.inventory_view.refresh_business_header()
-                    except Exception:
-                        pass
+                    self._refresh_business_header()
                     pop.destroy()
                     MD.show_info("✅ Datos del negocio guardados.", "Listo", parent=self)
                 except Exception as e:
@@ -546,8 +549,25 @@ class MainView(tk.Tk):
 
     # =========== UI ===========
     def create_widgets(self):
-        self.menubar = DarkMenuBar(self, lambda: self.current_theme == 'darkly')
-        self.menubar.pack(fill="x", side="top")
+        # ✅ Barra superior: menú a la izquierda + header del negocio a la derecha
+        top_bar = ttk.Frame(self, bootstyle="dark")
+        top_bar.pack(fill="x", side="top")
+
+        # Menú
+        menubar_wrap = ttk.Frame(top_bar, bootstyle="dark")
+        menubar_wrap.pack(side="left", fill="y")
+        self.menubar = DarkMenuBar(menubar_wrap, lambda: self.current_theme == 'darkly')
+        self.menubar.pack(side="left")
+
+        # Header del negocio a la derecha
+        try:
+            bg = self.style.colors.bg
+        except Exception:
+            bg = "#1a1a1a"
+        right_wrap = tk.Frame(top_bar, bg=bg)
+        right_wrap.pack(side="right", padx=(0, 15))
+        self.business_header = make_inline_business_header(right_wrap, self.db_manager, bg=bg)
+        self.business_header["frame"].pack(side="right", pady=6)
 
         def build_opciones(menu):
             menu.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
@@ -609,6 +629,7 @@ class MainView(tk.Tk):
         self.menubar.add_menu("Opciones", build_opciones)
         self.menubar.add_menu("Ventas", build_ventas)
 
+        # Pestañas
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(6, 0))
 
@@ -630,15 +651,15 @@ class MainView(tk.Tk):
         self.container = ttk.Frame(self, bootstyle="dark")
         self.container.pack(fill="both", expand=True, padx=10, pady=6)
 
-        # ✅ Pasar db_manager y callback a las vistas
+        # Vistas (sin header del negocio dentro, ese ya está en la barra superior)
         self.payment_view = PaymentView(
             self.container, self.product_use_case, self.sale_use_case,
             self.db_manager, lambda: self.current_theme,
-            on_business_click=self._open_business_popup)
+            on_business_click=None)
         self.inventory_view = InventoryView(
             self.container, self.product_use_case,
             self.db_manager, lambda: self.current_theme,
-            on_business_click=self._open_business_popup)
+            on_business_click=None)
         self.current_page = None
 
     def _toggle_close_to_tray(self):
@@ -653,7 +674,6 @@ class MainView(tk.Tk):
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
                          "Modo normal", parent=self)
 
-    # =========== REINICIAR CONTADOR ===========
     def reset_sales_counter(self):
         r1 = MD.yesno(
             "🔄 ¿Reiniciar el contador de ventas?\n\n"
@@ -701,6 +721,19 @@ class MainView(tk.Tk):
         self._setup_dark_green_style()
         apply_titlebar_theme(self, self.current_theme == 'darkly')
         self._apply_font_size()
+        # Refrescar colores del header del negocio
+        try:
+            bg = self.style.colors.bg
+            if hasattr(self, "business_header") and self.business_header:
+                frm = self.business_header["frame"]
+                frm.configure(bg=bg)
+                for child in frm.winfo_children():
+                    try:
+                        child.configure(bg=bg)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     # =========================================================
     # RESUMEN DE VENTAS
