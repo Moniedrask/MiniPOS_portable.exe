@@ -2,9 +2,6 @@ import tkinter as tk
 import ttkbootstrap as ttk
 
 
-# =========================================================
-# CONTADOR GLOBAL DE POPUPS
-# =========================================================
 _popup_depth = 0
 
 
@@ -22,9 +19,6 @@ def popup_is_open():
     return _popup_depth > 0
 
 
-# =========================================================
-# BARRA DE TÍTULO OSCURA
-# =========================================================
 def force_dark_titlebar(win):
     try:
         import ctypes
@@ -128,14 +122,7 @@ def get_menu_font():
         return ("Arial", 11)
 
 
-# =========================================================
-# TREEVIEW CON SCROLLBAR
-# =========================================================
 def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
-    """
-    Crea un Treeview con scrollbar vertical y soporte de rueda del ratón.
-    Devuelve (frame, treeview).
-    """
     frame = ttk.Frame(parent, bootstyle=bootstyle)
 
     sb = ttk.Scrollbar(frame, orient="vertical")
@@ -149,7 +136,6 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
     tree.pack(side="left", fill="both", expand=True)
     sb.config(command=tree.yview)
 
-    # Rueda del ratón
     def _on_mousewheel(event):
         try:
             tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -157,14 +143,14 @@ def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
             pass
 
     tree.bind("<MouseWheel>", _on_mousewheel)
-
     return frame, tree
 
 
 # =========================================================
-# DIÁLOGOS PERSONALIZADOS
+# DIÁLOGOS PERSONALIZADOS (con foco y Enter/Escape)
 # =========================================================
-def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
+def _custom_dialog(parent, title, message, buttons, kind="info",
+                   is_dark=True, default_button=0):
     if parent is None:
         return None
     try:
@@ -193,6 +179,8 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
     bf = tk.Frame(pop, bg=bg)
     bf.pack(pady=(10, 20))
 
+    btn_widgets = []
+
     def make_cb(i):
         def cb():
             result["idx"] = i
@@ -206,13 +194,32 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
             btn_style = "danger.TButton"
         else:
             btn_style = "secondary.TButton"
-        ttk.Button(bf, text=b, command=make_cb(i),
-                   style=btn_style, width=12).pack(side="left", padx=8)
+        btn = ttk.Button(bf, text=b, command=make_cb(i),
+                         style=btn_style, width=12)
+        btn.pack(side="left", padx=8)
+        btn_widgets.append(btn)
 
     pop.update_idletasks()
     w = max(420, pop.winfo_reqwidth())
     h = pop.winfo_reqheight()
     pop.geometry(f"{w}x{h}")
+
+    # ✅ Enter = botón por defecto, Escape = cerrar
+    def on_enter(e):
+        try:
+            btn_widgets[default_button].invoke()
+        except Exception:
+            pass
+
+    def on_escape(e):
+        try:
+            pop.destroy()
+        except Exception:
+            pass
+
+    pop.bind("<Return>", on_enter)
+    pop.bind("<KP_Enter>", on_enter)
+    pop.bind("<Escape>", on_escape)
 
     show_popup_smooth(pop)
 
@@ -221,6 +228,17 @@ def _custom_dialog(parent, title, message, buttons, kind="info", is_dark=True):
         pop.focus_force()
     except Exception:
         pass
+
+    # ✅ Forzar foco al botón por defecto
+    def set_focus():
+        try:
+            if btn_widgets and pop.winfo_exists():
+                btn_widgets[default_button].focus_set()
+        except Exception:
+            pass
+
+    pop.after(50, set_focus)
+    pop.after(250, set_focus)
 
     try:
         root.wait_window(pop)
@@ -260,14 +278,15 @@ class MD:
         _custom_dialog(parent, title, message, ["Bien"], "error", cls._is_dark)
 
     @classmethod
-    def yesno(cls, message, title="Confirmar", parent=None):
+    def yesno(cls, message, title="Confirmar", parent=None, default_yes=True):
         idx = _custom_dialog(parent, title, message, ["Sí", "No"],
-                             "question", cls._is_dark)
+                             "question", cls._is_dark,
+                             default_button=0 if default_yes else 1)
         return "Yes" if idx == 0 else "No"
 
 
 # =========================================================
-# BARRA DE MENÚS OSCURA Y COMPACTA
+# BARRA DE MENÚS OSCURA
 # =========================================================
 class DarkMenuBar(ttk.Frame):
     def __init__(self, parent, is_dark_func):
@@ -297,7 +316,7 @@ class DarkMenuBar(ttk.Frame):
 
 
 # =========================================================
-# TOOLTIP CON MARQUESINA
+# TOOLTIP
 # =========================================================
 class HoverTooltip:
     def __init__(self, widget, font_size=11, delay=350):
@@ -454,7 +473,7 @@ class ListboxTooltip(HoverTooltip):
 
 
 # =========================================================
-# AUTOCOMPLETADO ENTRY CON LISTBOX OSCURO + SCROLLBAR
+# AUTOCOMPLETADO ENTRY
 # =========================================================
 class AutoCompleteEntry(ttk.Entry):
     def __init__(self, parent, values_getter, on_select, width=40, font=None, **kwargs):
@@ -489,7 +508,6 @@ class AutoCompleteEntry(ttk.Entry):
             vals = self.values_getter()
         except Exception:
             vals = []
-        # ✅ Permitir hasta 500 sugerencias (antes 15), la scrollbar maneja el resto
         filtered = [v for v in vals if text in v.lower()][:500]
         if not filtered:
             self._hide()
@@ -507,7 +525,6 @@ class AutoCompleteEntry(ttk.Entry):
                 pass
             self.popup.configure(bg=style.colors.bg)
 
-            # Contenedor interno con scrollbar
             container = tk.Frame(self.popup, bg=style.colors.bg)
             container.pack(fill='both', expand=True)
 
@@ -515,22 +532,14 @@ class AutoCompleteEntry(ttk.Entry):
             sb.pack(side="right", fill="y")
 
             self.listbox = tk.Listbox(
-                container,
-                activestyle='none',
-                exportselection=False,
-                bg=style.colors.bg,
-                fg=style.colors.fg,
-                selectbackground="#0a4d1f",
-                selectforeground="#ffffff",
-                font=("Arial", 11),
-                borderwidth=0,
-                relief="flat",
-                highlightthickness=0,
-                yscrollcommand=sb.set)
+                container, activestyle='none', exportselection=False,
+                bg=style.colors.bg, fg=style.colors.fg,
+                selectbackground="#0a4d1f", selectforeground="#ffffff",
+                font=("Arial", 11), borderwidth=0, relief="flat",
+                highlightthickness=0, yscrollcommand=sb.set)
             self.listbox.pack(side="left", fill='both', expand=True)
             sb.config(command=self.listbox.yview)
 
-            # ✅ Rueda del ratón en el listbox
             def _on_mousewheel(event):
                 try:
                     self.listbox.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -555,7 +564,6 @@ class AutoCompleteEntry(ttk.Entry):
         y = self.winfo_rooty() + self.winfo_height()
         w = self.winfo_width()
         item_h = 22
-        # ✅ Altura limitada a 300px (aprox 13 ítems); el resto se ve con scroll
         h = min(len(values) * item_h + 6, 300)
         self.popup.geometry(f"{w}x{h}+{x}+{y}")
         self.popup.deiconify()
