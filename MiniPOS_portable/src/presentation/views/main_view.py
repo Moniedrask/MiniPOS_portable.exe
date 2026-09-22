@@ -57,6 +57,10 @@ class MainView(tk.Tk):
         self.tray_icon = None
         self.tray_thread = None
         self.tray_queue = queue.Queue()
+        self._reset_check_timer = None
+
+        # ✅ Auto-reset al iniciar (si cambió el día desde el último uso)
+        self._do_auto_reset(silent=True)
 
         self._update_window_title()
 
@@ -71,10 +75,51 @@ class MainView(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(200, self._poll_tray_queue)
 
+        # ✅ Iniciar el chequeo periódico del cambio de día
+        self.after(3000, self._schedule_daily_reset_check)
+
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
                   if self.current_page == "inventario" else None)
         self.bind('<F11>', lambda e: self.toggle_fullscreen())
         self.after(200, lambda: apply_titlebar_theme(self, self.current_theme == 'darkly'))
+
+    # =========== AUTO-RESET DIARIO ===========
+    def _do_auto_reset(self, silent=False):
+        """Verifica si cambió el día y reinicia el contador si aplica."""
+        try:
+            reinicio = self.sale_use_case.auto_reset_if_new_day()
+            if reinicio and not silent:
+                MD.show_info(
+                    "🕛 Ha cambiado el día.\n\n"
+                    "El contador de ventas se reinició automáticamente.\n"
+                    "La próxima venta será #01.",
+                    "Reinicio automático", parent=self)
+            return reinicio
+        except Exception:
+            return False
+
+    def _schedule_daily_reset_check(self):
+        """Programa la verificación cada 60 segundos."""
+        self._check_daily_reset()
+
+    def _check_daily_reset(self):
+        """Se ejecuta cada 60s para verificar el cambio de día."""
+        try:
+            reinicio = self._do_auto_reset(silent=False)
+            if reinicio:
+                # Refrescar cualquier vista abierta
+                try:
+                    self.inventory_view.load_products()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            # Re-programar (60s)
+            self._reset_check_timer = self.after(60000, self._check_daily_reset)
+        except Exception:
+            pass
 
     def _update_window_title(self):
         try:
@@ -132,6 +177,11 @@ class MainView(tk.Tk):
             self._real_quit()
 
     def _real_quit(self):
+        try:
+            if self._reset_check_timer:
+                self.after_cancel(self._reset_check_timer)
+        except Exception:
+            pass
         try:
             if self.tray_icon:
                 self.tray_icon.stop()
@@ -413,7 +463,7 @@ class MainView(tk.Tk):
                 pass
         pop.after(50, set_focus)
 
-    # =========== DATOS DEL NEGOCIO (con contraseña al guardar) ===========
+    # =========== DATOS DEL NEGOCIO ===========
     def _open_business_popup(self):
         pop = tk.Toplevel(self)
         pop.title("🏪 Datos del negocio")
@@ -467,7 +517,6 @@ class MainView(tk.Tk):
 
         def build_bottom(parent):
             def guardar():
-                # ✅ Pedir contraseña antes de guardar
                 pw = self._ask_password_1234(pop)
                 if not pw:
                     return
@@ -549,17 +598,14 @@ class MainView(tk.Tk):
 
     # =========== UI ===========
     def create_widgets(self):
-        # ✅ Barra superior: menú a la izquierda + header del negocio a la derecha
         top_bar = ttk.Frame(self, bootstyle="dark")
         top_bar.pack(fill="x", side="top")
 
-        # Menú
         menubar_wrap = ttk.Frame(top_bar, bootstyle="dark")
         menubar_wrap.pack(side="left", fill="y")
         self.menubar = DarkMenuBar(menubar_wrap, lambda: self.current_theme == 'darkly')
         self.menubar.pack(side="left")
 
-        # Header del negocio a la derecha
         try:
             bg = self.style.colors.bg
         except Exception:
@@ -609,7 +655,17 @@ class MainView(tk.Tk):
                                  variable=self.autostart_var,
                                  command=self.toggle_autostart)
             menu.add_separator()
-            menu.add_command(label="🔄 Reiniciar contador de ventas (#)",
+
+            # ✅ NUEVO: Checkbox de auto-reset diario
+            self.auto_reset_var = tk.BooleanVar(
+                value=self.sale_use_case.is_auto_reset_enabled())
+            menu.add_checkbutton(
+                label="🕛 Reinicio automático a medianoche",
+                variable=self.auto_reset_var,
+                command=self._toggle_auto_reset)
+
+            menu.add_separator()
+            menu.add_command(label="🔄 Reiniciar contador de ventas (#) [manual]",
                              command=self.reset_sales_counter)
             menu.add_separator()
             menu.add_command(label="📄 Reporte del Día (TXT)",
@@ -629,7 +685,6 @@ class MainView(tk.Tk):
         self.menubar.add_menu("Opciones", build_opciones)
         self.menubar.add_menu("Ventas", build_ventas)
 
-        # Pestañas
         tabs = ttk.Frame(self, bootstyle="dark")
         tabs.pack(fill="x", padx=10, pady=(6, 0))
 
@@ -651,7 +706,6 @@ class MainView(tk.Tk):
         self.container = ttk.Frame(self, bootstyle="dark")
         self.container.pack(fill="both", expand=True, padx=10, pady=6)
 
-        # Vistas (sin header del negocio dentro, ese ya está en la barra superior)
         self.payment_view = PaymentView(
             self.container, self.product_use_case, self.sale_use_case,
             self.db_manager, lambda: self.current_theme,
@@ -661,6 +715,20 @@ class MainView(tk.Tk):
             self.db_manager, lambda: self.current_theme,
             on_business_click=None)
         self.current_page = None
+
+    def _toggle_auto_reset(self):
+        val = self.auto_reset_var.get()
+        self.sale_use_case.enable_auto_reset(val)
+        if val:
+            MD.show_info(
+                "✅ Reinicio automático ACTIVADO.\n\n"
+                "El contador de ventas (#) se reiniciará a #01 cuando cambie el día.\n"
+                "Se ejecuta al abrir la app y cada minuto mientras esté abierta.",
+                "Reinicio automático", parent=self)
+        else:
+            MD.show_info("❌ Reinicio automático DESACTIVADO.\n\n"
+                         "Usa el botón manual para reiniciar cuando quieras.",
+                         "Reinicio automático", parent=self)
 
     def _toggle_close_to_tray(self):
         val = "1" if self.tray_var.get() else "0"
@@ -689,6 +757,9 @@ class MainView(tk.Tk):
             return
         try:
             self.sale_use_case.reset_sale_number_counter()
+            # ✅ Guardar la fecha del reset manual también
+            self.sale_use_case.set_last_reset_date(
+                datetime.now().strftime("%Y-%m-%d"))
             MD.show_info(
                 "✅ Contador reiniciado.\nLa próxima venta será #01.",
                 "Listo", parent=self)
@@ -721,7 +792,6 @@ class MainView(tk.Tk):
         self._setup_dark_green_style()
         apply_titlebar_theme(self, self.current_theme == 'darkly')
         self._apply_font_size()
-        # Refrescar colores del header del negocio
         try:
             bg = self.style.colors.bg
             if hasattr(self, "business_header") and self.business_header:
@@ -736,8 +806,11 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # RESUMEN DE VENTAS
+    # RESTO DE MÉTODOS (sin cambios respecto a la Fase 1)
+    # show_sales_summary, show_credit_sales, _abonar_dialog, _ask_password_1234,
+    # auto-inicio, reportes, exportar/importar, etc.
     # =========================================================
+
     def show_sales_summary(self):
         win = tk.Toplevel(self)
         win.title("Resumen de Ventas")
@@ -1153,9 +1226,6 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
-    # =========================================================
-    # PEDIR CONTRASEÑA 1234
-    # =========================================================
     def _ask_password_1234(self, parent):
         pop = tk.Toplevel(parent)
         pop.title("Contraseña requerida")
@@ -1220,9 +1290,6 @@ class MainView(tk.Tk):
         parent.wait_window(pop)
         return ok["v"]
 
-    # =========================================================
-    # FIADOS
-    # =========================================================
     def show_credit_sales(self):
         win = tk.Toplevel(self)
         win.title("Fiados - Cuentas por cobrar")
@@ -1656,9 +1723,6 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
-    # =========================================================
-    # ABONAR
-    # =========================================================
     def _abonar_dialog(self, parent, venta, pendiente, on_done):
         pop = tk.Toplevel(parent)
         pop.title(f"Abonar a venta #{venta.display_number:02d}")
@@ -1768,7 +1832,6 @@ class MainView(tk.Tk):
         pop.after(50, set_focus)
         pop.after(250, set_focus)
 
-    # =========== AUTO-INICIO ===========
     def _get_startup_bat_path(self):
         startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
                                'Start Menu', 'Programs', 'Startup')
@@ -1796,7 +1859,6 @@ class MainView(tk.Tk):
                 self.autostart_var.set(True)
                 MD.show_error(f"Error: {e}", "Error", parent=self)
 
-    # =========== REPORTES ===========
     def generate_daily_report(self):
         hoy = datetime.now().strftime("%Y-%m-%d")
         sales = self.sale_use_case.get_sales_by_day(hoy)
@@ -1879,7 +1941,6 @@ class MainView(tk.Tk):
         except Exception as e:
             MD.show_error(f"Error: {e}", "Error", parent=self)
 
-    # =========== EXPORTAR / IMPORTAR ===========
     def export_db(self):
         arch = filedialog.asksaveasfilename(defaultextension=".db",
                                             filetypes=[("SQLite", "*.db")])
