@@ -22,7 +22,6 @@ class SaleCase:
             pass
 
     def reset_sale_number_counter(self):
-        """Reinicia el contador VISUAL a #01 sin borrar historial."""
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT COALESCE(MAX(sale_id), 0) m FROM sales")
         max_id = cur.fetchone()["m"]
@@ -54,18 +53,13 @@ class SaleCase:
             pass
 
     def auto_reset_if_new_day(self):
-        """
-        Verifica si cambió el día y reinicia el contador visual.
-        Devuelve True si reinició, False si no era necesario.
-        """
         try:
             if not self.is_auto_reset_enabled():
                 return False
             hoy = datetime.now().strftime("%Y-%m-%d")
             last = self.get_last_reset_date()
             if last == hoy:
-                return False  # Ya se reinició hoy
-            # Cambió el día: reiniciar
+                return False
             self.reset_sale_number_counter()
             self.set_last_reset_date(hoy)
             return True
@@ -74,20 +68,27 @@ class SaleCase:
 
     # ============ CREAR VENTA ============
     def create_sale(self, items, payment_method="Efectivo", notes="",
-                    customer_name="", is_credit=False):
+                    customer_name="", is_credit=False, discount=0.0):
         conn = self.db.get_connection()
         cur = conn.cursor()
-        total = sum(i["quantity"] * i["unit_price"] for i in items)
+        subtotal = sum(i["quantity"] * i["unit_price"] for i in items)
+        discount = max(0.0, float(discount or 0))
+        if discount > subtotal:
+            discount = subtotal
+        total = subtotal - discount
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         is_paid = 0 if is_credit else 1
         amount_paid = 0.0 if is_credit else total
         offset = self.get_sale_number_offset()
+
         cur.execute(
             "INSERT INTO sales (date, total, payment_method, notes, customer_name, "
-            "is_credit, is_paid, amount_paid, display_offset) VALUES (?,?,?,?,?,?,?,?,?)",
+            "is_credit, is_paid, amount_paid, display_offset, discount, subtotal) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (now, total, payment_method, notes, customer_name,
-             1 if is_credit else 0, is_paid, amount_paid, offset))
+             1 if is_credit else 0, is_paid, amount_paid, offset, discount, subtotal))
         sale_id = cur.lastrowid
+
         for it in items:
             sub = it["quantity"] * it["unit_price"]
             cur.execute(
@@ -98,6 +99,7 @@ class SaleCase:
             if it["product_id"]:
                 cur.execute("UPDATE products SET stock = stock - ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
+
         conn.commit()
         display_number = sale_id - offset
         return sale_id, total, display_number
@@ -120,6 +122,8 @@ class SaleCase:
             sale.amount_paid = s["amount_paid"] if "amount_paid" in keys else 0.0
             offset = s["display_offset"] if "display_offset" in keys else 0
             sale.display_number = s["sale_id"] - (offset or 0)
+            sale.discount = s["discount"] if "discount" in keys else 0.0
+            sale.subtotal = s["subtotal"] if "subtotal" in keys else s["total"]
             sales.append(sale)
         return sales
 
@@ -131,6 +135,15 @@ class SaleCase:
     def get_sales_by_month(self, ym):
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT * FROM sales WHERE date LIKE ? ORDER BY date", (f"{ym}%",))
+        return self._rows_to_sales(cur.fetchall())
+
+    # ✅ NUEVO: filtro por rango de fechas
+    def get_sales_by_range(self, start_date, end_date):
+        """Filtra por fechas incluyentes. Formato YYYY-MM-DD."""
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT * FROM sales WHERE date(date) BETWEEN ? AND ? ORDER BY date",
+            (start_date, end_date))
         return self._rows_to_sales(cur.fetchall())
 
     def get_all_sales(self, limit=500):
@@ -269,6 +282,58 @@ class SaleCase:
             "mes": (ventas_mes, total_mes),
             "total": (ventas_tot, total_tot),
             "fiados": (fiados_c, fiados_t),
+        }
+
+    # ============ NUEVO: CIERRE DE CAJA ============
+    def get_cash_closing(self, date_str):
+        """
+        Devuelve un dict con el resumen del día para el cierre de caja.
+        """
+        try:
+            sales = self.get_sales_by_day(date_str)
+        except Exception:
+            sales = []
+
+        metodos = {}
+        total_ventas = 0.0
+        total_subtotal = 0.0
+        total_descuento = 0.0
+        total_fiado_nuevo = 0.0
+        total_abonos = 0.0
+        cantidad_ventas = len(sales)
+        productos_vendidos = 0
+
+        for s in sales:
+            total_ventas += s.total
+            total_subtotal += (s.subtotal if hasattr(s, "subtotal") else s.total)
+            total_descuento += (s.discount if hasattr(s, "discount") else 0.0)
+            productos_vendidos += sum(it.quantity for it in s.items)
+
+            metodo = s.payment_method or "Otro"
+            if metodo not in metodos:
+                metodos[metodo] = {"count": 0, "total": 0.0}
+            metodos[metodo]["count"] += 1
+            metodos[metodo]["total"] += s.total
+
+            if s.is_credit:
+                total_fiado_nuevo += s.total
+            else:
+                total_abonos += (s.amount_paid or 0.0)
+
+        # Efectivo esperado en caja (ventas en efectivo del día, sin contar fiados)
+        efectivo_esperado = metodos.get("Efectivo", {}).get("total", 0.0)
+
+        return {
+            "date": date_str,
+            "cantidad_ventas": cantidad_ventas,
+            "total_ventas": total_ventas,
+            "total_subtotal": total_subtotal,
+            "total_descuento": total_descuento,
+            "productos_vendidos": productos_vendidos,
+            "metodos": metodos,
+            "total_fiado_nuevo": total_fiado_nuevo,
+            "total_abonos": total_abonos,
+            "efectivo_esperado": efectivo_esperado,
         }
 
     # ============ BORRADOR DE CARRITO ============
