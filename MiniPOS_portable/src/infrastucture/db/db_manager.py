@@ -29,6 +29,7 @@ class DBManager:
         self._check_unit_columns()
         self._check_timestamp_columns()
         self._check_group_column()
+        self._check_cost_columns()
         self._check_sales_tables()
         self._check_credit_columns()
         self._check_payment_column()
@@ -46,7 +47,8 @@ class DBManager:
             price REAL NOT NULL, stock REAL NOT NULL DEFAULT 0,
             unit_type TEXT DEFAULT 'unidad', unit TEXT DEFAULT 'unidad',
             created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '',
-            group_name TEXT DEFAULT '')''')
+            group_name TEXT DEFAULT '',
+            cost REAL DEFAULT 0, margin_percent REAL DEFAULT 20)''')
         conn.commit()
         conn.close()
 
@@ -89,6 +91,18 @@ class DBManager:
         cols = [c[1] for c in cur.fetchall()]
         if 'group_name' not in cols:
             cur.execute("ALTER TABLE products ADD COLUMN group_name TEXT DEFAULT ''")
+            self.conn.commit()
+
+    def _check_cost_columns(self):
+        """Columnas de costo y % de ganancia."""
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(products)")
+        cols = [c[1] for c in cur.fetchall()]
+        if 'cost' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN cost REAL DEFAULT 0")
+            self.conn.commit()
+        if 'margin_percent' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN margin_percent REAL DEFAULT 20")
             self.conn.commit()
 
     def _check_sales_tables(self):
@@ -138,7 +152,6 @@ class DBManager:
             self.conn.commit()
 
     def _check_discount_column(self):
-        """Nueva columna para descuentos por venta."""
         cur = self.conn.cursor()
         cur.execute("PRAGMA table_info(sales)")
         cols = [c[1] for c in cur.fetchall()]
@@ -147,7 +160,6 @@ class DBManager:
             self.conn.commit()
         if 'subtotal' not in cols:
             cur.execute("ALTER TABLE sales ADD COLUMN subtotal REAL DEFAULT 0")
-            # Rellenar con el total existente (para ventas antiguas)
             cur.execute("UPDATE sales SET subtotal = total WHERE subtotal = 0")
             self.conn.commit()
 
