@@ -364,17 +364,17 @@ class PaymentView(ttk.Frame):
         if not self.cart:
             MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
             return
-        total = sum(i["subtotal"] for i in self.cart)
+        subtotal = sum(i["subtotal"] for i in self.cart)
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("620x720")
+        pop.geometry("620x780")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # ✅ Encabezado del negocio
+        # Encabezado del negocio
         texto_negocio = get_business_display_text(self.db_manager)
         if texto_negocio:
             tk.Label(pop, text=texto_negocio,
@@ -384,21 +384,50 @@ class PaymentView(ttk.Frame):
         tk.Label(pop, text="💰 CONFIRMAR PAGO",
                  font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(4, 3))
 
+        # ---- Frame del subtotal y descuento ----
+        subtotal_frame = tk.Frame(pop, bg=bg)
+        subtotal_frame.pack(pady=(2, 2))
+        tk.Label(subtotal_frame, text="Subtotal:",
+                 font=("Arial", 11), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
+        subtotal_lbl = tk.Label(subtotal_frame,
+                                text=f"${subtotal:,.0f}".replace(",", "."),
+                                font=("Arial", 12, "bold"), bg=bg, fg=fg)
+        subtotal_lbl.pack(side="left")
+
+        # ---- Descuento ----
+        desc_frame = tk.Frame(pop, bg=bg)
+        desc_frame.pack(pady=(2, 4))
+        tk.Label(desc_frame, text="Descuento:",
+                 font=("Arial", 10), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
+        desc_tipo_var = tk.StringVar(value="monto")
+        ttk.Radiobutton(desc_frame, text="$", variable=desc_tipo_var,
+                        value="monto", bootstyle="info").pack(side="left", padx=2)
+        ttk.Radiobutton(desc_frame, text="%", variable=desc_tipo_var,
+                        value="porcentaje", bootstyle="info").pack(side="left", padx=2)
+        desc_var = tk.StringVar(value="0")
+        desc_entry = ttk.Entry(desc_frame, textvariable=desc_var, width=10,
+                               font=("Arial", 11), justify="center")
+        desc_entry.pack(side="left", padx=5)
+
+        # ---- Total a pagar (verde) ----
         total_frame = tk.Frame(pop, bg="#0a4d1f", padx=20, pady=8)
-        total_frame.pack(pady=(0, 6))
+        total_frame.pack(pady=(4, 6))
         tk.Label(total_frame, text="TOTAL A PAGAR",
                  font=("Arial", 9, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
-        tk.Label(total_frame, text=f"${total:,.0f}".replace(",", "."),
-                 font=("Arial", 24, "bold"),
-                 bg="#0a4d1f", fg="#a8e6a8").pack()
+        total_lbl = tk.Label(total_frame, text=f"${subtotal:,.0f}".replace(",", "."),
+                             font=("Arial", 24, "bold"),
+                             bg="#0a4d1f", fg="#a8e6a8")
+        total_lbl.pack()
 
+        # ---- Nombre cliente ----
         tk.Label(pop, text="Nombre del cliente (opcional):",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(3, 2))
         nombre_var = tk.StringVar()
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
+        # ---- Método pago ----
         tk.Label(pop, text="Método de pago:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
         metodo_var = tk.StringVar(value="Efectivo")
@@ -442,10 +471,40 @@ class PaymentView(ttk.Frame):
         ttk.Entry(abono_frame, textvariable=abono_monto_var,
                   width=12, font=("Arial", 11), justify="center").pack(side="left", padx=5)
 
+        # ---- Calcular descuento (función auxiliar) ----
+        def calcular_descuento():
+            try:
+                v = float(desc_var.get().replace(",", ".") or 0)
+            except ValueError:
+                v = 0.0
+            if v < 0:
+                v = 0.0
+            if desc_tipo_var.get() == "porcentaje":
+                if v > 100:
+                    v = 100.0
+                return subtotal * (v / 100.0)
+            else:
+                if v > subtotal:
+                    v = subtotal
+                return v
+
+        # ---- Actualizar total en tiempo real ----
+        def actualizar_total(*args):
+            try:
+                desc = calcular_descuento()
+                total_actual = max(0.0, subtotal - desc)
+                total_lbl.configure(text=f"${total_actual:,.0f}".replace(",", "."))
+            except Exception:
+                pass
+
+        desc_var.trace_add("write", actualizar_total)
+        desc_tipo_var.trace_add("write", actualizar_total)
+
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
             es_fiado = (metodo == "Fiado")
+            desc_aplicado = calcular_descuento()
             monto_abono = 0.0
             if abono_var.get() and nombre:
                 try:
@@ -459,9 +518,13 @@ class PaymentView(ttk.Frame):
                     payment_method=metodo,
                     notes=notas_var.get().strip(),
                     customer_name=nombre,
-                    is_credit=es_fiado)
+                    is_credit=es_fiado,
+                    discount=desc_aplicado)
                 msg = f"✅ Venta #{display_num:02d} registrada.\n"
-                msg += f"Total: ${tot:,.0f}".replace(",", ".")
+                msg += f"Subtotal: ${subtotal:,.0f}".replace(",", ".")
+                if desc_aplicado > 0:
+                    msg += f"\nDescuento: -${desc_aplicado:,.0f}".replace(",", ".")
+                msg += f"\nTotal: ${tot:,.0f}".replace(",", ".")
                 if es_fiado:
                     quien = nombre if nombre else "(sin nombre)"
                     deuda = self.sale_use_case.get_pending_by_customer(quien) if nombre else tot
@@ -504,15 +567,18 @@ class PaymentView(ttk.Frame):
             except Exception:
                 deuda = 0
 
+            desc_actual = calcular_descuento()
+            total_actual = max(0.0, subtotal - desc_actual)
+
             if es_fiado:
                 if deuda > 0:
-                    total_nuevo = deuda + total
+                    total_nuevo = deuda + total_actual
                     deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}  |  Deuda: ${deuda:,.0f} + Venta: ${total:,.0f} = ${total_nuevo:,.0f}".replace(",", "."),
+                        text=f"📌 FIADO a: {nombre}  |  Deuda: ${deuda:,.0f} + Venta: ${total_actual:,.0f} = ${total_nuevo:,.0f}".replace(",", "."),
                         fg="#ffd166")
                 else:
                     deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}  |  Total: ${total:,.0f}".replace(",", "."),
+                        text=f"📌 FIADO a: {nombre}  |  Total: ${total_actual:,.0f}".replace(",", "."),
                         fg="#ffd166")
             else:
                 if deuda > 0:
@@ -541,7 +607,7 @@ class PaymentView(ttk.Frame):
                         monto = deuda
 
                 if es_fiado:
-                    total_acum = deuda + total
+                    total_acum = deuda + total_actual
                     saldo = max(0, total_acum - monto)
                     if abono_var.get() and monto > 0:
                         saldo_lbl.configure(
@@ -564,6 +630,8 @@ class PaymentView(ttk.Frame):
         metodo_var.trace_add("write", refresh_ui)
         abono_var.trace_add("write", refresh_ui)
         abono_monto_var.trace_add("write", refresh_ui)
+        # Inicializar el total
+        actualizar_total()
 
         show_popup_smooth(pop)
         try:
