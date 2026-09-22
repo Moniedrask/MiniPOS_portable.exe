@@ -1,4 +1,7 @@
 import tkinter as tk
+import os
+import subprocess
+from tkinter import ttk as _tkttk  # noqa
 import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
 from presentation.views.widgets import (
@@ -20,6 +23,7 @@ class PaymentView(ttk.Frame):
         self.cart = []
         self.tooltip = None
         self._draft_loaded = False
+        self.last_ticket_path = None
         self.create_widgets()
         self.refresh_cart()
         self.after(300, lambda: self.scan_entry.focus_set())
@@ -97,19 +101,19 @@ class PaymentView(ttk.Frame):
         ttk.Label(top, text="📷 Escanear:", font=("Arial", 14, "bold"),
                   bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
-        self.scan_entry = ttk.Entry(top, textvariable=self.scan_var, width=25, font=("Arial", 14))
+        self.scan_entry = ttk.Entry(top, textvariable=self.scan_var, width=22, font=("Arial", 14))
         self.scan_entry.pack(side="left", padx=5)
         self.scan_entry.bind("<Return>", self.add_by_barcode)
 
         ttk.Label(top, text="🔍 Buscar:", font=("Arial", 11),
-                  bootstyle="inverse-dark").pack(side="left", padx=(20, 5))
+                  bootstyle="inverse-dark").pack(side="left", padx=(15, 5))
 
         self.search_var = tk.StringVar()
         self.search_entry = AutoCompleteEntry(
             top,
             values_getter=self._get_product_labels,
             on_select=self.add_by_search_value,
-            width=30,
+            width=25,
             font=("Arial", 11))
         self.search_entry.configure(textvariable=self.search_var)
         self.search_entry.pack(side="left", padx=5)
@@ -134,7 +138,6 @@ class PaymentView(ttk.Frame):
             bootstyle="dark")
         self.tree_frame.pack(fill="both", expand=True)
         self.tree.bind("<Button-3>", self._cart_context_menu)
-
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
         bottom = ttk.Frame(self, bootstyle="dark")
@@ -150,17 +153,28 @@ class PaymentView(ttk.Frame):
 
         bf = ttk.Frame(bottom, bootstyle="dark")
         bf.pack(side="right")
-        ttk.Button(bf, text="💰 COBRAR", command=self.pay,
-                   style="DarkGreen.TButton").pack(side="left", padx=5, ipady=15, ipadx=20)
+        ttk.Button(bf, text="🖨 Último Ticket", command=self.open_last_ticket,
+                   bootstyle="info").pack(side="left", padx=5, ipady=15)
+        ttk.Button(bf, text="💰 COBRAR (F12)", command=self.pay,
+                   style="DarkGreen.TButton").pack(side="left", padx=5, ipady=15, ipadx=15)
         ttk.Button(bf, text="❌ Cancelar", command=self.clear_cart,
                    bootstyle="danger").pack(side="left", padx=5, ipady=15)
 
+        # Atajo F12 para cobrar
+        self.winfo_toplevel().bind('<F12>', lambda e: self.pay(), add="+")
+
     def _get_product_labels(self):
         vals = []
-        for p in self.product_use_case.list_products():
+        for p in self.product_use_case.list_active_products():
             txt = f"{p.name}  |  {p.barcode}" if p.barcode else p.name
             vals.append(txt)
         return vals
+
+    def _find_by_barcode(self, codigo):
+        for p in self.product_use_case.list_active_products():
+            if str(p.barcode).strip() == codigo:
+                return p
+        return None
 
     def add_by_search_value(self, value):
         self.after(10, lambda: self._do_add_by_search(value))
@@ -169,12 +183,12 @@ class PaymentView(ttk.Frame):
         q = value.split("|")[0].strip() if "|" in value else value
         q_lower = q.lower()
         enc = None
-        for p in self.product_use_case.list_products():
+        for p in self.product_use_case.list_active_products():
             if str(p.barcode).strip() == q or p.name.lower() == q_lower:
                 enc = p
                 break
         if not enc:
-            for p in self.product_use_case.list_products():
+            for p in self.product_use_case.list_active_products():
                 if q_lower in p.name.lower():
                     enc = p
                     break
@@ -244,11 +258,7 @@ class PaymentView(ttk.Frame):
         codigo = self.scan_var.get().strip()
         if not codigo:
             return
-        enc = None
-        for p in self.product_use_case.list_products():
-            if str(p.barcode).strip() == codigo:
-                enc = p
-                break
+        enc = self._find_by_barcode(codigo)
         if not enc:
             MD.show_warning(f"⚠️ '{codigo}' no registrado.", "No encontrado", parent=self)
             self.scan_var.set("")
@@ -309,6 +319,7 @@ class PaymentView(ttk.Frame):
             pass
 
     def add_to_cart(self, product, cantidad):
+        precio = product.rounded_price if product.rounded_price else product.price
         for it in self.cart:
             if it["product_id"] == product.product_id:
                 it["quantity"] += cantidad
@@ -321,9 +332,9 @@ class PaymentView(ttk.Frame):
             "product_name": product.name,
             "barcode": product.barcode,
             "unit": product.unit,
-            "unit_price": product.price,
+            "unit_price": precio,
             "quantity": cantidad,
-            "subtotal": cantidad * product.price,
+            "subtotal": cantidad * precio,
         })
         self.refresh_cart()
         self._save_cart_draft()
@@ -349,6 +360,20 @@ class PaymentView(ttk.Frame):
             self.sale_use_case.clear_cart_draft()
             self.scan_entry.focus_set()
 
+    def open_last_ticket(self):
+        if not self.last_ticket_path or not os.path.exists(self.last_ticket_path):
+            MD.show_info("Aún no se ha generado ningún ticket en esta sesión.",
+                         "Sin tickets", parent=self)
+            return
+        try:
+            os.startfile(self.last_ticket_path)
+        except Exception:
+            try:
+                subprocess.Popen(['explorer', '/select,', self.last_ticket_path])
+            except Exception as e:
+                MD.show_error(f"No se pudo abrir el ticket:\n{e}\n\nRuta: {self.last_ticket_path}",
+                              "Error", parent=self)
+
     def pay(self):
         try:
             self._pay_internal()
@@ -368,118 +393,291 @@ class PaymentView(ttk.Frame):
 
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
-        pop.geometry("620x780")
+        pop.geometry("680x860")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
         bg = ttk.Style().colors.bg
         fg = ttk.Style().colors.fg
 
-        # Encabezado del negocio
-        texto_negocio = get_business_display_text(self.db_manager)
-        if texto_negocio:
-            tk.Label(pop, text=texto_negocio,
-                     font=("Arial", 11, "bold"),
-                     bg=bg, fg="#7dd87d").pack(pady=(8, 2))
+        container = tk.Frame(pop, bg=bg)
+        container.pack(fill="both", expand=True)
 
-        tk.Label(pop, text="💰 CONFIRMAR PAGO",
-                 font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(4, 3))
+        refs = {}
+        state = {"updating": False}
 
-        # ---- Frame del subtotal y descuento ----
-        subtotal_frame = tk.Frame(pop, bg=bg)
-        subtotal_frame.pack(pady=(2, 2))
-        tk.Label(subtotal_frame, text="Subtotal:",
-                 font=("Arial", 11), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
-        subtotal_lbl = tk.Label(subtotal_frame,
-                                text=f"${subtotal:,.0f}".replace(",", "."),
-                                font=("Arial", 12, "bold"), bg=bg, fg=fg)
-        subtotal_lbl.pack(side="left")
+        def build_content(parent):
+            # Encabezado negocio
+            texto_negocio = get_business_display_text(self.db_manager)
+            if texto_negocio:
+                tk.Label(parent, text=texto_negocio,
+                         font=("Arial", 11, "bold"),
+                         bg=bg, fg="#7dd87d").pack(pady=(10, 2))
 
-        # ---- Descuento ----
-        desc_frame = tk.Frame(pop, bg=bg)
-        desc_frame.pack(pady=(2, 4))
-        tk.Label(desc_frame, text="Descuento:",
-                 font=("Arial", 10), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
-        desc_tipo_var = tk.StringVar(value="monto")
-        ttk.Radiobutton(desc_frame, text="$", variable=desc_tipo_var,
-                        value="monto", bootstyle="info").pack(side="left", padx=2)
-        ttk.Radiobutton(desc_frame, text="%", variable=desc_tipo_var,
-                        value="porcentaje", bootstyle="info").pack(side="left", padx=2)
-        desc_var = tk.StringVar(value="0")
-        desc_entry = ttk.Entry(desc_frame, textvariable=desc_var, width=10,
-                               font=("Arial", 11), justify="center")
-        desc_entry.pack(side="left", padx=5)
+            tk.Label(parent, text="💰 CONFIRMAR PAGO",
+                     font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(2, 6))
 
-        # ---- Total a pagar (verde) ----
-        total_frame = tk.Frame(pop, bg="#0a4d1f", padx=20, pady=8)
-        total_frame.pack(pady=(4, 6))
-        tk.Label(total_frame, text="TOTAL A PAGAR",
-                 font=("Arial", 9, "bold"),
-                 bg="#0a4d1f", fg="#a8e6a8").pack()
-        total_lbl = tk.Label(total_frame, text=f"${subtotal:,.0f}".replace(",", "."),
-                             font=("Arial", 24, "bold"),
-                             bg="#0a4d1f", fg="#a8e6a8")
-        total_lbl.pack()
+            # Subtotal / Descuento / Total
+            sub_frame = tk.Frame(parent, bg=bg)
+            sub_frame.pack(pady=2)
+            tk.Label(sub_frame, text="Subtotal:",
+                     font=("Arial", 11), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
+            tk.Label(sub_frame, text=f"${subtotal:,.0f}".replace(",", "."),
+                     font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(side="left")
 
-        # ---- Nombre cliente ----
-        tk.Label(pop, text="Nombre del cliente (opcional):",
-                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(3, 2))
-        nombre_var = tk.StringVar()
-        ttk.Entry(pop, textvariable=nombre_var, width=40,
-                  font=("Arial", 11)).pack(pady=3, padx=20)
+            # Descuento
+            desc_frame = tk.Frame(parent, bg=bg)
+            desc_frame.pack(pady=(2, 4))
+            tk.Label(desc_frame, text="Descuento:",
+                     font=("Arial", 10), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
+            desc_tipo_var = tk.StringVar(value="monto")
+            ttk.Radiobutton(desc_frame, text="$", variable=desc_tipo_var,
+                            value="monto", bootstyle="info").pack(side="left", padx=2)
+            ttk.Radiobutton(desc_frame, text="%", variable=desc_tipo_var,
+                            value="porcentaje", bootstyle="info").pack(side="left", padx=2)
+            desc_var = tk.StringVar(value="0")
+            ttk.Entry(desc_frame, textvariable=desc_var, width=10,
+                      font=("Arial", 11), justify="center").pack(side="left", padx=5)
 
-        # ---- Método pago ----
-        tk.Label(pop, text="Método de pago:",
-                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
-        metodo_var = tk.StringVar(value="Efectivo")
-        mf = tk.Frame(pop, bg=bg)
-        mf.pack(pady=2)
-        for i, m in enumerate(["Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"]):
-            r = i // 3
-            c = i % 3
-            ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m,
-                            bootstyle="info").grid(row=r, column=c,
-                                                    padx=6, pady=1, sticky="w")
+            # Total (verde)
+            total_frame = tk.Frame(parent, bg="#0a4d1f", padx=20, pady=8)
+            total_frame.pack(pady=(4, 8))
+            tk.Label(total_frame, text="TOTAL A PAGAR",
+                     font=("Arial", 9, "bold"),
+                     bg="#0a4d1f", fg="#a8e6a8").pack()
+            total_lbl = tk.Label(total_frame, text=f"${subtotal:,.0f}".replace(",", "."),
+                                 font=("Arial", 24, "bold"),
+                                 bg="#0a4d1f", fg="#a8e6a8")
+            total_lbl.pack()
 
-        deuda_lbl = tk.Label(pop, text="", font=("Arial", 10, "bold"),
-                             bg=bg, fg="#ffd166", wraplength=580, justify="center")
-        deuda_lbl.pack(pady=3, padx=10)
+            # Nombre cliente
+            tk.Label(parent, text="Nombre del cliente:",
+                     font=("Arial", 10), bg=bg, fg=fg).pack(pady=(2, 2))
+            nombre_var = tk.StringVar()
+            ttk.Entry(parent, textvariable=nombre_var, width=40,
+                      font=("Arial", 11)).pack(pady=3, padx=20)
 
-        tk.Label(pop, text="Notas (opcional):",
-                 font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
-        notas_var = tk.StringVar()
-        ttk.Entry(pop, textvariable=notas_var, width=40,
-                  font=("Arial", 11)).pack(pady=3, padx=20)
+            # Deuda previa label
+            deuda_lbl = tk.Label(parent, text="", font=("Arial", 10, "bold"),
+                                 bg=bg, fg="#ffd166", wraplength=600, justify="center")
+            deuda_lbl.pack(pady=4, padx=10)
 
-        bottom_container = tk.Frame(pop, bg=bg)
-        bottom_container.pack(side="bottom", fill="x", pady=8)
+            # === MÉTODOS DE PAGO ===
+            tk.Label(parent, text="Métodos de pago (deja en blanco los que no uses):",
+                     font=("Arial", 10, "bold"), bg=bg, fg=fg).pack(pady=(8, 3))
 
-        bf = tk.Frame(bottom_container, bg=bg)
-        bf.pack(side="bottom", pady=4)
+            metodos_frame = tk.Frame(parent, bg=bg)
+            metodos_frame.pack(pady=2)
 
-        saldo_lbl = tk.Label(bottom_container, text="", font=("Arial", 11, "bold"),
-                             bg=bg, fg="#a8e6a8", wraplength=580, justify="center")
+            # Efectivo
+            tk.Label(metodos_frame, text="💵 Efectivo:",
+                     font=("Arial", 10), bg=bg, fg=fg).grid(row=0, column=0, padx=5, pady=2, sticky="e")
+            ef_var = tk.StringVar(value="")
+            ttk.Entry(metodos_frame, textvariable=ef_var, width=12,
+                      font=("Arial", 11), justify="center").grid(row=0, column=1, padx=5, pady=2)
 
-        abono_frame = tk.Frame(bottom_container, bg=bg)
-        abono_var = tk.BooleanVar(value=False)
-        abono_monto_var = tk.StringVar(value="")
+            # Transferencia
+            tk.Label(metodos_frame, text="🏦 Transferencia:",
+                     font=("Arial", 10), bg=bg, fg=fg).grid(row=1, column=0, padx=5, pady=2, sticky="e")
+            tr_var = tk.StringVar(value="")
+            ttk.Entry(metodos_frame, textvariable=tr_var, width=12,
+                      font=("Arial", 11), justify="center").grid(row=1, column=1, padx=5, pady=2)
 
-        ttk.Checkbutton(
-            abono_frame, text="💵 Abonar",
-            variable=abono_var, bootstyle="success-round-toggle").pack(side="left", padx=5)
-        tk.Label(abono_frame, text="Monto:", bg=bg, fg=fg,
-                 font=("Arial", 10)).pack(side="left", padx=5)
-        ttk.Entry(abono_frame, textvariable=abono_monto_var,
-                  width=12, font=("Arial", 11), justify="center").pack(side="left", padx=5)
+            # Tarjeta
+            tk.Label(metodos_frame, text="💳 Tarjeta:",
+                     font=("Arial", 10), bg=bg, fg=fg).grid(row=2, column=0, padx=5, pady=2, sticky="e")
+            ta_var = tk.StringVar(value="")
+            ttk.Entry(metodos_frame, textvariable=ta_var, width=12,
+                      font=("Arial", 11), justify="center").grid(row=2, column=1, padx=5, pady=2)
 
-        # ---- Calcular descuento (función auxiliar) ----
+            # Resumen
+            resumen_lbl = tk.Label(parent, text="", font=("Arial", 10),
+                                   bg=bg, fg="#a8e6a8", justify="center")
+            resumen_lbl.pack(pady=4, padx=10)
+
+            # Fiado
+            fiado_var = tk.BooleanVar(value=False)
+            fiado_check = ttk.Checkbutton(parent,
+                                          text="📝 Marcar el resto como FIADO",
+                                          variable=fiado_var,
+                                          bootstyle="warning-round-toggle")
+            fiado_check.pack(pady=4)
+
+            # Abono (solo si debe)
+            abono_var = tk.BooleanVar(value=False)
+            abono_monto_var = tk.StringVar(value="")
+            abono_frame = tk.Frame(parent, bg=bg)
+
+            # Notas
+            tk.Label(parent, text="Notas (opcional):",
+                     font=("Arial", 10), bg=bg, fg=fg).pack(pady=(6, 2))
+            notas_var = tk.StringVar()
+            ttk.Entry(parent, textvariable=notas_var, width=40).pack(pady=3, padx=20)
+
+            refs.update({
+                "subtotal": subtotal,
+                "total_lbl": total_lbl,
+                "desc_var": desc_var,
+                "desc_tipo_var": desc_tipo_var,
+                "nombre_var": nombre_var,
+                "deuda_lbl": deuda_lbl,
+                "ef_var": ef_var,
+                "tr_var": tr_var,
+                "ta_var": ta_var,
+                "resumen_lbl": resumen_lbl,
+                "fiado_var": fiado_var,
+                "abono_var": abono_var,
+                "abono_monto_var": abono_monto_var,
+                "abono_frame": abono_frame,
+                "notas_var": notas_var,
+            })
+
+        def build_bottom(parent):
+            def confirmar():
+                nombre = refs["nombre_var"].get().strip()
+                desc_aplicado = calcular_descuento()
+                total_actual = max(0.0, subtotal - desc_aplicado)
+
+                # Leer montos
+                try:
+                    ef = float(refs["ef_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                except ValueError:
+                    ef = 0.0
+                try:
+                    tr = float(refs["tr_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                except ValueError:
+                    tr = 0.0
+                try:
+                    ta = float(refs["ta_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                except ValueError:
+                    ta = 0.0
+
+                pagos = []
+                if ef > 0:
+                    pagos.append({"method": "Efectivo", "amount": ef})
+                if tr > 0:
+                    pagos.append({"method": "Transferencia", "amount": tr})
+                if ta > 0:
+                    pagos.append({"method": "Tarjeta", "amount": ta})
+
+                total_pagado = ef + tr + ta
+                es_fiado = refs["fiado_var"].get()
+
+                # Validar
+                if not pagos and not es_fiado:
+                    MD.show_warning("Debes ingresar al menos un método de pago o marcar FIADO.",
+                                    "Faltan datos", parent=pop)
+                    return
+
+                if total_pagado > total_actual + 0.01:
+                    MD.show_warning(
+                        f"El total ingresado (${total_pagado:,.0f}) es mayor al total a pagar (${total_actual:,.0f}).".replace(",", "."),
+                        "Monto excedido", parent=pop)
+                    return
+
+                if es_fiado and not nombre:
+                    MD.show_error("Para FIADO debes ingresar el nombre del cliente.",
+                                  "Falta nombre", parent=pop)
+                    return
+
+                if abs(total_pagado - total_actual) > 0.01 and not es_fiado:
+                    falta = total_actual - total_pagado
+                    if not MD.yesno(
+                            f"El total ingresado es ${total_pagado:,.0f} y falta ${falta:,.0f}.\n"
+                            f"¿Deseas marcar la diferencia como FIADO?".replace(",", "."),
+                            "Diferencia detectada", parent=pop) == "Yes":
+                        return
+                    es_fiado = True
+                    if not nombre:
+                        MD.show_error("Para FIADO debes ingresar el nombre del cliente.",
+                                      "Falta nombre", parent=pop)
+                        return
+
+                # Abono a deuda (si marcado)
+                monto_abono = 0.0
+                if refs["abono_var"].get() and nombre:
+                    try:
+                        monto_abono = float(
+                            refs["abono_monto_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                    except ValueError:
+                        monto_abono = 0.0
+
+                # Método principal (el de mayor monto o el primero)
+                if pagos:
+                    metodo_principal = max(pagos, key=lambda x: x["amount"])["method"]
+                else:
+                    metodo_principal = "Fiado"
+
+                try:
+                    sale_id, total_final, display_num = self.sale_use_case.create_sale(
+                        self.cart,
+                        payments=pagos if pagos else None,
+                        payment_method=metodo_principal,
+                        notes=refs["notas_var"].get().strip(),
+                        customer_name=nombre,
+                        is_credit=es_fiado,
+                        discount=desc_aplicado,
+                        register_customer_payment_amount=monto_abono)
+
+                    # Generar ticket
+                    base_dir = os.path.join(os.path.dirname(self.db_manager.db_path), "tickets")
+                    ticket_path = self.sale_use_case.generate_ticket_pdf(sale_id, base_dir=base_dir)
+                    if ticket_path:
+                        self.last_ticket_path = ticket_path
+
+                    # Mensaje final
+                    msg = f"✅ Venta #{display_num:02d} registrada.\n\n"
+                    msg += f"Subtotal: ${subtotal:,.0f}\n".replace(",", ".")
+                    if desc_aplicado > 0:
+                        msg += f"Descuento: -${desc_aplicado:,.0f}\n".replace(",", ".")
+                    msg += f"TOTAL: ${total_final:,.0f}\n".replace(",", ".")
+                    for p in pagos:
+                        msg += f"  • {p['method']}: ${p['amount']:,.0f}\n".replace(",", ".")
+                    if es_fiado:
+                        msg += f"\n📌 FIADO a: {nombre}\n"
+                        if nombre:
+                            deuda = self.sale_use_case.get_pending_by_customer(nombre)
+                            msg += f"💰 Nueva deuda: ${deuda:,.0f}\n".replace(",", ".")
+                    if monto_abono > 0:
+                        aplicado, saldo = self.sale_use_case.apply_payment_to_customer(
+                            nombre, monto_abono, method=metodo_principal)
+                        msg += f"\n💵 Abono aplicado: ${aplicado:,.0f}\n".replace(",", ".")
+                        if saldo <= 0.01:
+                            msg += "✅ Deuda SALDADA por completo.\n"
+                        else:
+                            msg += f"📌 Saldo pendiente: ${saldo:,.0f}\n".replace(",", ".")
+                    if ticket_path:
+                        msg += f"\n🖨 Ticket guardado en:\n{ticket_path}"
+
+                    self.cart = []
+                    self.refresh_cart()
+                    self.sale_use_case.clear_cart_draft()
+                    pop.destroy()
+                    MD.show_info(msg, "Venta Exitosa", parent=self)
+                    self.scan_entry.focus_set()
+
+                    # Ofrecer abrir el ticket
+                    if ticket_path:
+                        r = MD.yesno("¿Deseas abrir el ticket ahora?",
+                                     "Abrir ticket", parent=self)
+                        if r == "Yes":
+                            self.open_last_ticket()
+                except Exception as e:
+                    MD.show_error(f"Error: {e}", "Error", parent=pop)
+
+            ttk.Button(parent, text="✅ Confirmar Pago", command=confirmar,
+                       style="DarkGreen.TButton").pack(side="left", padx=8, ipady=8, ipadx=15)
+            ttk.Button(parent, text="Cancelar",
+                       command=pop.destroy).pack(side="left", padx=8, ipady=8)
+
+        # ====== Lógica de recálculo ======
         def calcular_descuento():
             try:
-                v = float(desc_var.get().replace(",", ".") or 0)
+                v = float(refs["desc_var"].get().replace(",", ".") or 0)
             except ValueError:
                 v = 0.0
             if v < 0:
                 v = 0.0
-            if desc_tipo_var.get() == "porcentaje":
+            if refs["desc_tipo_var"].get() == "porcentaje":
                 if v > 100:
                     v = 100.0
                 return subtotal * (v / 100.0)
@@ -488,149 +686,75 @@ class PaymentView(ttk.Frame):
                     v = subtotal
                 return v
 
-        # ---- Actualizar total en tiempo real ----
         def actualizar_total(*args):
             try:
                 desc = calcular_descuento()
                 total_actual = max(0.0, subtotal - desc)
-                total_lbl.configure(text=f"${total_actual:,.0f}".replace(",", "."))
+                refs["total_lbl"].configure(text=f"${total_actual:,.0f}".replace(",", "."))
+                actualizar_resumen()
             except Exception:
                 pass
 
-        desc_var.trace_add("write", actualizar_total)
-        desc_tipo_var.trace_add("write", actualizar_total)
-
-        def confirmar():
-            nombre = nombre_var.get().strip()
-            metodo = metodo_var.get()
-            es_fiado = (metodo == "Fiado")
-            desc_aplicado = calcular_descuento()
-            monto_abono = 0.0
-            if abono_var.get() and nombre:
-                try:
-                    monto_abono = float(
-                        abono_monto_var.get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                except ValueError:
-                    monto_abono = 0.0
+        def actualizar_resumen(*args):
             try:
-                _sid, tot, display_num = self.sale_use_case.create_sale(
-                    self.cart,
-                    payment_method=metodo,
-                    notes=notas_var.get().strip(),
-                    customer_name=nombre,
-                    is_credit=es_fiado,
-                    discount=desc_aplicado)
-                msg = f"✅ Venta #{display_num:02d} registrada.\n"
-                msg += f"Subtotal: ${subtotal:,.0f}".replace(",", ".")
-                if desc_aplicado > 0:
-                    msg += f"\nDescuento: -${desc_aplicado:,.0f}".replace(",", ".")
-                msg += f"\nTotal: ${tot:,.0f}".replace(",", ".")
-                if es_fiado:
-                    quien = nombre if nombre else "(sin nombre)"
-                    deuda = self.sale_use_case.get_pending_by_customer(quien) if nombre else tot
-                    msg += f"\n\n📌 FIADO a: {quien}"
-                    msg += f"\n💰 Nueva deuda total: ${deuda:,.0f}".replace(",", ".")
-                if monto_abono > 0 and nombre:
-                    aplicado, saldo = self.sale_use_case.apply_payment_to_customer(
-                        nombre, monto_abono)
-                    msg += f"\n\n💵 Abono aplicado: ${aplicado:,.0f}".replace(",", ".")
-                    if saldo <= 0.01:
-                        msg += "\n✅ Deuda SALDADA por completo."
-                    else:
-                        msg += f"\n📌 Saldo pendiente: ${saldo:,.0f}".replace(",", ".")
-                self.cart = []
-                self.refresh_cart()
-                self.sale_use_case.clear_cart_draft()
-                pop.destroy()
-                MD.show_info(msg, "Venta Exitosa", parent=self)
-                self.scan_entry.focus_set()
-            except Exception as e:
-                MD.show_error(f"Error: {e}", "Error", parent=pop)
+                desc = calcular_descuento()
+                total_actual = max(0.0, subtotal - desc)
+                ef = float(refs["ef_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                tr = float(refs["tr_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                ta = float(refs["ta_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
+                total_ing = ef + tr + ta
+                falta = total_actual - total_ing
+                if falta <= 0.01:
+                    txt = f"✅ Ingresado: ${total_ing:,.0f}".replace(",", ".")
+                else:
+                    txt = f"💵 Ingresado: ${total_ing:,.0f}   |   Falta: ${falta:,.0f}".replace(",", ".")
+                refs["resumen_lbl"].configure(text=txt)
+            except ValueError:
+                refs["resumen_lbl"].configure(text="")
 
-        ttk.Button(bf, text="✅ Confirmar Pago", command=confirmar,
-                   style="DarkGreen.TButton").pack(side="left", padx=8, ipady=8, ipadx=15)
-        ttk.Button(bf, text="Cancelar",
-                   command=pop.destroy).pack(side="left", padx=8, ipady=8)
-
-        def refresh_ui(*args):
-            nombre = nombre_var.get().strip()
-            es_fiado = (metodo_var.get() == "Fiado")
-            abono_frame.pack_forget()
-            saldo_lbl.pack_forget()
+        def on_nombre_change(*args):
+            nombre = refs["nombre_var"].get().strip()
+            # Limpiar frame de abono
+            for w in refs["abono_frame"].winfo_children():
+                w.destroy()
+            refs["abono_var"].set(False)
+            refs["abono_monto_var"].set("")
 
             if not nombre:
-                deuda_lbl.configure(text="")
+                refs["deuda_lbl"].configure(text="")
+                refs["abono_frame"].pack_forget()
                 return
-
             try:
                 deuda = self.sale_use_case.get_pending_by_customer(nombre)
             except Exception:
                 deuda = 0
-
-            desc_actual = calcular_descuento()
-            total_actual = max(0.0, subtotal - desc_actual)
-
-            if es_fiado:
-                if deuda > 0:
-                    total_nuevo = deuda + total_actual
-                    deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}  |  Deuda: ${deuda:,.0f} + Venta: ${total_actual:,.0f} = ${total_nuevo:,.0f}".replace(",", "."),
-                        fg="#ffd166")
-                else:
-                    deuda_lbl.configure(
-                        text=f"📌 FIADO a: {nombre}  |  Total: ${total_actual:,.0f}".replace(",", "."),
-                        fg="#ffd166")
+            if deuda > 0:
+                refs["deuda_lbl"].configure(
+                    text=f"⚠️ {nombre} ya debe ${deuda:,.0f} de fiados anteriores.".replace(",", "."),
+                    fg="#ffd166")
+                # Mostrar checkbox de abono
+                ttk.Checkbutton(refs["abono_frame"], text="💵 Abonar",
+                                variable=refs["abono_var"],
+                                bootstyle="success-round-toggle").pack(side="left", padx=5)
+                tk.Label(refs["abono_frame"], text="Monto:", bg=bg, fg=fg,
+                         font=("Arial", 10)).pack(side="left", padx=5)
+                ttk.Entry(refs["abono_frame"], textvariable=refs["abono_monto_var"],
+                          width=12, font=("Arial", 11), justify="center").pack(side="left", padx=5)
+                refs["abono_frame"].pack(pady=4)
             else:
-                if deuda > 0:
-                    deuda_lbl.configure(
-                        text=f"⚠️ {nombre} debe ${deuda:,.0f} de fiados anteriores (esta venta es aparte).".replace(",", "."),
-                        fg="#ffd166")
-                else:
-                    deuda_lbl.configure(
-                        text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
+                refs["deuda_lbl"].configure(
+                    text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
+                refs["abono_frame"].pack_forget()
 
-            if not (deuda > 0 or es_fiado):
-                return
+        # Traces
+        refs["desc_var"].trace_add("write", actualizar_total)
+        refs["desc_tipo_var"].trace_add("write", actualizar_total)
+        refs["ef_var"].trace_add("write", actualizar_resumen)
+        refs["tr_var"].trace_add("write", actualizar_resumen)
+        refs["ta_var"].trace_add("write", actualizar_resumen)
+        refs["nombre_var"].trace_add("write", on_nombre_change)
 
-            saldo_lbl.pack(side="bottom", pady=2)
-            abono_frame.pack(side="bottom", pady=4)
-
-            try:
-                monto = 0.0
-                if abono_var.get():
-                    try:
-                        monto = float(abono_monto_var.get()
-                                      .replace("$", "").replace(".", "").replace(",", ".") or 0)
-                    except ValueError:
-                        monto = 0.0
-                    if monto > deuda:
-                        monto = deuda
-
-                if es_fiado:
-                    total_acum = deuda + total_actual
-                    saldo = max(0, total_acum - monto)
-                    if abono_var.get() and monto > 0:
-                        saldo_lbl.configure(
-                            text=f"💵 Nueva deuda después del abono: ${saldo:,.0f}".replace(",", "."))
-                    else:
-                        saldo_lbl.configure(
-                            text=f"💵 Nueva deuda total: ${total_acum:,.0f}".replace(",", "."))
-                else:
-                    if abono_var.get() and monto > 0:
-                        saldo = max(0, deuda - monto)
-                        saldo_lbl.configure(
-                            text=f"💵 Saldo de la deuda anterior: ${saldo:,.0f}".replace(",", "."))
-                    else:
-                        saldo_lbl.configure(
-                            text=f"💵 Deuda anterior: ${deuda:,.0f}".replace(",", "."))
-            except Exception:
-                saldo_lbl.configure(text="")
-
-        nombre_var.trace_add("write", refresh_ui)
-        metodo_var.trace_add("write", refresh_ui)
-        abono_var.trace_add("write", refresh_ui)
-        abono_monto_var.trace_add("write", refresh_ui)
-        # Inicializar el total
+        make_scrollable(container, build_content, build_bottom, bg=bg)
         actualizar_total()
 
         show_popup_smooth(pop)
