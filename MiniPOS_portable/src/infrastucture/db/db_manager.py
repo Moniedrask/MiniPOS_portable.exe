@@ -30,6 +30,8 @@ class DBManager:
         self._check_timestamp_columns()
         self._check_group_column()
         self._check_cost_columns()
+        self._check_fase5_columns()
+        self._check_price_history_table()
         self._check_sales_tables()
         self._check_credit_columns()
         self._check_payment_column()
@@ -48,7 +50,22 @@ class DBManager:
             unit_type TEXT DEFAULT 'unidad', unit TEXT DEFAULT 'unidad',
             created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '',
             group_name TEXT DEFAULT '',
-            cost REAL DEFAULT 0, margin_percent REAL DEFAULT 20)''')
+            cost REAL DEFAULT 0, margin_percent REAL DEFAULT 20,
+            rounded_price REAL DEFAULT 0, round_enabled INTEGER DEFAULT 0,
+            round_to INTEGER DEFAULT 100,
+            package_cost REAL DEFAULT 0, package_units INTEGER DEFAULT 0,
+            is_package INTEGER DEFAULT 0,
+            paused INTEGER DEFAULT 0,
+            expiry_date TEXT DEFAULT '')''')
+        c.execute('''CREATE TABLE IF NOT EXISTS price_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            old_price REAL DEFAULT 0,
+            new_price REAL DEFAULT 0,
+            old_rounded_price REAL DEFAULT 0,
+            new_rounded_price REAL DEFAULT 0,
+            FOREIGN KEY (product_id) REFERENCES products(product_id))''')
         conn.commit()
         conn.close()
 
@@ -94,7 +111,6 @@ class DBManager:
             self.conn.commit()
 
     def _check_cost_columns(self):
-        """Columnas de costo y % de ganancia."""
         cur = self.conn.cursor()
         cur.execute("PRAGMA table_info(products)")
         cols = [c[1] for c in cur.fetchall()]
@@ -104,6 +120,60 @@ class DBManager:
         if 'margin_percent' not in cols:
             cur.execute("ALTER TABLE products ADD COLUMN margin_percent REAL DEFAULT 20")
             self.conn.commit()
+
+    # ========== FASE 5 ==========
+    def _check_fase5_columns(self):
+        """Columnas nuevas de la Fase 5."""
+        cur = self.conn.cursor()
+        cur.execute("PRAGMA table_info(products)")
+        cols = [c[1] for c in cur.fetchall()]
+
+        if 'rounded_price' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN rounded_price REAL DEFAULT 0")
+            # Inicializar con el precio actual
+            cur.execute("UPDATE products SET rounded_price = price WHERE rounded_price = 0")
+            self.conn.commit()
+
+        if 'round_enabled' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN round_enabled INTEGER DEFAULT 0")
+            self.conn.commit()
+
+        if 'round_to' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN round_to INTEGER DEFAULT 100")
+            self.conn.commit()
+
+        if 'package_cost' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN package_cost REAL DEFAULT 0")
+            self.conn.commit()
+
+        if 'package_units' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN package_units INTEGER DEFAULT 0")
+            self.conn.commit()
+
+        if 'is_package' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN is_package INTEGER DEFAULT 0")
+            self.conn.commit()
+
+        if 'paused' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN paused INTEGER DEFAULT 0")
+            self.conn.commit()
+
+        if 'expiry_date' not in cols:
+            cur.execute("ALTER TABLE products ADD COLUMN expiry_date TEXT DEFAULT ''")
+            self.conn.commit()
+
+    def _check_price_history_table(self):
+        cur = self.conn.cursor()
+        cur.execute('''CREATE TABLE IF NOT EXISTS price_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            old_price REAL DEFAULT 0,
+            new_price REAL DEFAULT 0,
+            old_rounded_price REAL DEFAULT 0,
+            new_rounded_price REAL DEFAULT 0,
+            FOREIGN KEY (product_id) REFERENCES products(product_id))''')
+        self.conn.commit()
 
     def _check_sales_tables(self):
         cur = self.conn.cursor()
