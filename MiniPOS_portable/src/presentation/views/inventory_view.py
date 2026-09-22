@@ -1,6 +1,9 @@
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap import Toplevel
+from ttkbootstrap.dialogs import Messagebox
+from datetime import datetime, timedelta
+import os
 from presentation.views.widgets import (
     apply_titlebar_theme, center_window, show_popup_smooth,
     get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
@@ -16,6 +19,16 @@ def _parse_float(s):
         return 0.0
 
 
+def _round_up(value, to):
+    """Redondea un precio hacia arriba al múltiplo más cercano."""
+    try:
+        if to <= 0:
+            return value
+        return int(((value + to - 1) // to) * to)
+    except Exception:
+        return int(value)
+
+
 class InventoryView(ttk.Frame):
     def __init__(self, parent, product_use_case, db_manager,
                  get_theme_func, on_business_click=None):
@@ -29,7 +42,11 @@ class InventoryView(ttk.Frame):
         self.filtered_products = []
         self.tooltip = None
         self._draft_checked = False
-        self.low_stock_threshold = self._get_low_stock_threshold()
+
+        self.low_stock_threshold = self._get_int_setting("low_stock_threshold", 5)
+        self.expiry_days_warning = self._get_int_setting("expiry_days_warning", 15)
+        self.expiry_days_soon = self._get_int_setting("expiry_days_soon", 7)
+        self.expiry_days_offer = self._get_int_setting("expiry_days_offer", 2)
 
         self.create_widgets()
         self.load_products()
@@ -37,11 +54,11 @@ class InventoryView(ttk.Frame):
         self.after(800, self._check_product_draft)
         self._keep_scanner_focused()
 
-    def _get_low_stock_threshold(self):
+    def _get_int_setting(self, key, default):
         try:
-            return int(self.db_manager.get_setting("low_stock_threshold", "5") or "5")
+            return int(self.db_manager.get_setting(key, str(default)) or default)
         except Exception:
-            return 5
+            return default
 
     def _is_dark(self):
         return True
@@ -115,25 +132,35 @@ class InventoryView(ttk.Frame):
             from_draft=True,
             group_name=data.get("group_name", ""),
             cost=_parse_float(data.get("cost", 0)),
-            margin_percent=_parse_float(data.get("margin_percent", 20)))
+            margin_percent=_parse_float(data.get("margin_percent", 20)),
+            rounded_price=_parse_float(data.get("rounded_price", 0)),
+            round_enabled=1 if data.get("round_enabled") else 0,
+            round_to=int(_parse_float(data.get("round_to", 100))),
+            package_cost=_parse_float(data.get("package_cost", 0)),
+            package_units=int(_parse_float(data.get("package_units", 0))),
+            is_package=1 if data.get("is_package") else 0,
+            paused=1 if data.get("paused") else 0,
+            expiry_date=data.get("expiry_date", ""))
 
     def create_widgets(self):
+        # ---- Barra escaneo ----
         scan_frame = ttk.Frame(self, bootstyle="dark")
-        scan_frame.pack(padx=10, pady=(10, 3), fill="x")
-        ttk.Label(scan_frame, text="📷 Escanear código:",
+        scan_frame.pack(padx=10, pady=(8, 3), fill="x")
+        ttk.Label(scan_frame, text="📷 Escanear:",
                   font=("Arial", 11, "bold"), bootstyle="inverse-dark").pack(side="left", padx=5)
         self.scan_var = tk.StringVar()
         self.scan_entry = ttk.Entry(scan_frame, textvariable=self.scan_var,
-                                    width=35, font=("Arial", 11))
+                                    width=30, font=("Arial", 11))
         self.scan_entry.pack(side="left", padx=5)
         self.scan_entry.bind("<Return>", self.lookup_barcode)
         ttk.Button(scan_frame, text="🔍 Buscar Código",
                    command=lambda: self.lookup_barcode(None),
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
+        # ---- Búsqueda ----
         search_frame = ttk.Frame(self, bootstyle="dark")
         search_frame.pack(padx=10, pady=3, fill="x")
-        ttk.Label(search_frame, text="🔍 Búsqueda (autocompleta):",
+        ttk.Label(search_frame, text="🔍 Búsqueda:",
                   bootstyle="inverse-dark").pack(side="left", padx=5)
 
         self.search_var = tk.StringVar()
@@ -141,7 +168,7 @@ class InventoryView(ttk.Frame):
             search_frame,
             values_getter=self._get_product_labels,
             on_select=self._on_search_select,
-            width=40,
+            width=35,
             font=("Arial", 11))
         self.search_entry.configure(textvariable=self.search_var)
         self.search_entry.pack(side="left", padx=5)
@@ -149,34 +176,41 @@ class InventoryView(ttk.Frame):
 
         ttk.Button(search_frame, text="Limpiar", command=self._clear_search,
                    bootstyle="secondary").pack(side="left", padx=5)
+        self.chk_paused = tk.BooleanVar(value=False)
+        ttk.Checkbutton(search_frame, text="👁 Incluir pausados",
+                        variable=self.chk_paused,
+                        command=self.load_products,
+                        bootstyle="info-round-toggle").pack(side="left", padx=10)
 
-        # Info alerta stock bajo
-        self.low_stock_lbl = tk.Label(
+        # ---- Alerta de vencimiento / stock ----
+        self.alert_lbl = tk.Label(
             self, text="", font=("Arial", 10, "italic"),
-            bg=ttk.Style().colors.bg, fg="#ffbbbb")
-        self.low_stock_lbl.pack(padx=10, pady=1, anchor="w")
+            bg=ttk.Style().colors.bg, fg="#ffbbbb", justify="left", anchor="w")
+        self.alert_lbl.pack(padx=10, pady=1, fill="x")
 
+        # ---- Botón agregar (abajo) ----
         btn_frame = ttk.Frame(self, bootstyle="dark")
         btn_frame.pack(side="bottom", pady=6, fill="x")
         ttk.Button(btn_frame, text="➕ Agregar Producto (F2)",
                    command=self.add_product_popup,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
+        # ---- Tabla ----
         frame = ttk.Frame(self, bootstyle="dark")
         frame.pack(padx=10, pady=3, fill="both", expand=True)
 
         self.columns = [
-            ("ID", "ID", 45, "center"),
-            ("Name", "Producto", 190, "w"),
-            ("Group", "Grupo", 110, "w"),
-            ("Barcode", "Código", 125, "w"),
-            ("Cost", "Costo", 80, "e"),
-            ("Margin", "% Gan.", 70, "center"),
-            ("Price", "Precio", 90, "e"),
-            ("Unit", "Unidad", 65, "center"),
-            ("Stock", "Stock", 70, "center"),
-            ("Created", "Creado", 125, "center"),
-            ("Updated", "Actualizado", 125, "center"),
+            ("ID", "ID", 40, "center"),
+            ("Name", "Producto", 170, "w"),
+            ("Group", "Grupo", 100, "w"),
+            ("Barcode", "Código", 115, "w"),
+            ("Cost", "Costo", 75, "e"),
+            ("Margin", "%", 55, "center"),
+            ("Price", "Precio", 80, "e"),
+            ("Rounded", "Redondeado", 90, "e"),
+            ("Stock", "Stock", 60, "center"),
+            ("Expiry", "Vence", 95, "center"),
+            ("Status", "Estado", 80, "center"),
         ]
 
         self.tree_frame, self.tree = make_scrolled_treeview(
@@ -190,9 +224,16 @@ class InventoryView(ttk.Frame):
             self.tree.heading(key, text=label + "  ⇅",
                               command=lambda k=key: self.sort_by(k))
 
-        # Tag para stock bajo
+        # Tags de color
         try:
-            self.tree.tag_configure("low_stock", background="#5c1a1a", foreground="#ffcccc")
+            self.tree.tag_configure("low_stock",
+                                    background="#5c1a1a", foreground="#ffcccc")
+            self.tree.tag_configure("expired",
+                                    background="#6e1515", foreground="#ffffff")
+            self.tree.tag_configure("expiring_soon",
+                                    background="#5c3d0f", foreground="#ffd166")
+            self.tree.tag_configure("paused",
+                                    background="#333333", foreground="#888888")
         except Exception:
             pass
 
@@ -200,6 +241,9 @@ class InventoryView(ttk.Frame):
         self.tree.bind("<Button-3>", self.show_context_menu)
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
+    # =========================================================
+    # UTILIDADES DE PRODUCTOS
+    # =========================================================
     def _get_product_labels(self):
         vals = []
         for p in self.product_use_case.list_products():
@@ -247,44 +291,75 @@ class InventoryView(ttk.Frame):
                 "Cost": lambda p: p.cost,
                 "Margin": lambda p: p.margin_percent,
                 "Price": lambda p: p.price,
-                "Unit": lambda p: (p.unit or ""),
+                "Rounded": lambda p: p.rounded_price,
                 "Stock": lambda p: p.stock,
-                "Created": lambda p: p.created_at or "",
-                "Updated": lambda p: p.updated_at or "",
+                "Expiry": lambda p: p.expiry_date or "",
+                "Status": lambda p: p.paused,
             }
             products = sorted(products,
                               key=keys.get(self.sort_col, lambda p: p.product_id),
                               reverse=self.sort_reverse)
         for p in products:
             self._insert_product_row(p)
-        self._update_low_stock_label(products)
+        self._update_alerts(products)
 
-    def _update_low_stock_label(self, products):
+    def _update_alerts(self, products):
         try:
-            bajos = [p for p in products if p.stock <= self.low_stock_threshold]
+            alertas = []
+            # Stock bajo
+            bajos = [p for p in products
+                     if not p.paused and p.stock <= self.low_stock_threshold]
             if bajos:
-                self.low_stock_lbl.configure(
-                    text=f"⚠️ {len(bajos)} producto(s) con stock bajo (≤ {self.low_stock_threshold})")
-            else:
-                self.low_stock_lbl.configure(text="")
+                alertas.append(f"⚠️ {len(bajos)} producto(s) con stock bajo (≤ {self.low_stock_threshold})")
+            # Vencimiento
+            hoy = datetime.now().date()
+            vencidos = 0
+            por_vencer = 0
+            para_oferta = 0
+            for p in products:
+                if not p.expiry_date or p.paused:
+                    continue
+                try:
+                    fecha = datetime.strptime(p.expiry_date, "%Y-%m-%d").date()
+                except Exception:
+                    continue
+                dias = (fecha - hoy).days
+                if dias < 0:
+                    vencidos += 1
+                elif dias <= self.expiry_days_warning:
+                    por_vencer += 1
+                if 0 <= dias <= self.expiry_days_offer:
+                    para_oferta += 1
+            if vencidos:
+                alertas.append(f"🔴 {vencidos} producto(s) VENCIDO(S)")
+            if por_vencer:
+                alertas.append(f"🟡 {por_vencer} producto(s) por vencer (≤ {self.expiry_days_warning} días)")
+            if para_oferta:
+                alertas.append(f"💡 {para_oferta} producto(s) en zona de oferta (≤ {self.expiry_days_offer} días)")
+            self.alert_lbl.configure(text="  |  ".join(alertas) if alertas else "")
         except Exception:
             pass
 
     def load_products(self):
-        self.low_stock_threshold = self._get_low_stock_threshold()
-        self.filtered_products = self.product_use_case.list_products()
+        if getattr(self, "chk_paused", None) and self.chk_paused.get():
+            self.filtered_products = self.product_use_case.list_products()
+        else:
+            self.filtered_products = self.product_use_case.list_active_products()
+        # Aplicar filtro de búsqueda si hay
         self._render_products(self.filtered_products)
 
     def filter_products(self, event=None):
         q = self.search_var.get().lower().strip()
         if "|" in q:
             q = q.split("|")[0].strip()
-        prods = self.product_use_case.list_products()
+        base = self.product_use_case.list_active_products() \
+            if not (getattr(self, "chk_paused", None) and self.chk_paused.get()) \
+            else self.product_use_case.list_products()
         if not q:
-            self.filtered_products = prods
+            self.filtered_products = base
         else:
             self.filtered_products = [
-                p for p in prods
+                p for p in base
                 if q in (p.name or "").lower()
                 or q in str(p.barcode or "").lower()
                 or q in (p.group_name or "").lower()]
@@ -292,18 +367,51 @@ class InventoryView(ttk.Frame):
 
     def _insert_product_row(self, p):
         precio = f"${p.price:,.0f}".replace(",", ".")
+        redondeado = f"${p.rounded_price:,.0f}".replace(",", ".") if p.rounded_price else "-"
         costo = f"${p.cost:,.0f}".replace(",", ".") if p.cost > 0 else "-"
         margen = f"{p.margin_percent:.0f}%" if p.margin_percent else "-"
+
+        # Vencimiento
+        venc = p.expiry_date or "-"
+        estado = "Activo"
         tags = ()
         icono = ""
-        if p.stock <= self.low_stock_threshold:
-            tags = ("low_stock",)
-            icono = "⚠ "
-        self.tree.insert("", "end", values=(
-            p.product_id, icono + (p.name or ""), p.group_name or "-", p.barcode,
-            costo, margen, precio, p.unit, f"{p.stock:g}",
-            p.created_at or "-", p.updated_at or "-"), tags=tags)
 
+        if p.paused:
+            estado = "⏸ Pausado"
+            tags = ("paused",)
+        else:
+            # Vencimiento
+            if p.expiry_date:
+                try:
+                    fecha = datetime.strptime(p.expiry_date, "%Y-%m-%d").date()
+                    dias = (fecha - datetime.now().date()).days
+                    if dias < 0:
+                        estado = "🔴 Vencido"
+                        tags = ("expired",)
+                    elif dias <= self.expiry_days_soon:
+                        estado = f"🟡 Vence en {dias}d"
+                        tags = ("expiring_soon",)
+                    elif dias <= self.expiry_days_warning:
+                        estado = f"🟠 Vence en {dias}d"
+                        tags = ("expiring_soon",)
+                    else:
+                        estado = "✅ OK"
+                except Exception:
+                    pass
+            # Stock bajo (solo si no está vencido)
+            if not tags and p.stock <= self.low_stock_threshold:
+                tags = ("low_stock",)
+                icono = "⚠ "
+
+        self.tree.insert("", "end", values=(
+            p.product_id, icono + (p.name or ""), p.group_name or "-", p.barcode or "-",
+            costo, margen, precio, redondeado, f"{p.stock:g}",
+            venc, estado), tags=tags)
+
+    # =========================================================
+    # MENÚ CONTEXTUAL
+    # =========================================================
     def show_context_menu(self, event):
         item = self.tree.identify_row(event.y)
         if not item:
@@ -320,13 +428,44 @@ class InventoryView(ttk.Frame):
                        font=get_menu_font())
         menu.add_command(label="👁️  Ver detalle", command=lambda: self.view_product_popup(None))
         menu.add_command(label="✏️  Editar producto", command=lambda: self.open_edit_from_item(item))
+        menu.add_command(label="📜  Historial de precios", command=lambda: self.open_price_history(item))
         menu.add_command(label="🔗  Agrupar similares", command=lambda: self.group_from_item(item))
+        menu.add_separator()
+        # Pausar/Reanudar
+        try:
+            vals = self.tree.item(item, 'values')
+            pid = vals[0]
+            prod = self.product_use_case.get_product(pid)
+            if prod:
+                if prod.paused:
+                    menu.add_command(label="▶️  Reactivar producto",
+                                     command=lambda: self.toggle_pause(pid, 0))
+                else:
+                    menu.add_command(label="⏸  Pausar producto",
+                                     command=lambda: self.toggle_pause(pid, 1))
+        except Exception:
+            pass
         menu.add_separator()
         menu.add_command(label="🗑️  Eliminar producto", command=lambda: self.confirm_delete(item))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def toggle_pause(self, product_id, paused):
+        try:
+            p = self.product_use_case.get_product(product_id)
+            if not p:
+                return
+            self.product_use_case.update_product(
+                product_id, p.name, p.barcode, p.price, p.stock,
+                p.unit_type, p.unit, p.group_name, p.cost, p.margin_percent,
+                p.rounded_price, p.round_enabled, p.round_to,
+                p.package_cost, p.package_units, p.is_package,
+                paused, p.expiry_date, register_history=False)
+            self.load_products()
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
 
     def group_from_item(self, item):
         try:
@@ -349,25 +488,23 @@ class InventoryView(ttk.Frame):
         if reload:
             self.load_products()
 
+    # =========================================================
+    # DETALLE DEL PRODUCTO (con historial de precios)
+    # =========================================================
     def view_product_popup(self, event=None):
         sel = self.tree.selection()
         if not sel:
             return
         vals = self.tree.item(sel[0], 'values')
         pid = vals[0]
-        name = vals[1].replace("⚠ ", "")
-        group = vals[2]
-        barcode = vals[3]
-        cost = vals[4]
-        margin = vals[5]
-        price = vals[6]
-        unit = vals[7]
-        stock = vals[8]
-        created, updated = vals[9], vals[10]
+
+        prod = self.product_use_case.get_product(pid)
+        if not prod:
+            return
 
         popup = Toplevel(self)
         popup.title("Detalle del Producto")
-        popup.geometry("500x620")
+        popup.geometry("560x760")
         popup.transient(self.winfo_toplevel())
         popup.withdraw()
 
@@ -375,26 +512,128 @@ class InventoryView(ttk.Frame):
         fg = ttk.Style().colors.fg
 
         tk.Label(popup, text="📋 DETALLE DEL PRODUCTO",
-                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
+                 font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
 
         container = tk.Frame(popup, bg=bg)
         container.pack(fill="both", expand=True, padx=10, pady=5)
 
         def build_content(parent):
-            for t, f in [(f"ID: {pid}", ("Arial", 10)),
-                         (f"Nombre: {name}", ("Arial", 12, "bold")),
-                         (f"Grupo: {group if group != '-' else '(sin grupo)'}", ("Arial", 10, "italic")),
-                         (f"Código de Barras: {barcode}", ("Arial", 10)),
-                         (f"Costo: {cost}", ("Arial", 11)),
-                         (f"Margen de ganancia: {margin}", ("Arial", 11)),
-                         (f"Precio de venta: {price}", ("Arial", 12, "bold")),
-                         (f"Unidad: {unit}", ("Arial", 11)),
-                         (f"Stock: {stock}", ("Arial", 11)),
-                         ("", ("Arial", 4)),
-                         (f"📅 Creado: {created}", ("Arial", 10, "italic")),
-                         (f"🔄 Actualizado: {updated}", ("Arial", 10, "italic"))]:
-                tk.Label(parent, text=t, font=f, bg=bg, fg=fg,
-                         anchor="w", justify="left").pack(fill="x", pady=4, padx=10)
+            # ---------- Info básica ----------
+            info_frame = tk.Frame(parent, bg=bg)
+            info_frame.pack(fill="x", padx=10, pady=(5, 10))
+
+            def add_row(label, value, bold=False, color=None):
+                row = tk.Frame(info_frame, bg=bg)
+                row.pack(fill="x", pady=2)
+                tk.Label(row, text=label, font=("Arial", 10),
+                         bg=bg, fg="#888888", width=22, anchor="w").pack(side="left")
+                tk.Label(row, text=str(value),
+                         font=("Arial", 11, "bold") if bold else ("Arial", 10),
+                         bg=bg, fg=color or fg, anchor="w",
+                         justify="left", wraplength=320).pack(side="left", fill="x", expand=True)
+
+            add_row("ID:", prod.product_id)
+            add_row("Nombre:", prod.name, bold=True)
+            add_row("Grupo:", prod.group_name or "(sin grupo)")
+            add_row("Código de Barras:", prod.barcode or "(vacío)")
+            add_row("Unidad:", prod.unit)
+            add_row("Costo:", f"${prod.cost:,.0f}".replace(",", ".") if prod.cost else "-")
+            add_row("Margen %:", f"{prod.margin_percent:.0f}%" if prod.margin_percent else "-")
+            add_row("Precio real:", f"${prod.price:,.0f}".replace(",", "."), bold=True)
+            if prod.round_enabled and prod.rounded_price != prod.price:
+                add_row("Precio redondeado:",
+                        f"${prod.rounded_price:,.0f}".replace(",", "."),
+                        bold=True, color="#7dd87d")
+                add_row("(Se cobra el redondeado)",
+                        f"al {prod.round_to}", color="#7dd87d")
+            if prod.is_package and prod.package_units > 0:
+                add_row("📦 Costo paquete:",
+                        f"${prod.package_cost:,.0f}".replace(",", "."))
+                add_row("📦 Unidades x paquete:",
+                        f"{prod.package_units}")
+                try:
+                    unit_cost = prod.package_cost / prod.package_units
+                    add_row("📦 Costo unitario:",
+                            f"${unit_cost:,.2f}".replace(",", "."))
+                except Exception:
+                    pass
+            add_row("Stock:", f"{prod.stock:g}")
+            if prod.expiry_date:
+                add_row("📅 Vence:", prod.expiry_date)
+                try:
+                    fecha = datetime.strptime(prod.expiry_date, "%Y-%m-%d").date()
+                    dias = (fecha - datetime.now().date()).days
+                    if dias < 0:
+                        add_row("Estado vencimiento:",
+                                f"🔴 VENCIDO (hace {abs(dias)} días)",
+                                color="#ff6b6b")
+                    elif dias == 0:
+                        add_row("Estado vencimiento:",
+                                "🔴 Vence HOY", color="#ff6b6b")
+                    elif dias <= self.expiry_days_offer:
+                        add_row("Estado vencimiento:",
+                                f"🔴 Vence en {dias} días - ¡PONER EN OFERTA!",
+                                color="#ff6b6b")
+                    elif dias <= self.expiry_days_soon:
+                        add_row("Estado vencimiento:",
+                                f"🟡 Vence en {dias} días", color="#ffd166")
+                    elif dias <= self.expiry_days_warning:
+                        add_row("Estado vencimiento:",
+                                f"🟠 Vence en {dias} días", color="#ffa94d")
+                    else:
+                        add_row("Estado vencimiento:",
+                                f"✅ OK (vence en {dias} días)", color="#7dd87d")
+                except Exception:
+                    pass
+            if prod.paused:
+                add_row("Estado:", "⏸ PAUSADO (no se vende)", color="#ffa94d")
+            add_row("Creado:", prod.created_at or "-")
+            add_row("Actualizado:", prod.updated_at or "-")
+
+            # ---------- Historial de precios ----------
+            sep = ttk.Separator(parent, orient="horizontal")
+            sep.pack(fill="x", padx=10, pady=8)
+
+            hist_frame = tk.Frame(parent, bg=bg)
+            hist_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+            tk.Label(hist_frame, text="📜 Historial de cambios de precio",
+                     font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(pady=(0, 5))
+
+            hist = self.product_use_case.get_price_history(prod.product_id)
+
+            if not hist:
+                tk.Label(hist_frame, text="(Sin cambios registrados)",
+                         font=("Arial", 10, "italic"),
+                         bg=bg, fg="#888888").pack(pady=10)
+            else:
+                tf, tree = make_scrolled_treeview(
+                    hist_frame,
+                    columns=("Fecha", "Antes", "Ahora", "Dif"),
+                    headings=[
+                        ("Fecha", "Fecha", 145, "center"),
+                        ("Antes", "Antes", 95, "e"),
+                        ("Ahora", "Ahora", 95, "e"),
+                        ("Dif", "Dif.", 90, "e"),
+                    ],
+                    bootstyle="dark")
+                tf.pack(fill="both", expand=True)
+
+                for h in hist:
+                    dif = h["new_price"] - h["old_price"]
+                    signo = "+" if dif > 0 else ""
+                    color_tag = "up" if dif > 0 else "down" if dif < 0 else ""
+                    try:
+                        tree.tag_configure("up", foreground="#ff6b6b")
+                        tree.tag_configure("down", foreground="#7dd87d")
+                    except Exception:
+                        pass
+                    tree.insert("", "end", values=(
+                        h["date"],
+                        f"${h['old_price']:,.0f}".replace(",", "."),
+                        f"${h['new_price']:,.0f}".replace(",", "."),
+                        f"{signo}${dif:,.0f}".replace(",", ".")
+                    ), tags=(color_tag,))
 
         def build_bottom(parent):
             bf = tk.Frame(parent, bg=bg)
@@ -402,6 +641,9 @@ class InventoryView(ttk.Frame):
             ttk.Button(bf, text="✏️ Editar",
                        command=lambda: [popup.destroy(), self.open_edit_from_item(sel[0])],
                        style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(bf, text="📜 Exportar historial",
+                       command=lambda: self._export_history_for_product(prod),
+                       bootstyle="info").pack(side="left", padx=5)
             ttk.Button(bf, text="Cerrar", command=popup.destroy).pack(side="left", padx=5)
             ttk.Button(bf, text="🗑",
                        command=lambda: [popup.destroy(), self.confirm_delete(sel[0])],
@@ -416,12 +658,57 @@ class InventoryView(ttk.Frame):
         except Exception:
             pass
 
+    def _export_history_for_product(self, prod):
+        from tkinter import filedialog
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=f"historial_{prod.name[:20]}.txt",
+            filetypes=[("Texto", "*.txt")])
+        if not arch:
+            return
+        hist = self.product_use_case.get_price_history(prod.product_id)
+        if not hist:
+            MD.show_info("Este producto no tiene historial de precios.",
+                         "Sin datos", parent=self)
+            return
+        lineas = [f"HISTORIAL DE PRECIOS — {prod.name}",
+                  f"ID: {prod.product_id}   Código: {prod.barcode or '-'}",
+                  "=" * 60]
+        for h in hist:
+            dif = h["new_price"] - h["old_price"]
+            signo = "+" if dif > 0 else ""
+            lineas.append(
+                f"{h['date']}  |  Antes: ${h['old_price']:,.0f}  ->  "
+                f"Ahora: ${h['new_price']:,.0f}  ({signo}${dif:,.0f})"
+                .replace(",", "."))
+        try:
+            with open(arch, "w", encoding="utf-8") as f:
+                f.write("\n".join(lineas))
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def open_price_history(self, item):
+        """Abre el historial desde el menú contextual."""
+        try:
+            vals = self.tree.item(item, 'values')
+            pid = vals[0]
+        except Exception:
+            return
+        # Seleccionar y llamar al detalle
+        self.tree.selection_set(item)
+        self.view_product_popup(None)
+
+    # =========================================================
+    # ELIMINAR
+    # =========================================================
     def confirm_delete(self, item):
         vals = self.tree.item(item, 'values')
         pid, name = vals[0], vals[1].replace("⚠ ", "")
         if MD.yesno(f"⚠️ ¿ELIMINAR '{name}'?", "Confirmar", parent=self) != "Yes":
             return
-        if MD.yesno(f"🚨 ÚLTIMA ADVERTENCIA\n\n¿Realmente eliminar '{name}'?",
+        if MD.yesno(f"🚨 ÚLTIMA ADVERTENCIA\n\n¿Realmente eliminar '{name}'?\n\n"
+                    f"También se borrará su historial de precios.",
                     "Confirmación final", parent=self) != "Yes":
             return
         self.product_use_case.delete_product(pid)
@@ -429,45 +716,58 @@ class InventoryView(ttk.Frame):
         MD.show_info(f"'{name}' eliminado.", "Listo", parent=self)
         self.scan_entry.focus_set()
 
+    # =========================================================
+    # EDITAR
+    # =========================================================
     def open_edit_from_item(self, item):
         vals = self.tree.item(item, 'values')
         pid = vals[0]
-        name = vals[1].replace("⚠ ", "")
-        group = vals[2] if vals[2] != "-" else ""
-        barcode = vals[3]
-        cost = _parse_float(vals[4]) if vals[4] != "-" else 0.0
-        margin = _parse_float(vals[5].replace("%", "")) if vals[5] != "-" else 20.0
-        price = _parse_float(vals[6])
-        unit = vals[7]
-        stock = _parse_float(vals[8])
-        unit_type = "unidad"
-        if unit in ("kg", "gr", "mg"):
-            unit_type = "peso"
-        elif unit in ("Lt", "ml"):
-            unit_type = "volumen"
-        self.open_product_form("Editar Producto", pid, name, barcode, price,
-                               stock, unit_type, unit, group_name=group,
-                               cost=cost, margin_percent=margin)
+        prod = self.product_use_case.get_product(pid)
+        if not prod:
+            return
+        self.open_product_form(
+            "Editar Producto", prod.product_id, prod.name, prod.barcode,
+            prod.price, prod.stock, prod.unit_type, prod.unit,
+            group_name=prod.group_name, cost=prod.cost,
+            margin_percent=prod.margin_percent,
+            rounded_price=prod.rounded_price,
+            round_enabled=prod.round_enabled,
+            round_to=prod.round_to,
+            package_cost=prod.package_cost,
+            package_units=prod.package_units,
+            is_package=prod.is_package,
+            paused=prod.paused,
+            expiry_date=prod.expiry_date)
 
     def add_product_popup(self, barcode_prefill="", auto_select=False):
         try:
             default_margin = _parse_float(
                 self.db_manager.get_setting("default_margin", "20") or 20)
+            default_round_to = self._get_int_setting("default_round_to", 100)
         except Exception:
             default_margin = 20.0
-        self.open_product_form("Agregar Producto", None, "", barcode_prefill,
-                               0, 0, "unidad", "unidad", auto_select,
-                               cost=0.0, margin_percent=default_margin)
+            default_round_to = 100
+
+        self.open_product_form(
+            "Agregar Producto", None, "", barcode_prefill,
+            0, 0, "unidad", "unidad", auto_select,
+            cost=0.0, margin_percent=default_margin,
+            rounded_price=0.0, round_enabled=0, round_to=default_round_to,
+            package_cost=0.0, package_units=0, is_package=0,
+            paused=0, expiry_date="")
 
     # =========================================================
-    # FORMULARIO DE PRODUCTO (con cost, margin, price)
+    # FORMULARIO DE PRODUCTO (FASE 5)
     # =========================================================
     def open_product_form(self, title, product_id, name, barcode, price, stock,
                           unit_type, unit, auto_select=False, from_draft=False,
-                          group_name="", cost=0.0, margin_percent=20.0):
+                          group_name="", cost=0.0, margin_percent=20.0,
+                          rounded_price=0.0, round_enabled=0, round_to=100,
+                          package_cost=0.0, package_units=0, is_package=0,
+                          paused=0, expiry_date=""):
         popup = Toplevel(self)
         popup.title(title)
-        popup.geometry("500x800")
+        popup.geometry("560x900")
         popup.transient(self.winfo_toplevel())
         popup.withdraw()
         bg = ttk.Style().colors.bg
@@ -477,20 +777,23 @@ class InventoryView(ttk.Frame):
         state = {
             "draft_timer": None,
             "pending_group_ids": [],
-            "updating": False,  # ← para evitar loops en traces
+            "updating": False,
+            "package_active": bool(is_package),
+            "round_active": bool(round_enabled),
         }
 
+        # ---------- CONTENIDO ----------
         def build_content(parent):
-            # Código
+            # --- Código ---
             ttk.Label(parent, text="Código de Barras / QR:").pack(pady=(10, 3))
-            barcode_entry = ttk.Entry(parent, width=42)
+            barcode_entry = ttk.Entry(parent, width=46)
             barcode_entry.pack(pady=3)
             if barcode:
                 barcode_entry.insert(0, barcode)
 
-            # Nombre
+            # --- Nombre ---
             ttk.Label(parent, text="Nombre del Producto:").pack(pady=(10, 3))
-            name_entry = ttk.Entry(parent, width=42)
+            name_entry = ttk.Entry(parent, width=46)
             name_entry.pack(pady=3)
             if name:
                 name_entry.insert(0, name)
@@ -499,14 +802,19 @@ class InventoryView(ttk.Frame):
                                    bg=bg, fg="#a8e6a8", cursor="hand2")
             similar_lbl.pack(pady=2)
 
-            # Grupo
+            # Aviso de paquete previo
+            package_hint = tk.Label(parent, text="", font=("Arial", 9, "italic"),
+                                    bg=bg, fg="#ffd166", justify="left")
+            package_hint.pack(pady=2)
+
+            # --- Grupo ---
             ttk.Label(parent, text="Grupo (opcional):").pack(pady=(10, 3))
-            group_entry = ttk.Entry(parent, width=42)
+            group_entry = ttk.Entry(parent, width=46)
             group_entry.pack(pady=3)
             if group_name:
                 group_entry.insert(0, group_name)
 
-            # Tipo de venta
+            # --- Tipo de venta ---
             ttk.Label(parent, text="Tipo de venta:",
                       font=("Arial", 10, "bold")).pack(pady=(10, 3))
             type_var = tk.StringVar(value=unit_type)
@@ -519,55 +827,212 @@ class InventoryView(ttk.Frame):
                                 command=lambda: self._refresh_unit_options(unit_var, unit_combo, type_var)
                                 ).pack(side="left", padx=5)
 
-            # Unidad
             ttk.Label(parent, text="Unidad de medida:").pack(pady=(10, 3))
             unit_var = tk.StringVar(value=unit)
-            unit_combo = ttk.Combobox(parent, textvariable=unit_var, state="readonly", width=15)
+            unit_combo = ttk.Combobox(parent, textvariable=unit_var,
+                                      state="readonly", width=15)
             unit_combo.pack(pady=3)
             self._refresh_unit_options(unit_var, unit_combo, type_var)
 
-            # === COSTO / % / PRECIO ===
-            ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8)
+            # ==========================================================
+            # 📦 MODO PAQUETE / CAJA
+            # ==========================================================
+            ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
+
+            is_package_var = tk.BooleanVar(value=bool(is_package))
+            ttk.Checkbutton(
+                parent,
+                text="📦 Viene en paquete / caja (comprar al por mayor)",
+                variable=is_package_var,
+                command=lambda: toggle_package(),
+                bootstyle="warning-round-toggle").pack(pady=6, padx=20, anchor="w")
+
+            package_frame = tk.Frame(parent, bg=bg)
+
+            def build_package_fields(pf):
+                tk.Label(pf, text="📦 Cálculo por paquete / caja",
+                         font=("Arial", 11, "bold"),
+                         bg=bg, fg="#ffd166").pack(pady=(5, 8))
+
+                # Costo paquete
+                tk.Label(pf, text="Costo del paquete (lo que pagaste):",
+                         font=("Arial", 10), bg=bg, fg=fg).pack(anchor="w", padx=15)
+                package_cost_var = tk.StringVar(value=f"{package_cost:g}" if package_cost else "")
+                package_cost_entry = ttk.Entry(pf, textvariable=package_cost_var, width=30)
+                package_cost_entry.pack(pady=3, padx=15)
+
+                # Unidades por paquete
+                tk.Label(pf, text="Unidades por paquete:",
+                         font=("Arial", 10), bg=bg, fg=fg).pack(anchor="w", padx=15, pady=(8, 0))
+                package_units_var = tk.StringVar(value=f"{package_units}" if package_units else "")
+                package_units_entry = ttk.Entry(pf, textvariable=package_units_var, width=30)
+                package_units_entry.pack(pady=3, padx=15)
+
+                # Cantidad de paquetes
+                tk.Label(pf, text="¿Cuántos paquetes compraste?:",
+                         font=("Arial", 10), bg=bg, fg=fg).pack(anchor="w", padx=15, pady=(8, 0))
+                package_qty_var = tk.StringVar(value="1")
+                package_qty_entry = ttk.Entry(pf, textvariable=package_qty_var, width=30)
+                package_qty_entry.pack(pady=3, padx=15)
+
+                # Resultado
+                result_lbl = tk.Label(pf, text="", font=("Arial", 10, "bold"),
+                                      bg="#0a4d1f", fg="#a8e6a8",
+                                      justify="left", anchor="w",
+                                      padx=10, pady=8, wraplength=460)
+                result_lbl.pack(fill="x", padx=15, pady=(10, 5))
+
+                refs["package_cost_var"] = package_cost_var
+                refs["package_units_var"] = package_units_var
+                refs["package_qty_var"] = package_qty_var
+                refs["package_cost_entry"] = package_cost_entry
+                refs["package_units_entry"] = package_units_entry
+                refs["package_qty_entry"] = package_qty_entry
+                refs["package_result_lbl"] = result_lbl
+
+                # Calcular resultado
+                def recalc_package(*args):
+                    try:
+                        pc = _parse_float(package_cost_var.get())
+                        pu = int(_parse_float(package_units_var.get()))
+                        pq = int(_parse_float(package_qty_var.get()) or 1)
+                        if pu <= 0:
+                            result_lbl.configure(text="Ingresa las unidades por paquete")
+                            return
+                        unit_cost = pc / pu
+                        m = _parse_float(margin_var.get())
+                        unit_sell = unit_cost * (1 + m / 100.0)
+                        stock_total = pu * pq
+                        texto = (
+                            f"Costo unitario:      ${unit_cost:,.2f}\n"
+                            f"Precio unitario +{m:g}%: ${unit_sell:,.2f}\n"
+                            f"Stock que se sumará:  {stock_total} unidades"
+                        ).replace(",", ".")
+                        result_lbl.configure(text=texto)
+                    except Exception:
+                        result_lbl.configure(text="")
+
+                for var in (package_cost_var, package_units_var, package_qty_var):
+                    var.trace_add("write", recalc_package)
+
+                # Llamar una vez al abrir
+                popup.after(100, recalc_package)
+
+            refs["build_package_fields"] = build_package_fields
+            refs["package_frame"] = package_frame
+            refs["is_package_var"] = is_package_var
+
+            # ==========================================================
+            # 💰 PRECIO Y GANANCIA
+            # ==========================================================
+            ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
 
             tk.Label(parent, text="💰 Precio y ganancia",
                      font=("Arial", 11, "bold"), bg=bg, fg=fg).pack(pady=(2, 4))
 
             # Costo
-            ttk.Label(parent, text="Precio de costo (lo que te cuesta):").pack(pady=(6, 3))
+            ttk.Label(parent, text="Precio de costo unitario:").pack(pady=(6, 3))
             cost_var = tk.StringVar(value=f"{cost:g}" if cost else "")
-            cost_entry = ttk.Entry(parent, textvariable=cost_var, width=42)
+            cost_entry = ttk.Entry(parent, textvariable=cost_var, width=46)
             cost_entry.pack(pady=3)
 
             # % Margen
-            ttk.Label(parent, text="% Ganancia (si lo dejas vacío, se usa el % por defecto):").pack(pady=(6, 3))
+            ttk.Label(parent, text="% Ganancia:").pack(pady=(6, 3))
             margin_var = tk.StringVar(value=f"{margin_percent:g}" if margin_percent else "")
-            margin_entry = ttk.Entry(parent, textvariable=margin_var, width=42)
+            margin_entry = ttk.Entry(parent, textvariable=margin_var, width=46)
             margin_entry.pack(pady=3)
 
-            # Precio venta
-            ttk.Label(parent, text="Precio de venta al público (calculado):").pack(pady=(6, 3))
+            # Precio real
+            ttk.Label(parent, text="Precio real de venta (antes de redondear):").pack(pady=(6, 3))
             price_var = tk.StringVar(value=f"{price:g}" if price else "")
-            price_entry = ttk.Entry(parent, textvariable=price_var, width=42)
+            price_entry = ttk.Entry(parent, textvariable=price_var, width=46)
             price_entry.pack(pady=3)
 
-            # Ayuda
-            tk.Label(parent,
-                     text="💡 Al cambiar costo o %, el precio se recalcula.\n"
-                          "   Si escribes un precio nuevo a mano, se recalcula el %.",
-                     font=("Arial", 8, "italic"), bg=bg, fg="#a8e6a8",
-                     justify="left").pack(pady=4, padx=15)
+            # ==========================================================
+            # 🎯 REDONDEO
+            # ==========================================================
+            ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
 
-            ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8)
+            round_enabled_var = tk.BooleanVar(value=bool(round_enabled))
+            ttk.Checkbutton(
+                parent,
+                text="🎯 Redondear precio final (se cobrará el redondeado)",
+                variable=round_enabled_var,
+                command=lambda: toggle_round(),
+                bootstyle="success-round-toggle").pack(pady=6, padx=20, anchor="w")
+
+            round_frame = tk.Frame(parent, bg=bg)
+
+            def build_round_fields(rf):
+                tk.Label(rf, text="Redondear hacia arriba al:",
+                         font=("Arial", 10), bg=bg, fg=fg).pack(anchor="w", padx=15)
+                round_to_var = tk.StringVar(value=str(round_to) if round_to else "100")
+                round_combo = ttk.Combobox(
+                    rf, textvariable=round_to_var, state="readonly",
+                    values=["10", "50", "100", "200", "500", "1000"],
+                    width=15)
+                round_combo.pack(pady=3, padx=15, anchor="w")
+
+                rounded_lbl = tk.Label(rf, text="", font=("Arial", 11, "bold"),
+                                       bg="#0a4d1f", fg="#a8e6a8",
+                                       padx=10, pady=6)
+                rounded_lbl.pack(padx=15, pady=(5, 3), anchor="w")
+
+                refs["round_to_var"] = round_to_var
+                refs["round_combo"] = round_combo
+                refs["rounded_lbl"] = rounded_lbl
+
+                def recalc_rounded(*args):
+                    try:
+                        p = _parse_float(price_var.get())
+                        to = int(_parse_float(round_to_var.get()) or 100)
+                        r = _round_up(p, to)
+                        rounded_lbl.configure(
+                            text=f"Precio a cobrar: ${r:,.0f}".replace(",", "."))
+                    except Exception:
+                        rounded_lbl.configure(text="")
+
+                round_to_var.trace_add("write", recalc_rounded)
+                price_var.trace_add("write", recalc_rounded)
+                popup.after(100, recalc_rounded)
+
+            refs["build_round_fields"] = build_round_fields
+            refs["round_frame"] = round_frame
+            refs["round_enabled_var"] = round_enabled_var
+            refs["round_to_var"] = round_to_var
+            refs["round_combo"] = round_combo
+            refs["rounded_lbl"] = rounded_lbl
+
+            # ==========================================================
+            # STOCK, VENCIMIENTO, PAUSADO
+            # ==========================================================
+            ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
 
             # Stock
             ttk.Label(parent, text="Stock (acepta decimales):").pack(pady=(6, 3))
             stock_var = tk.StringVar(value=f"{stock:g}" if stock else "")
-            stock_entry = ttk.Entry(parent, textvariable=stock_var, width=42)
+            stock_entry = ttk.Entry(parent, textvariable=stock_var, width=46)
             stock_entry.pack(pady=3)
 
+            # Vencimiento
+            ttk.Label(parent, text="Fecha de vencimiento (opcional, formato YYYY-MM-DD):").pack(pady=(10, 3))
+            expiry_var = tk.StringVar(value=expiry_date or "")
+            expiry_entry = ttk.Entry(parent, textvariable=expiry_var, width=46)
+            expiry_entry.pack(pady=3)
+
+            # Pausado
+            paused_var = tk.BooleanVar(value=bool(paused))
+            ttk.Checkbutton(
+                parent,
+                text="⏸ Producto pausado (no se vende, no se borra)",
+                variable=paused_var,
+                bootstyle="danger-round-toggle").pack(pady=8, padx=20, anchor="w")
+
+            # Guardar referencias
             refs["barcode_entry"] = barcode_entry
             refs["name_entry"] = name_entry
             refs["similar_lbl"] = similar_lbl
+            refs["package_hint"] = package_hint
             refs["group_entry"] = group_entry
             refs["type_var"] = type_var
             refs["unit_var"] = unit_var
@@ -576,12 +1041,12 @@ class InventoryView(ttk.Frame):
             refs["margin_var"] = margin_var
             refs["price_var"] = price_var
             refs["stock_var"] = stock_var
-            refs["cost_entry"] = cost_entry
-            refs["margin_entry"] = margin_entry
-            refs["price_entry"] = price_entry
-            refs["stock_entry"] = stock_entry
+            refs["expiry_var"] = expiry_var
+            refs["paused_var"] = paused_var
 
-            # === TRACES para recálculo ===
+            # ==========================================================
+            # TRACES para recálculo
+            # ==========================================================
             def recalc_from_cost_margin(*args):
                 if state["updating"]:
                     return
@@ -617,11 +1082,57 @@ class InventoryView(ttk.Frame):
             margin_var.trace_add("write", recalc_from_cost_margin)
             price_var.trace_add("write", recalc_margin_from_price)
 
+            # Foco inicial
             if barcode:
                 name_entry.focus_set()
             else:
                 barcode_entry.focus_set()
 
+            # Aplicar estado inicial
+            popup.after(80, lambda: toggle_package())
+            popup.after(80, lambda: toggle_round())
+
+        # ==========================================================
+        # TOGGLE PAQUETE
+        # ==========================================================
+        def toggle_package():
+            activo = refs["is_package_var"].get()
+            state["package_active"] = activo
+            refs["package_frame"].pack_forget()
+            if activo:
+                # Desactivar stock manual
+                try:
+                    refs["stock_var"].set("0")
+                    refs["stock_entry"].configure(state="disabled")
+                except Exception:
+                    pass
+                # Construir/llenar campos
+                for w in refs["package_frame"].winfo_children():
+                    w.destroy()
+                refs["build_package_fields"](refs["package_frame"])
+                refs["package_frame"].pack(fill="x", padx=15, pady=5)
+            else:
+                try:
+                    refs["stock_entry"].configure(state="normal")
+                except Exception:
+                    pass
+
+        # ==========================================================
+        # TOGGLE REDONDEO
+        # ==========================================================
+        def toggle_round():
+            activo = refs["round_enabled_var"].get()
+            state["round_active"] = activo
+            refs["round_frame"].pack_forget()
+            if activo:
+                for w in refs["round_frame"].winfo_children():
+                    w.destroy()
+                refs["build_round_fields"](refs["round_frame"])
+                refs["round_frame"].pack(fill="x", padx=15, pady=5)
+
+        # ==========================================================
+        # BOTONES
+        # ==========================================================
         def build_bottom(parent):
             bf = tk.Frame(parent, bg=bg)
             bf.pack(pady=10, fill="x")
@@ -646,13 +1157,6 @@ class InventoryView(ttk.Frame):
                 except Exception:
                     pass
                 state["pending_group_ids"] = list(ids) if ids else []
-                try:
-                    MD.show_info(
-                        f"✅ Se agruparán {len(ids)} producto(s) al guardar.\n"
-                        f"Grupo: {group}",
-                        "Agrupación preparada", parent=popup)
-                except Exception:
-                    pass
 
             refs["_apply_group_from_form"] = _apply_group_from_form
 
@@ -663,6 +1167,9 @@ class InventoryView(ttk.Frame):
             ttk.Button(bf, text="Cancelar",
                        command=lambda: _cancel()).pack(side="right", padx=4)
 
+        # ==========================================================
+        # BORRADOR
+        # ==========================================================
         def collect_draft():
             return {
                 "mode": "edit" if product_id else "create",
@@ -676,6 +1183,13 @@ class InventoryView(ttk.Frame):
                 "margin_percent": refs["margin_var"].get(),
                 "price": refs["price_var"].get(),
                 "stock": refs["stock_var"].get(),
+                "expiry_date": refs["expiry_var"].get(),
+                "paused": 1 if refs["paused_var"].get() else 0,
+                "is_package": 1 if refs["is_package_var"].get() else 0,
+                "package_cost": refs.get("package_cost_var").get() if "package_cost_var" in refs else "",
+                "package_units": refs.get("package_units_var").get() if "package_units_var" in refs else "",
+                "round_enabled": 1 if refs["round_enabled_var"].get() else 0,
+                "round_to": refs.get("round_to_var").get() if "round_to_var" in refs else "",
             }
 
         def save_draft_now():
@@ -704,12 +1218,18 @@ class InventoryView(ttk.Frame):
                     pass
                 state["draft_timer"] = None
 
+        # ==========================================================
+        # DETECCIÓN DE SIMILARES Y PAQUETE PREVIO
+        # ==========================================================
         def update_similar_label():
             try:
                 n = refs["name_entry"].get().strip()
                 if len(n) < 4:
                     refs["similar_lbl"].configure(text="")
+                    refs["package_hint"].configure(text="")
                     return
+
+                # Similares
                 products = self.product_use_case.list_products()
                 similares = find_similar_products(n, products, threshold=0.55)
                 if product_id:
@@ -719,6 +1239,19 @@ class InventoryView(ttk.Frame):
                         text=f"🔗 Se encontraron {len(similares)} similares. Clic aquí para agrupar.")
                 else:
                     refs["similar_lbl"].configure(text="")
+
+                # Paquete previo
+                if not state["package_active"]:
+                    pkg = self.product_use_case.find_last_package_for_name(n)
+                    if pkg and pkg["package_units"] > 0:
+                        refs["package_hint"].configure(
+                            text=f"💡 La última vez compraste \"{pkg['name']}\" a "
+                                 f"${pkg['package_cost']:,.0f} por paquete de "
+                                 f"{pkg['package_units']} unidades.\n"
+                                 f"   Activa el 📦 Modo Paquete si quieres usar esos datos."
+                                 .replace(",", "."))
+                    else:
+                        refs["package_hint"].configure(text="")
             except Exception:
                 pass
 
@@ -735,6 +1268,9 @@ class InventoryView(ttk.Frame):
             except Exception:
                 pass
 
+        # ==========================================================
+        # GUARDAR
+        # ==========================================================
         def save():
             n = refs["name_entry"].get().strip()
             b = refs["barcode_entry"].get().strip()
@@ -742,36 +1278,82 @@ class InventoryView(ttk.Frame):
             if not n:
                 MD.show_error("El nombre es obligatorio", "Error", parent=popup)
                 return
-            c = _parse_float(refs["cost_var"].get())
-            m = _parse_float(refs["margin_var"].get())
-            p = _parse_float(refs["price_var"].get())
-            s = _parse_float(refs["stock_var"].get())
 
-            # Si no hay precio pero sí costo y margen, calculamos
-            if p <= 0 and c > 0:
-                p = c * (1 + m / 100.0)
+            # Modo paquete
+            activo_paquete = refs["is_package_var"].get()
+            final_cost = _parse_float(refs["cost_var"].get())
+            final_margin = _parse_float(refs["margin_var"].get())
+            final_price = _parse_float(refs["price_var"].get())
+            final_stock = _parse_float(refs["stock_var"].get())
+            pkg_cost = 0.0
+            pkg_units = 0
 
-            if p <= 0:
-                MD.show_error("El precio de venta debe ser mayor a 0",
-                              "Error", parent=popup)
-                return
+            if activo_paquete:
+                pkg_cost = _parse_float(refs.get("package_cost_var").get())
+                pkg_units = int(_parse_float(refs.get("package_units_var").get()))
+                pkg_qty = int(_parse_float(refs.get("package_qty_var").get()) or 1)
+                if pkg_units <= 0:
+                    MD.show_error("Las unidades por paquete deben ser mayor a 0",
+                                  "Error", parent=popup)
+                    return
+                if pkg_cost <= 0:
+                    MD.show_error("El costo del paquete debe ser mayor a 0",
+                                  "Error", parent=popup)
+                    return
+                # Calcular unitario
+                final_cost = pkg_cost / pkg_units
+                final_price = final_cost * (1 + final_margin / 100.0)
+                final_stock = pkg_units * pkg_qty
+            else:
+                if final_price <= 0 and final_cost > 0:
+                    final_price = final_cost * (1 + final_margin / 100.0)
+                if final_price <= 0:
+                    MD.show_error("El precio de venta debe ser mayor a 0",
+                                  "Error", parent=popup)
+                    return
+
+            # Redondeo
+            round_enabled = 1 if refs["round_enabled_var"].get() else 0
+            round_to_val = int(_parse_float(refs.get("round_to_var", tk.StringVar(value="100")).get()) or 100)
+            if round_enabled:
+                rounded = _round_up(final_price, round_to_val)
+            else:
+                rounded = int(round(final_price))
+
+            # Vencimiento
+            expiry = refs["expiry_var"].get().strip()
+            if expiry:
+                try:
+                    datetime.strptime(expiry, "%Y-%m-%d")
+                except Exception:
+                    MD.show_error("Fecha de vencimiento inválida. Usa YYYY-MM-DD",
+                                  "Error", parent=popup)
+                    return
+
+            paused_val = 1 if refs["paused_var"].get() else 0
 
             cancel_pending()
 
             try:
                 if product_id:
                     self.product_use_case.update_product(
-                        product_id, n, b, p, s,
+                        product_id, n, b, final_price, final_stock,
                         refs["type_var"].get(), refs["unit_var"].get(),
-                        g, c, m)
+                        g, final_cost, final_margin,
+                        rounded, round_enabled, round_to_val,
+                        pkg_cost, pkg_units, 1 if activo_paquete else 0,
+                        paused_val, expiry)
                     if state["pending_group_ids"]:
                         self.product_use_case.set_group_name(
                             state["pending_group_ids"], g)
                 else:
                     new_pid = self.product_use_case.add_product(
-                        n, b, p, s,
+                        n, b, final_price, final_stock,
                         refs["type_var"].get(), refs["unit_var"].get(),
-                        g, c, m)
+                        g, final_cost, final_margin,
+                        rounded, round_enabled, round_to_val,
+                        pkg_cost, pkg_units, 1 if activo_paquete else 0,
+                        paused_val, expiry)
                     if state["pending_group_ids"] or g:
                         ids = list(state["pending_group_ids"])
                         if g and new_pid not in ids:
@@ -802,18 +1384,23 @@ class InventoryView(ttk.Frame):
             popup.destroy()
             self.scan_entry.focus_set()
 
+        # ==========================================================
+        # CONSTRUIR
+        # ==========================================================
         container = tk.Frame(popup, bg=bg)
         container.pack(fill="both", expand=True)
         make_scrollable(container, build_content, build_bottom, bg=bg)
 
+        # Bindings después de construir
         try:
             refs["name_entry"].bind("<KeyRelease>", schedule_save, add="+")
             refs["name_entry"].bind("<KeyRelease>", lambda e: update_similar_label(), add="+")
             refs["barcode_entry"].bind("<KeyRelease>", schedule_save, add="+")
-            refs["cost_entry"].bind("<KeyRelease>", schedule_save, add="+")
-            refs["margin_entry"].bind("<KeyRelease>", schedule_save, add="+")
-            refs["price_entry"].bind("<KeyRelease>", schedule_save, add="+")
-            refs["stock_entry"].bind("<KeyRelease>", schedule_save, add="+")
+            refs["cost_var"].trace_add("write", schedule_save)
+            refs["margin_var"].trace_add("write", schedule_save)
+            refs["price_var"].trace_add("write", schedule_save)
+            refs["stock_var"].trace_add("write", schedule_save)
+            refs["expiry_var"].trace_add("write", schedule_save)
             refs["group_entry"].bind("<KeyRelease>", schedule_save, add="+")
             refs["type_var"].trace_add("write", schedule_save)
             refs["unit_var"].trace_add("write", schedule_save)
@@ -832,6 +1419,9 @@ class InventoryView(ttk.Frame):
         except Exception:
             pass
 
+    # =========================================================
+    # DIALOG SIMILARES (sin cambios)
+    # =========================================================
     def _open_similar_dialog(self, base_name, current_product_id,
                              parent_toplevel, on_apply):
         try:
@@ -947,13 +1537,6 @@ class InventoryView(ttk.Frame):
 
         tree.bind("<Button-1>", on_click, add="+")
 
-        def _on_mousewheel(event):
-            try:
-                tree.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except Exception:
-                pass
-        tree.bind("<MouseWheel>", _on_mousewheel)
-
         def aplicar():
             if not marcados:
                 MD.show_warning("Marca al menos un producto.",
@@ -971,16 +1554,13 @@ class InventoryView(ttk.Frame):
             except Exception:
                 pass
 
-        def cancelar():
-            dialog.destroy()
-
         bf = tk.Frame(dialog, bg=bg)
         bf.pack(side="bottom", pady=10)
         ttk.Button(bf, text="🔗 Agrupar seleccionados",
                    command=aplicar, style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cancelar", command=cancelar).pack(side="left", padx=5)
+        ttk.Button(bf, text="Cancelar", command=dialog.destroy).pack(side="left", padx=5)
 
-        dialog.bind("<Escape>", lambda e: cancelar())
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
 
         show_popup_smooth(dialog)
         try:
@@ -988,8 +1568,6 @@ class InventoryView(ttk.Frame):
             dialog.focus_force()
         except Exception:
             pass
-
-        dialog.after(100, lambda: group_entry.focus_set() if dialog.winfo_exists() else None)
 
     def _suggest_group_name(self, similares, base_name):
         try:
@@ -1013,6 +1591,9 @@ class InventoryView(ttk.Frame):
         if unit_var.get() not in opciones:
             unit_var.set(opciones[0])
 
+    # =========================================================
+    # ESCANEO
+    # =========================================================
     def lookup_barcode(self, event=None):
         codigo = self.scan_var.get().strip()
         if not codigo:
@@ -1036,7 +1617,8 @@ class InventoryView(ttk.Frame):
             r = MD.yesno(
                 f"✅ Producto encontrado:\n\n"
                 f"Nombre: {enc.name}\n"
-                f"Precio: ${enc.price:,.0f}\n"
+                f"Precio real: ${enc.price:,.0f}\n"
+                f"Precio redondeado: ${enc.rounded_price:,.0f}\n"
                 f"Stock: {enc.stock:g} {enc.unit}\n\n"
                 f"¿Deseas EDITAR este producto?".replace(",", "."),
                 "Producto Encontrado", parent=self)
