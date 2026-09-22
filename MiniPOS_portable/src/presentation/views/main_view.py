@@ -7,7 +7,7 @@ import shutil
 import sys
 import queue
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from application.use_case.product_use_case import ProductCase
 from application.use_case.sale_use_case import SaleCase
 from infrastucture.db.db_manager import DBManager
@@ -59,7 +59,6 @@ class MainView(tk.Tk):
         self.tray_queue = queue.Queue()
         self._reset_check_timer = None
 
-        # ✅ Auto-reset al iniciar (si cambió el día desde el último uso)
         self._do_auto_reset(silent=True)
 
         self._update_window_title()
@@ -74,8 +73,6 @@ class MainView(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(200, self._poll_tray_queue)
-
-        # ✅ Iniciar el chequeo periódico del cambio de día
         self.after(3000, self._schedule_daily_reset_check)
 
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
@@ -85,7 +82,6 @@ class MainView(tk.Tk):
 
     # =========== AUTO-RESET DIARIO ===========
     def _do_auto_reset(self, silent=False):
-        """Verifica si cambió el día y reinicia el contador si aplica."""
         try:
             reinicio = self.sale_use_case.auto_reset_if_new_day()
             if reinicio and not silent:
@@ -99,24 +95,19 @@ class MainView(tk.Tk):
             return False
 
     def _schedule_daily_reset_check(self):
-        """Programa la verificación cada 60 segundos."""
         self._check_daily_reset()
 
     def _check_daily_reset(self):
-        """Se ejecuta cada 60s para verificar el cambio de día."""
         try:
             reinicio = self._do_auto_reset(silent=False)
             if reinicio:
-                # Refrescar cualquier vista abierta
                 try:
                     self.inventory_view.load_products()
                 except Exception:
                     pass
         except Exception:
             pass
-
         try:
-            # Re-programar (60s)
             self._reset_check_timer = self.after(60000, self._check_daily_reset)
         except Exception:
             pass
@@ -520,7 +511,6 @@ class MainView(tk.Tk):
                 pw = self._ask_password_1234(pop)
                 if not pw:
                     return
-
                 data = {}
                 for k in ("type", "name", "owner", "place", "phone", "employees"):
                     try:
@@ -531,7 +521,6 @@ class MainView(tk.Tk):
                     data["notes"] = refs["notes"].get("1.0", tk.END).strip()
                 except Exception:
                     data["notes"] = ""
-
                 try:
                     save_business_info(self.db_manager, data)
                     self._update_window_title()
@@ -547,14 +536,12 @@ class MainView(tk.Tk):
                        command=pop.destroy).pack(side="right", padx=6)
 
         make_scrollable(container, build_content, build_bottom, bg=bg)
-
         show_popup_smooth(pop)
         try:
             pop.grab_set()
             pop.focus_force()
         except Exception:
             pass
-
         pop.after(100, lambda: refs.get("type").focus_set()
                   if pop.winfo_exists() and refs.get("type") else None)
 
@@ -656,7 +643,6 @@ class MainView(tk.Tk):
                                  command=self.toggle_autostart)
             menu.add_separator()
 
-            # ✅ NUEVO: Checkbox de auto-reset diario
             self.auto_reset_var = tk.BooleanVar(
                 value=self.sale_use_case.is_auto_reset_enabled())
             menu.add_checkbutton(
@@ -681,6 +667,9 @@ class MainView(tk.Tk):
                              command=self.show_sales_summary)
             menu.add_command(label="💳 Fiados (agrupado por cliente)",
                              command=self.show_credit_sales)
+            menu.add_separator()
+            menu.add_command(label="💰 Cierre de Caja del día",
+                             command=self.show_cash_closing)
 
         self.menubar.add_menu("Opciones", build_opciones)
         self.menubar.add_menu("Ventas", build_ventas)
@@ -722,12 +711,10 @@ class MainView(tk.Tk):
         if val:
             MD.show_info(
                 "✅ Reinicio automático ACTIVADO.\n\n"
-                "El contador de ventas (#) se reiniciará a #01 cuando cambie el día.\n"
-                "Se ejecuta al abrir la app y cada minuto mientras esté abierta.",
+                "El contador de ventas (#) se reiniciará a #01 cuando cambie el día.",
                 "Reinicio automático", parent=self)
         else:
-            MD.show_info("❌ Reinicio automático DESACTIVADO.\n\n"
-                         "Usa el botón manual para reiniciar cuando quieras.",
+            MD.show_info("❌ Reinicio automático DESACTIVADO.",
                          "Reinicio automático", parent=self)
 
     def _toggle_close_to_tray(self):
@@ -735,8 +722,7 @@ class MainView(tk.Tk):
         self.db_manager.set_setting("close_to_tray", val)
         if val == "1":
             MD.show_info(
-                "✅ Al presionar X la ventana se ocultará en la bandeja del sistema.\n"
-                "Para abrirla, haz clic en el ícono (junto al reloj) y elige 'Mostrar MiniPOS'.",
+                "✅ Al presionar X la ventana se ocultará en la bandeja del sistema.",
                 "Modo bandeja", parent=self)
         else:
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
@@ -746,9 +732,7 @@ class MainView(tk.Tk):
         r1 = MD.yesno(
             "🔄 ¿Reiniciar el contador de ventas?\n\n"
             "Las ventas y fiados NO se borran.\n"
-            "Solo el número que aparece como 'Venta #XX' se reiniciará.\n"
-            "La próxima venta aparecerá como #01.\n\n"
-            "¿Deseas continuar?",
+            "Solo el número que aparece como 'Venta #XX' se reiniciará.",
             "Confirmar reinicio", parent=self, default_yes=True)
         if r1 != "Yes":
             return
@@ -757,7 +741,6 @@ class MainView(tk.Tk):
             return
         try:
             self.sale_use_case.reset_sale_number_counter()
-            # ✅ Guardar la fecha del reset manual también
             self.sale_use_case.set_last_reset_date(
                 datetime.now().strftime("%Y-%m-%d"))
             MD.show_info(
@@ -806,15 +789,128 @@ class MainView(tk.Tk):
             pass
 
     # =========================================================
-    # RESTO DE MÉTODOS (sin cambios respecto a la Fase 1)
-    # show_sales_summary, show_credit_sales, _abonar_dialog, _ask_password_1234,
-    # auto-inicio, reportes, exportar/importar, etc.
+    # CIERRE DE CAJA
     # =========================================================
+    def show_cash_closing(self):
+        win = tk.Toplevel(self)
+        win.title("💰 Cierre de Caja")
+        win.geometry("700x720")
+        win.transient(self)
+        win.configure(bg=self.style.colors.bg)
+        win.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
 
+        # Fecha seleccionable
+        fecha_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        resumen_lbl = tk.Label(win, text="", font=("Arial", 11), bg=bg, fg=fg,
+                               justify="left", anchor="w", wraplength=620)
+
+        def generar_reporte():
+            fecha = fecha_var.get().strip()
+            try:
+                datetime.strptime(fecha, "%Y-%m-%d")
+            except Exception:
+                MD.show_error("Fecha inválida. Usa formato YYYY-MM-DD.",
+                              "Error", parent=win)
+                return
+            data = self.sale_use_case.get_cash_closing(fecha)
+            lineas = []
+            lineas.append(f"📅 CIERRE DE CAJA — {data['date']}")
+            lineas.append(f"🕛 Generado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            lineas.append("")
+            lineas.append(f"🧾 Ventas del día:           {data['cantidad_ventas']}")
+            lineas.append(f"📦 Productos vendidos:        {data['productos_vendidos']:g}")
+            lineas.append(f"💵 Subtotal bruto:            ${data['total_subtotal']:,.0f}".replace(",", "."))
+            lineas.append(f"🎁 Descuentos aplicados:     -${data['total_descuento']:,.0f}".replace(",", "."))
+            lineas.append(f"💰 TOTAL NETO DEL DÍA:        ${data['total_ventas']:,.0f}".replace(",", "."))
+            lineas.append("")
+            lineas.append("─── Desglose por método de pago ───")
+            for metodo in ("Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado"):
+                info = data["metodos"].get(metodo)
+                if info:
+                    lineas.append(f"  • {metodo:<14} {info['count']:>3} ventas   ${info['total']:>12,.0f}".replace(",", "."))
+            otros = [k for k in data["metodos"] if k not in
+                     ("Efectivo", "Transferencia", "Tarjeta", "Otro", "Fiado")]
+            for k in otros:
+                info = data["metodos"][k]
+                lineas.append(f"  • {k:<14} {info['count']:>3} ventas   ${info['total']:>12,.0f}".replace(",", "."))
+            lineas.append("")
+            lineas.append(f"📌 Fiado nuevo del día:       ${data['total_fiado_nuevo']:,.0f}".replace(",", "."))
+            lineas.append(f"💵 Abonos recibidos:          ${data['total_abonos']:,.0f}".replace(",", "."))
+            lineas.append("")
+            lineas.append("════════════════════════════════")
+            lineas.append(f"💰 EFECTIVO ESPERADO EN CAJA: ${data['efectivo_esperado']:,.0f}".replace(",", "."))
+            lineas.append("   (Solo ventas en efectivo. No incluye abonos ni fiados)")
+            lineas.append("════════════════════════════════")
+
+            resumen_lbl.configure(text="\n".join(lineas))
+
+        def exportar_txt():
+            fecha = fecha_var.get().strip()
+            try:
+                datetime.strptime(fecha, "%Y-%m-%d")
+            except Exception:
+                MD.show_error("Fecha inválida.", "Error", parent=win)
+                return
+            arch = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                initialfile=f"cierre_caja_{fecha}.txt",
+                filetypes=[("Texto", "*.txt")],
+                parent=win)
+            if not arch:
+                return
+            try:
+                with open(arch, "w", encoding="utf-8") as f:
+                    f.write(resumen_lbl.cget("text"))
+                MD.show_info(f"Guardado:\n{arch}", "Listo", parent=win)
+            except Exception as e:
+                MD.show_error(f"Error: {e}", "Error", parent=win)
+
+        # --- Contenido scrolleable ---
+        container = tk.Frame(win, bg=bg)
+        container.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def build_content(parent):
+            tk.Label(parent, text="💰 CIERRE DE CAJA",
+                     font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(10, 6))
+
+            row = tk.Frame(parent, bg=bg)
+            row.pack(pady=6)
+            tk.Label(row, text="Fecha (YYYY-MM-DD):",
+                     font=("Arial", 11), bg=bg, fg=fg).pack(side="left", padx=5)
+            ttk.Entry(row, textvariable=fecha_var, width=15,
+                      font=("Arial", 12), justify="center").pack(side="left", padx=5)
+            ttk.Button(row, text="🔍 Generar",
+                       command=generar_reporte,
+                       style="DarkGreen.TButton").pack(side="left", padx=8)
+
+            resumen_lbl.pack(fill="both", expand=True, padx=10, pady=10)
+
+        def build_bottom(parent):
+            ttk.Button(parent, text="📄 Exportar a TXT",
+                       command=exportar_txt,
+                       bootstyle="info").pack(side="left", padx=6)
+            ttk.Button(parent, text="Cerrar",
+                       command=win.destroy).pack(side="right", padx=6)
+
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+        generar_reporte()  # Generar automáticamente al abrir
+
+        show_popup_smooth(win)
+        try:
+            win.grab_set()
+            win.focus_force()
+        except Exception:
+            pass
+
+    # =========================================================
+    # RESUMEN DE VENTAS
+    # =========================================================
     def show_sales_summary(self):
         win = tk.Toplevel(self)
         win.title("Resumen de Ventas")
-        win.geometry("1200x720")
+        win.geometry("1200x760")
         win.transient(self)
         win.configure(bg=self.style.colors.bg)
         win.withdraw()
@@ -863,10 +959,33 @@ class MainView(tk.Tk):
             filt_frame.pack(pady=5)
             filtro_var = tk.StringVar(value="all")
             refs["filtro_var"] = filtro_var
-            for val, txt in [("all", "Todas"), ("today", "Hoy"), ("month", "Este mes")]:
+            for val, txt in [("all", "Todas"), ("today", "Hoy"),
+                             ("month", "Este mes"), ("range", "Rango")]:
                 ttk.Radiobutton(filt_frame, text=txt, variable=filtro_var,
                                 value=val, bootstyle="info",
-                                command=lambda: recargar()).pack(side="left", padx=8)
+                                command=lambda: on_filter_change()).pack(side="left", padx=8)
+
+            # --- Fechas del rango ---
+            rango_frame = tk.Frame(parent, bg=bg)
+            rango_frame.pack(pady=3)
+            tk.Label(rango_frame, text="Desde:", font=("Arial", 10),
+                     bg=bg, fg=fg).pack(side="left", padx=(0, 3))
+            hoy = datetime.now().strftime("%Y-%m-%d")
+            hace7 = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+            desde_var = tk.StringVar(value=hace7)
+            ttk.Entry(rango_frame, textvariable=desde_var, width=12,
+                      font=("Arial", 10), justify="center").pack(side="left", padx=3)
+            tk.Label(rango_frame, text="Hasta:", font=("Arial", 10),
+                     bg=bg, fg=fg).pack(side="left", padx=(10, 3))
+            hasta_var = tk.StringVar(value=hoy)
+            ttk.Entry(rango_frame, textvariable=hasta_var, width=12,
+                      font=("Arial", 10), justify="center").pack(side="left", padx=3)
+            ttk.Button(rango_frame, text="Aplicar",
+                       command=lambda: on_filter_change(),
+                       bootstyle="info").pack(side="left", padx=8)
+            refs["desde_var"] = desde_var
+            refs["hasta_var"] = hasta_var
+            refs["rango_frame"] = rango_frame
 
             tree_frame = ttk.Frame(parent, bootstyle="dark")
             tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
@@ -997,6 +1116,24 @@ class MainView(tk.Tk):
             except Exception:
                 pass
 
+        def on_filter_change():
+            # Mostrar/ocultar el frame de rango
+            try:
+                filtro_var = refs.get("filtro_var")
+                rango_frame = refs.get("rango_frame")
+                if filtro_var and rango_frame:
+                    if filtro_var.get() == "range":
+                        rango_frame.pack(pady=3, before=refs["tree"].master.master
+                                        if False else None)
+                        # Repack para asegurar visibilidad
+                        rango_frame.pack_forget()
+                        rango_frame.pack(pady=3)
+                    else:
+                        rango_frame.pack_forget()
+            except Exception:
+                pass
+            recargar()
+
         def recargar():
             tree = refs.get("tree")
             if not tree:
@@ -1005,14 +1142,29 @@ class MainView(tk.Tk):
                 tree.delete(r)
             grupos_map.clear()
             marcados.clear()
+
             filtro_var = refs.get("filtro_var")
             filtro = filtro_var.get() if filtro_var else "all"
+
             if filtro == "today":
                 sales = self.sale_use_case.get_sales_by_day(datetime.now().strftime("%Y-%m-%d"))
             elif filtro == "month":
                 sales = self.sale_use_case.get_sales_by_month(datetime.now().strftime("%Y-%m"))
+            elif filtro == "range":
+                desde = refs.get("desde_var").get().strip() if refs.get("desde_var") else ""
+                hasta = refs.get("hasta_var").get().strip() if refs.get("hasta_var") else ""
+                try:
+                    datetime.strptime(desde, "%Y-%m-%d")
+                    datetime.strptime(hasta, "%Y-%m-%d")
+                except Exception:
+                    MD.show_error("Fechas inválidas. Usa YYYY-MM-DD.",
+                                  "Error", parent=win)
+                    sales = []
+                else:
+                    sales = self.sale_use_case.get_sales_by_range(desde, hasta)
             else:
                 sales = self.sale_use_case.get_all_sales(limit=1000)
+
             grupos = self.sale_use_case.group_sales_by_customer(sales)
             for g in grupos:
                 iid = tree.insert("", "end", values=(
@@ -1038,7 +1190,7 @@ class MainView(tk.Tk):
                 return
             det = tk.Toplevel(win)
             det.title(f"Detalle - {g['customer_name']}")
-            det.geometry("950x560")
+            det.geometry("1000x560")
             det.transient(win)
             det.configure(bg=bg)
             det.withdraw()
@@ -1055,14 +1207,16 @@ class MainView(tk.Tk):
             f2.pack(fill="both", expand=True, padx=12, pady=6)
             tf2, t2 = make_scrolled_treeview(
                 f2,
-                columns=("ID", "Fecha", "Método", "Productos", "Total", "Estado"),
+                columns=("ID", "Fecha", "Método", "Productos", "Subtotal", "Desc.", "Total", "Estado"),
                 headings=[
-                    ("ID", "#", 60, "center"),
-                    ("Fecha", "Fecha", 140, "center"),
-                    ("Método", "Método", 110, "center"),
-                    ("Productos", "Productos", 260, "center"),
-                    ("Total", "Total", 100, "center"),
-                    ("Estado", "Estado", 120, "center"),
+                    ("ID", "#", 55, "center"),
+                    ("Fecha", "Fecha", 130, "center"),
+                    ("Método", "Método", 100, "center"),
+                    ("Productos", "Productos", 220, "center"),
+                    ("Subtotal", "Subtotal", 90, "center"),
+                    ("Desc.", "Desc.", 80, "center"),
+                    ("Total", "Total", 90, "center"),
+                    ("Estado", "Estado", 110, "center"),
                 ],
                 bootstyle="dark")
             tf2.pack(fill="both", expand=True)
@@ -1076,10 +1230,15 @@ class MainView(tk.Tk):
                 estado = "✅ Pagado"
                 if sale.is_credit:
                     estado = "💳 Fiado" if not sale.is_paid else "✅ Fiado pagado"
+                sub = getattr(sale, "subtotal", sale.total)
+                desc = getattr(sale, "discount", 0.0)
                 t2.insert("", "end", values=(
                     f"#{sale.display_number:02d}",
                     sale.date, sale.payment_method, resumen_items,
-                    f"${sale.total:,.0f}".replace(",", "."), estado))
+                    f"${sub:,.0f}".replace(",", "."),
+                    f"-${desc:,.0f}".replace(",", ".") if desc > 0 else "-",
+                    f"${sale.total:,.0f}".replace(",", "."),
+                    estado))
 
             bf2 = tk.Frame(det, bg=bg)
             bf2.pack(side="bottom", pady=8)
@@ -1217,6 +1376,11 @@ class MainView(tk.Tk):
                 pass
 
         make_scrollable(container, build_content, build_bottom, bg=bg)
+        # Ocultar el rango al inicio
+        try:
+            refs["rango_frame"].pack_forget()
+        except Exception:
+            pass
         recargar()
 
         show_popup_smooth(win)
@@ -1745,214 +1909,4 @@ class MainView(tk.Tk):
             tk.Label(parent, text=f"Cliente: {cliente}", font=("Arial", 12),
                      bg=bg, fg=fg).pack(pady=4)
             tk.Label(parent, text=f"Venta #{venta.display_number:02d}",
-                     font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").pack(pady=2)
-            tk.Label(parent, text=f"Total: ${venta.total:,.0f}".replace(",", "."),
-                     font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
-            tk.Label(parent, text=f"Abonado: ${venta.amount_paid:,.0f}".replace(",", "."),
-                     font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
-            tk.Label(parent, text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
-                     font=("Arial", 14, "bold"),
-                     bg="#0a4d1f", fg="#a8e6a8",
-                     padx=10, pady=8).pack(pady=10)
-
-            tk.Label(parent, text="Monto del abono:",
-                     bg=bg, fg=fg).pack(pady=(10, 3))
-            monto_var = tk.StringVar()
-            e = ttk.Entry(parent, textvariable=monto_var, width=20,
-                          font=("Arial", 16), justify="center")
-            e.pack(pady=5)
-            refs["entry"] = e
-            refs["monto_var"] = monto_var
-
-        def build_bottom(parent):
-            def aplicar(ev=None):
-                try:
-                    monto = float(refs["monto_var"].get().replace("$", "").replace(".", "").replace(",", "."))
-                    if monto <= 0:
-                        raise ValueError
-                except ValueError:
-                    MD.show_error("Monto inválido", "Error", parent=pop)
-                    return "break"
-                if monto > pendiente + 0.01:
-                    if MD.yesno(
-                            f"El monto (${monto:,.0f}) es mayor al pendiente (${pendiente:,.0f}).\n"
-                            f"¿Registrar solo ${pendiente:,.0f}?".replace(",", "."),
-                            "Confirmar", parent=pop) != "Yes":
-                        return "break"
-                    monto = pendiente
-                self.sale_use_case.add_payment(venta.sale_id, monto)
-                pop.destroy()
-                MD.show_info(f"✅ Abono de ${monto:,.0f} registrado.".replace(",", "."),
-                             "Listo", parent=parent)
-                on_done()
-                try:
-                    parent.lift()
-                    parent.focus_force()
-                except Exception:
-                    pass
-                return "break"
-
-            def cancelar(ev=None):
-                pop.destroy()
-                return "break"
-
-            refs["aplicar"] = aplicar
-            pop.bind("<Escape>", cancelar)
-
-            ttk.Button(parent, text="Registrar abono", command=aplicar,
-                       style="DarkGreen.TButton").pack(side="left", padx=5)
-            ttk.Button(parent, text="Cancelar",
-                       command=pop.destroy).pack(side="left", padx=5)
-
-        make_scrollable(container, build_content, build_bottom, bg=bg)
-
-        try:
-            e = refs.get("entry")
-            if e:
-                e.bind("<Return>", refs.get("aplicar"))
-                e.bind("<KP_Enter>", refs.get("aplicar"))
-        except Exception:
-            pass
-
-        show_popup_smooth(pop)
-        try:
-            pop.grab_set()
-            pop.focus_force()
-        except Exception:
-            pass
-
-        def set_focus():
-            try:
-                if pop.winfo_exists():
-                    e = refs.get("entry")
-                    if e:
-                        e.focus_set()
-            except Exception:
-                pass
-        pop.after(50, set_focus)
-        pop.after(250, set_focus)
-
-    def _get_startup_bat_path(self):
-        startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
-                               'Start Menu', 'Programs', 'Startup')
-        return os.path.join(startup, 'MiniPOS_Portable.bat')
-
-    def _is_autostart_enabled(self):
-        return os.path.exists(self._get_startup_bat_path())
-
-    def toggle_autostart(self):
-        bat = self._get_startup_bat_path()
-        if self.autostart_var.get():
-            try:
-                with open(bat, 'w', encoding='utf-8') as f:
-                    f.write(f'@echo off\nstart "" "{sys.executable}"\n')
-                MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio", parent=self)
-            except Exception as e:
-                self.autostart_var.set(False)
-                MD.show_error(f"Error: {e}", "Error", parent=self)
-        else:
-            try:
-                if os.path.exists(bat):
-                    os.remove(bat)
-                MD.show_info("❌ Auto-inicio DESACTIVADO.", "Auto-inicio", parent=self)
-            except Exception as e:
-                self.autostart_var.set(True)
-                MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def generate_daily_report(self):
-        hoy = datetime.now().strftime("%Y-%m-%d")
-        sales = self.sale_use_case.get_sales_by_day(hoy)
-        if not sales:
-            MD.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
-            return
-        arch = filedialog.asksaveasfilename(defaultextension=".txt",
-                                            initialfile=f"ventas_{hoy}.txt",
-                                            filetypes=[("Texto", "*.txt")])
-        if not arch:
-            return
-        total_dia = sum(s.total for s in sales)
-        total_prod = sum(i.quantity for s in sales for i in s.items)
-        L = ["=" * 60, "      REPORTE DE VENTAS DEL DÍA",
-             f"      Fecha: {hoy}",
-             f"      Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-             "=" * 60, ""]
-        for s in sales:
-            hora = s.date.split(" ")[1] if " " in s.date else ""
-            cliente = f" - {s.customer_name}" if s.customer_name else ""
-            fiado = " [FIADO]" if s.is_credit else ""
-            L.append(f"Venta #{s.display_number:02d}  -  {hora}  -  {s.payment_method}{cliente}{fiado}")
-            L.append(f"  {'Cant.':>8}  {'Producto':<30} {'P.Unit':>10} {'Subtotal':>12}")
-            for it in s.items:
-                L.append(f"  {it.quantity:>8g}  {it.product_name[:30]:<30} "
-                         f"${it.unit_price:>9,.0f} ${it.subtotal:>11,.0f}".replace(",", "."))
-            L.append(f"  {'':>8}  {'':<30} {'':>10} ${s.total:>11,.0f}".replace(",", "."))
-            L.append("")
-        L += ["=" * 60,
-              f"TOTAL DEL DÍA:      ${total_dia:>12,.0f}".replace(",", "."),
-              f"VENTAS REALIZADAS:  {len(sales)}",
-              f"PRODUCTOS VENDIDOS: {total_prod:g}", "=" * 60]
-        try:
-            with open(arch, "w", encoding="utf-8") as f:
-                f.write("\n".join(L))
-            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def generate_monthly_report(self):
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, Alignment, PatternFill
-        except ImportError:
-            MD.show_error("Falta openpyxl.", "Error", parent=self)
-            return
-        ym = datetime.now().strftime("%Y-%m")
-        sales = self.sale_use_case.get_sales_by_month(ym)
-        if not sales:
-            MD.show_info("No hay ventas este mes.", "Reporte vacío", parent=self)
-            return
-        arch = filedialog.asksaveasfilename(defaultextension=".xlsx",
-                                            initialfile=f"ventas_{ym}.xlsx",
-                                            filetypes=[("Excel", "*.xlsx")])
-        if not arch:
-            return
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = f"Ventas {ym}"
-        ws.append(["Venta #", "Fecha", "Cliente", "Método", "Fiado", "Producto",
-                   "Código", "Cantidad", "Unidad", "P. Unit.", "Subtotal"])
-        for c in ws[1]:
-            c.font = Font(bold=True, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="305496")
-            c.alignment = Alignment(horizontal="center")
-        for s in sales:
-            for it in s.items:
-                ws.append([f"#{s.display_number:02d}", s.date, s.customer_name,
-                           s.payment_method, "Sí" if s.is_credit else "No",
-                           it.product_name, it.barcode,
-                           it.quantity, "unidad", it.unit_price, it.subtotal])
-        total = sum(s.total for s in sales)
-        ws.append([])
-        ws.append(["", "", "", "", "", "", "", "", "", "TOTAL:", total])
-        for col, w in zip("ABCDEFGHIJK", [12, 20, 25, 15, 10, 30, 20, 10, 10, 12, 12]):
-            ws.column_dimensions[col].width = w
-        try:
-            wb.save(arch)
-            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def export_db(self):
-        arch = filedialog.asksaveasfilename(defaultextension=".db",
-                                            filetypes=[("SQLite", "*.db")])
-        if arch:
-            self.db_manager.close_connection()
-            shutil.copy2(self.db_path, arch)
-            MD.show_info("Base de datos exportada.", "Listo", parent=self)
-
-    def import_db(self):
-        arch = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
-        if arch and MD.yesno("¿Reemplazar datos?", "Confirmar", parent=self) == "Yes":
-            self.db_manager.close_connection()
-            shutil.copy2(arch, self.db_path)
-            self.inventory_view.load_products()
-            MD.show_info("Importada.", "Listo", parent=self)
+                     font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").
