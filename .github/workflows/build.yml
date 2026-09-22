@@ -21,15 +21,15 @@ jobs:
     - name: Instalar dependencias
       run: |
         python -m pip install --upgrade pip
-        pip install ttkbootstrap openpyxl pyinstaller pystray Pillow
+        pip install ttkbootstrap openpyxl pyinstaller pystray Pillow reportlab
 
     - name: Compilar con PyInstaller
       run: |
         cd MiniPOS_portable
-        pyinstaller --noconsole --onefile --paths=src --name="miniPOS_portable-v2.0" main.py
+        pyinstaller --noconsole --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
 
     - name: Subir el archivo EXE
       uses: actions/upload-artifact@v4
       with:
-        name: miniPOS_portable-v2.0
-        path: MiniPOS_portable/dist/miniPOS_portable-v2.0.exe
+        name: miniPOS_portable-v2.5
+        path: MiniPOS_portable/dist/miniPOS_portable-v2.5.exe
