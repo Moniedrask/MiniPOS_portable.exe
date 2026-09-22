@@ -9,14 +9,17 @@ class ProductCase:
         self.db = db_manager
 
     def add_product(self, name, barcode, price, stock,
-                    unit_type="unidad", unit="unidad", group_name=""):
+                    unit_type="unidad", unit="unidad",
+                    group_name="", cost=0.0, margin_percent=20.0):
         conn = self.db.get_connection()
         cur = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cur.execute(
             "INSERT INTO products (name, barcode, price, stock, unit_type, unit, "
-            "created_at, updated_at, group_name) VALUES (?,?,?,?,?,?,?,?,?)",
-            (name, barcode, price, stock, unit_type, unit, now, now, group_name))
+            "created_at, updated_at, group_name, cost, margin_percent) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (name, barcode, price, stock, unit_type, unit, now, now,
+             group_name, cost, margin_percent))
         conn.commit()
         pid = cur.lastrowid
         return pid
@@ -35,18 +38,23 @@ class ProductCase:
                 r["unit"] if "unit" in keys else "unidad",
                 r["created_at"] if "created_at" in keys else "",
                 r["updated_at"] if "updated_at" in keys else "",
-                r["group_name"] if "group_name" in keys else ""))
+                r["group_name"] if "group_name" in keys else "",
+                r["cost"] if "cost" in keys else 0.0,
+                r["margin_percent"] if "margin_percent" in keys else 20.0))
         return result
 
     def update_product(self, product_id, name, barcode, price, stock,
-                       unit_type="unidad", unit="unidad", group_name=""):
+                       unit_type="unidad", unit="unidad",
+                       group_name="", cost=0.0, margin_percent=20.0):
         conn = self.db.get_connection()
         cur = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cur.execute(
             "UPDATE products SET name=?, barcode=?, price=?, stock=?, unit_type=?, "
-            "unit=?, updated_at=?, group_name=? WHERE product_id=?",
-            (name, barcode, price, stock, unit_type, unit, now, group_name, product_id))
+            "unit=?, updated_at=?, group_name=?, cost=?, margin_percent=? "
+            "WHERE product_id=?",
+            (name, barcode, price, stock, unit_type, unit, now,
+             group_name, cost, margin_percent, product_id))
         conn.commit()
 
     def delete_product(self, product_id):
@@ -56,7 +64,6 @@ class ProductCase:
         conn.commit()
 
     def set_group_name(self, product_ids, group_name):
-        """Asigna un group_name a varios productos a la vez."""
         if not product_ids:
             return
         conn = self.db.get_connection()
@@ -66,6 +73,7 @@ class ProductCase:
                         (group_name, pid))
         conn.commit()
 
+    # ============ BORRADOR ============
     def save_product_draft(self, data):
         try:
             conn = self.db.get_connection()
