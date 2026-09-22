@@ -22,14 +22,55 @@ class SaleCase:
             pass
 
     def reset_sale_number_counter(self):
-        """
-        Reinicia el contador VISUAL de ventas a #01.
-        NO borra ventas, fiados ni abonos. Solo afecta a las nuevas ventas.
-        """
+        """Reinicia el contador VISUAL a #01 sin borrar historial."""
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT COALESCE(MAX(sale_id), 0) m FROM sales")
         max_id = cur.fetchone()["m"]
         self.set_sale_number_offset(max_id)
+
+    # ============ AUTO-RESET DIARIO ============
+    def is_auto_reset_enabled(self):
+        try:
+            return self.db.get_setting("auto_reset_enabled", "1") == "1"
+        except Exception:
+            return True
+
+    def enable_auto_reset(self, enabled):
+        try:
+            self.db.set_setting("auto_reset_enabled", "1" if enabled else "0")
+        except Exception:
+            pass
+
+    def get_last_reset_date(self):
+        try:
+            return self.db.get_setting("last_sale_reset_date", "") or ""
+        except Exception:
+            return ""
+
+    def set_last_reset_date(self, date_str):
+        try:
+            self.db.set_setting("last_sale_reset_date", date_str)
+        except Exception:
+            pass
+
+    def auto_reset_if_new_day(self):
+        """
+        Verifica si cambió el día y reinicia el contador visual.
+        Devuelve True si reinició, False si no era necesario.
+        """
+        try:
+            if not self.is_auto_reset_enabled():
+                return False
+            hoy = datetime.now().strftime("%Y-%m-%d")
+            last = self.get_last_reset_date()
+            if last == hoy:
+                return False  # Ya se reinició hoy
+            # Cambió el día: reiniciar
+            self.reset_sale_number_counter()
+            self.set_last_reset_date(hoy)
+            return True
+        except Exception:
+            return False
 
     # ============ CREAR VENTA ============
     def create_sale(self, items, payment_method="Efectivo", notes="",
