@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from domain.models.sale import Sale, SaleItem
 
 
@@ -7,7 +7,9 @@ class SaleCase:
     def __init__(self, db_manager):
         self.db = db_manager
 
-    # ============ CONTADOR DE VENTAS ============
+    # ============================================================
+    # CONTADOR DE VENTAS
+    # ============================================================
     def get_sale_number_offset(self):
         try:
             val = self.db.get_setting("sale_number_offset", "0")
@@ -27,7 +29,9 @@ class SaleCase:
         max_id = cur.fetchone()["m"]
         self.set_sale_number_offset(max_id)
 
-    # ============ AUTO-RESET DIARIO ============
+    # ============================================================
+    # AUTO-RESET DIARIO
+    # ============================================================
     def is_auto_reset_enabled(self):
         try:
             return self.db.get_setting("auto_reset_enabled", "1") == "1"
@@ -66,7 +70,9 @@ class SaleCase:
         except Exception:
             return False
 
-    # ============ CREAR VENTA ============
+    # ============================================================
+    # CREAR VENTA (con pago mixto)
+    # ============================================================
     def create_sale(self, items, payment_method="Efectivo", notes="",
                     customer_name="", is_credit=False, discount=0.0,
                     payments=None):
@@ -105,7 +111,6 @@ class SaleCase:
                 cur.execute("UPDATE products SET stock = stock - ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
 
-        # Desglose de pagos mixtos
         if payments and len(payments) > 1:
             for p in payments:
                 cur.execute(
@@ -122,6 +127,9 @@ class SaleCase:
         cur.execute("SELECT method, amount FROM sale_payments WHERE sale_id = ?", (sale_id,))
         return [{"method": r["method"], "amount": r["amount"]} for r in cur.fetchall()]
 
+    # ============================================================
+    # CONVERSIÓN FILAS → OBJETOS
+    # ============================================================
     def _rows_to_sales(self, rows):
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -142,9 +150,13 @@ class SaleCase:
             sale.display_number = s["sale_id"] - (offset or 0)
             sale.discount = s["discount"] if "discount" in keys else 0.0
             sale.subtotal = s["subtotal"] if "subtotal" in keys else s["total"]
+            sale.is_returned = s["is_returned"] if "is_returned" in keys else 0
             sales.append(sale)
         return sales
 
+    # ============================================================
+    # CONSULTAS DE VENTAS
+    # ============================================================
     def get_sales_by_day(self, date_str):
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT * FROM sales WHERE date LIKE ? ORDER BY date", (f"{date_str}%",))
@@ -185,6 +197,9 @@ class SaleCase:
             cur.execute("SELECT * FROM sales WHERE is_credit = 1 ORDER BY customer_name, date")
         return self._rows_to_sales(cur.fetchall())
 
+    # ============================================================
+    # FIADOS / ABONOS
+    # ============================================================
     def mark_as_paid(self, sale_id):
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -243,20 +258,6 @@ class SaleCase:
         saldo = cur.fetchone()["t"]
         return aplicado, saldo
 
-    def delete_sale(self, sale_id):
-        conn = self.db.get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,))
-        items = cur.fetchall()
-        for it in items:
-            if it["product_id"]:
-                cur.execute("UPDATE products SET stock = stock + ? WHERE product_id = ?",
-                            (it["quantity"], it["product_id"]))
-        cur.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
-        cur.execute("DELETE FROM sale_payments WHERE sale_id = ?", (sale_id,))
-        cur.execute("DELETE FROM sales WHERE sale_id = ?", (sale_id,))
-        conn.commit()
-
     def get_pending_by_customer(self, name):
         if not name:
             return 0.0
@@ -288,6 +289,171 @@ class SaleCase:
         return sorted(grupos.values(),
                       key=lambda x: (-x["pending"], x["customer_name"].lower()))
 
+    # ============================================================
+    # ELIMINAR VENTA
+    # ============================================================
+    def delete_sale(self, sale_id):
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM sale_items WHERE sale_id = ?", (sale_id,))
+        items = cur.fetchall()
+        for it in items:
+            if it["product_id"]:
+                cur.execute("UPDATE products SET stock = stock + ? WHERE product_id = ?",
+                            (it["quantity"], it["product_id"]))
+        cur.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
+        cur.execute("DELETE FROM sale_payments WHERE sale_id = ?", (sale_id,))
+        cur.execute("DELETE FROM sales WHERE sale_id = ?", (sale_id,))
+        conn.commit()
+
+    # ============================================================
+    # IDEA 10: DEVOLUCIONES
+    # ============================================================
+    def register_return(self, sale_id, items_to_return, reason="", return_type="producto"):
+        """
+        items_to_return: lista de dicts [{"item_id": X, "quantity": N}, ...]
+        Restaura stock, actualiza returned_qty, guarda en returns/return_items.
+        Si todos los items quedan devueltos, marca la venta como is_returned=1.
+        Devuelve (ok, mensaje, total_devuelto).
+        """
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+
+        cur.execute("SELECT sale_id FROM sales WHERE sale_id = ?", (sale_id,))
+        if not cur.fetchone():
+            return False, "Venta no encontrada", 0.0
+
+        if not items_to_return:
+            return False, "No hay productos para devolver", 0.0
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        total_devuelto = 0.0
+        items_validos = []
+
+        for it in items_to_return:
+            item_id = it.get("item_id")
+            qty = float(it.get("quantity", 0) or 0)
+            if qty <= 0:
+                continue
+            cur.execute("SELECT * FROM sale_items WHERE item_id = ? AND sale_id = ?",
+                        (item_id, sale_id))
+            row = cur.fetchone()
+            if not row:
+                continue
+            ya_devuelto = row["returned_qty"] or 0
+            pendiente = row["quantity"] - ya_devuelto
+            if qty > pendiente:
+                qty = pendiente
+            if qty <= 0:
+                continue
+
+            sub = qty * row["unit_price"]
+            total_devuelto += sub
+            items_validos.append({
+                "item_id": item_id,
+                "product_id": row["product_id"],
+                "product_name": row["product_name"],
+                "quantity": qty,
+                "unit_price": row["unit_price"],
+                "subtotal": sub,
+            })
+
+        if not items_validos:
+            return False, "Nada por devolver (ya devuelto o cantidades inválidas)", 0.0
+
+        cur.execute(
+            "INSERT INTO returns (sale_id, date, reason, total_returned, return_type) "
+            "VALUES (?,?,?,?,?)",
+            (sale_id, now, reason, total_devuelto, return_type))
+        return_id = cur.lastrowid
+
+        for it in items_validos:
+            cur.execute(
+                "INSERT INTO return_items (return_id, product_id, product_name, "
+                "quantity, unit_price, subtotal) VALUES (?,?,?,?,?,?)",
+                (return_id, it["product_id"], it["product_name"],
+                 it["quantity"], it["unit_price"], it["subtotal"]))
+
+            cur.execute(
+                "UPDATE sale_items SET returned_qty = COALESCE(returned_qty, 0) + ? "
+                "WHERE item_id = ?",
+                (it["quantity"], it["item_id"]))
+
+            if it["product_id"]:
+                cur.execute("UPDATE products SET stock = stock + ? WHERE product_id = ?",
+                            (it["quantity"], it["product_id"]))
+
+        # ¿Todo devuelto?
+        cur.execute(
+            "SELECT COUNT(*) c FROM sale_items "
+            "WHERE sale_id = ? AND COALESCE(returned_qty, 0) < quantity",
+            (sale_id,))
+        pendientes = cur.fetchone()["c"]
+        if pendientes == 0:
+            cur.execute("UPDATE sales SET is_returned = 1 WHERE sale_id = ?", (sale_id,))
+
+        conn.commit()
+        return True, f"Devolución registrada (${total_devuelto:,.0f})", total_devuelto
+
+    def get_returns_by_sale(self, sale_id):
+        """Devuelve las devoluciones asociadas a una venta."""
+        cur = self.db.get_connection().cursor()
+        cur.execute("SELECT * FROM returns WHERE sale_id = ? ORDER BY date DESC", (sale_id,))
+        rows = cur.fetchall()
+        result = []
+        for r in rows:
+            cur.execute("SELECT * FROM return_items WHERE return_id = ?", (r["return_id"],))
+            items = [dict(x) for x in cur.fetchall()]
+            result.append({
+                "return_id": r["return_id"],
+                "sale_id": r["sale_id"],
+                "date": r["date"],
+                "reason": r["reason"],
+                "total_returned": r["total_returned"],
+                "return_type": r["return_type"],
+                "items": items,
+            })
+        return result
+
+    def get_returns_by_day(self, date_str):
+        cur = self.db.get_connection().cursor()
+        cur.execute("SELECT * FROM returns WHERE date LIKE ? ORDER BY date", (f"{date_str}%",))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_returns_by_range(self, start_date, end_date):
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT * FROM returns WHERE date(date) BETWEEN ? AND ? ORDER BY date",
+            (start_date, end_date))
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_product_return_count(self, product_id, product_name=None):
+        """
+        Cuenta cuántas veces se ha devuelto un producto.
+        Aviso 'este producto se ha devuelto X veces'.
+        """
+        cur = self.db.get_connection().cursor()
+        if product_id:
+            cur.execute(
+                "SELECT COUNT(*) c FROM return_items WHERE product_id = ?", (product_id,))
+        else:
+            cur.execute(
+                "SELECT COUNT(*) c FROM return_items WHERE product_name = ?",
+                (product_name or "",))
+        row = cur.fetchone()
+        return row["c"] if row else 0
+
+    def get_returned_total_by_day(self, date_str):
+        """Suma del dinero devuelto en un día (para restar en el cierre)."""
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT COALESCE(SUM(total_returned), 0) t FROM returns WHERE date LIKE ?",
+            (f"{date_str}%",))
+        return cur.fetchone()["t"]
+
+    # ============================================================
+    # RESUMEN
+    # ============================================================
     def get_summary(self):
         cur = self.db.get_connection().cursor()
         hoy = datetime.now().strftime("%Y-%m-%d")
@@ -310,6 +476,9 @@ class SaleCase:
             "fiados": (fiados_c, fiados_t),
         }
 
+    # ============================================================
+    # CIERRE DE CAJA
+    # ============================================================
     def get_cash_closing(self, date_str):
         try:
             sales = self.get_sales_by_day(date_str)
@@ -355,6 +524,8 @@ class SaleCase:
                 total_abonos += (s.amount_paid or 0.0)
 
         efectivo_esperado = metodos.get("Efectivo", {}).get("total", 0.0)
+        total_devuelto = self.get_returned_total_by_day(date_str)
+        efectivo_esperado -= total_devuelto
 
         return {
             "date": date_str,
@@ -366,10 +537,13 @@ class SaleCase:
             "metodos": metodos,
             "total_fiado_nuevo": total_fiado_nuevo,
             "total_abonos": total_abonos,
+            "total_devuelto": total_devuelto,
             "efectivo_esperado": efectivo_esperado,
         }
 
-    # ============ FASE 6: BASE DE CAJA ============
+    # ============================================================
+    # IDEA 2: BASE DE CAJA
+    # ============================================================
     def get_current_cash_session(self):
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT * FROM cash_sessions WHERE is_open = 1 ORDER BY id DESC LIMIT 1")
@@ -435,7 +609,183 @@ class SaleCase:
     def has_open_cash_session(self):
         return self.get_current_cash_session() is not None
 
-    # ============ BORRADOR DE CARRITO ============
+    def get_cash_sessions_by_range(self, start_date, end_date):
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT * FROM cash_sessions WHERE date(open_date) BETWEEN ? AND ? "
+            "ORDER BY open_date DESC", (start_date, end_date))
+        return [dict(r) for r in cur.fetchall()]
+
+    # ============================================================
+    # IDEA 11: DATOS PARA GRÁFICOS
+    # ============================================================
+    def get_top_products(self, limit=10, start_date=None, end_date=None):
+        """
+        Top N productos más vendidos por cantidad.
+        Cada item: {product_id, product_name, quantity, total, profit}
+        """
+        cur = self.db.get_connection().cursor()
+        sql = '''
+            SELECT si.product_id,
+                   si.product_name,
+                   SUM(si.quantity) AS quantity,
+                   SUM(si.subtotal) AS total
+            FROM sale_items si
+            JOIN sales s ON si.sale_id = s.sale_id
+        '''
+        params = []
+        where = []
+        if start_date and end_date:
+            where.append("date(s.date) BETWEEN ? AND ?")
+            params.extend([start_date, end_date])
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " GROUP BY si.product_id, si.product_name ORDER BY quantity DESC LIMIT ?"
+        params.append(int(limit))
+
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+        result = []
+        for r in rows:
+            # Ganancia real = (precio venta - costo) * cantidad
+            profit = 0.0
+            if r["product_id"]:
+                cur.execute("SELECT cost FROM products WHERE product_id = ?",
+                            (r["product_id"],))
+                pr = cur.fetchone()
+                cost = pr["cost"] if pr else 0.0
+                profit = (r["total"] or 0) - (cost * (r["quantity"] or 0))
+            result.append({
+                "product_id": r["product_id"],
+                "product_name": r["product_name"],
+                "quantity": r["quantity"] or 0,
+                "total": r["total"] or 0.0,
+                "profit": profit,
+            })
+        return result
+
+    def get_sales_last_days(self, days=7):
+        """
+        Devuelve lista de {date, count, total, profit} para los últimos `days` días.
+        """
+        hoy = datetime.now().date()
+        resultado = []
+        for i in range(days - 1, -1, -1):
+            dia = hoy - timedelta(days=i)
+            ds = dia.strftime("%Y-%m-%d")
+            cur = self.db.get_connection().cursor()
+            cur.execute(
+                "SELECT COUNT(*) c, COALESCE(SUM(total),0) t FROM sales "
+                "WHERE date(date) = ?", (ds,))
+            r = cur.fetchone()
+            resultado.append({
+                "date": ds,
+                "count": r["c"] or 0,
+                "total": r["t"] or 0.0,
+            })
+        return resultado
+
+    def get_sales_by_hour(self, start_date=None, end_date=None):
+        """
+        Ventas agrupadas por hora del día (0-23).
+        Devuelve lista de 24 dicts {hour, count, total}.
+        """
+        cur = self.db.get_connection().cursor()
+        sql = '''
+            SELECT strftime('%H', date) AS hour,
+                   COUNT(*) AS count,
+                   COALESCE(SUM(total), 0) AS total
+            FROM sales
+        '''
+        params = []
+        if start_date and end_date:
+            sql += " WHERE date(date) BETWEEN ? AND ?"
+            params.extend([start_date, end_date])
+        sql += " GROUP BY hour"
+
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        data = {int(r["hour"]): {"count": r["count"], "total": r["total"]}
+                for r in rows if r["hour"] is not None}
+        return [{
+            "hour": h,
+            "count": data.get(h, {}).get("count", 0),
+            "total": data.get(h, {}).get("total", 0.0),
+        } for h in range(24)]
+
+    def get_profit_summary(self, start_date=None, end_date=None):
+        """
+        Ganancias reales: venta - costo, en un rango.
+        Devuelve {total_sales, total_cost, total_profit, total_returns, net_profit}
+        """
+        cur = self.db.get_connection().cursor()
+
+        sql = '''
+            SELECT si.product_id, si.quantity, si.subtotal
+            FROM sale_items si
+            JOIN sales s ON si.sale_id = s.sale_id
+        '''
+        params = []
+        if start_date and end_date:
+            sql += " WHERE date(s.date) BETWEEN ? AND ?"
+            params.extend([start_date, end_date])
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+        total_sales = 0.0
+        total_cost = 0.0
+        for r in rows:
+            total_sales += r["subtotal"] or 0.0
+            if r["product_id"]:
+                cur.execute("SELECT cost FROM products WHERE product_id = ?",
+                            (r["product_id"],))
+                pr = cur.fetchone()
+                cost = pr["cost"] if pr else 0.0
+                total_cost += cost * (r["quantity"] or 0)
+
+        # Restar devoluciones
+        sql_dev = "SELECT COALESCE(SUM(total_returned), 0) t FROM returns"
+        params_dev = []
+        if start_date and end_date:
+            sql_dev += " WHERE date(date) BETWEEN ? AND ?"
+            params_dev.extend([start_date, end_date])
+        cur.execute(sql_dev, params_dev)
+        total_returns = cur.fetchone()["t"] or 0.0
+
+        total_profit = total_sales - total_cost
+        net_profit = total_profit - total_returns
+
+        return {
+            "total_sales": total_sales,
+            "total_cost": total_cost,
+            "total_profit": total_profit,
+            "total_returns": total_returns,
+            "net_profit": net_profit,
+        }
+
+    def get_daily_profit_last_days(self, days=7):
+        """
+        Ganancias reales por día para los últimos `days` días.
+        Cada item: {date, sales, cost, profit}
+        """
+        hoy = datetime.now().date()
+        resultado = []
+        for i in range(days - 1, -1, -1):
+            dia = hoy - timedelta(days=i)
+            ds = dia.strftime("%Y-%m-%d")
+            res = self.get_profit_summary(ds, ds)
+            resultado.append({
+                "date": ds,
+                "sales": res["total_sales"],
+                "cost": res["total_cost"],
+                "profit": res["total_profit"],
+            })
+        return resultado
+
+    # ============================================================
+    # BORRADOR DE CARRITO
+    # ============================================================
     def save_cart_draft(self, items):
         try:
             conn = self.db.get_connection()
