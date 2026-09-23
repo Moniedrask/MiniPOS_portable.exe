@@ -25,7 +25,6 @@ class DBManager:
         except Exception:
             pass
 
-        # Migraciones existentes
         self._check_barcode_column()
         self._check_unit_columns()
         self._check_timestamp_columns()
@@ -38,14 +37,9 @@ class DBManager:
         self._check_payment_column()
         self._check_display_offset_column()
         self._check_discount_column()
+        self._check_fase6_tables()
         self._check_settings_table()
         self._check_drafts_tables()
-
-        # ========== FASE 6 ==========
-        self._check_cash_sessions_table()
-        self._check_sale_payments_table()
-        self._check_customer_payments_table()
-        self._check_cash_movements_table()
 
     def _create_database(self):
         conn = sqlite3.connect(self.db_path)
@@ -76,7 +70,6 @@ class DBManager:
         conn.commit()
         conn.close()
 
-    # ===== Migraciones existentes (Fases 1-5) =====
     def _check_barcode_column(self):
         cur = self.conn.cursor()
         cur.execute("PRAGMA table_info(products)")
@@ -133,7 +126,6 @@ class DBManager:
         cur = self.conn.cursor()
         cur.execute("PRAGMA table_info(products)")
         cols = [c[1] for c in cur.fetchall()]
-
         if 'rounded_price' not in cols:
             cur.execute("ALTER TABLE products ADD COLUMN rounded_price REAL DEFAULT 0")
             cur.execute("UPDATE products SET rounded_price = price WHERE rounded_price = 0")
@@ -231,6 +223,34 @@ class DBManager:
             cur.execute("UPDATE sales SET subtotal = total WHERE subtotal = 0")
             self.conn.commit()
 
+    # ================== FASE 6 ==================
+    def _check_fase6_tables(self):
+        """Crea las tablas nuevas de la Fase 6."""
+        cur = self.conn.cursor()
+
+        # Tabla de base de caja (sesiones de caja)
+        cur.execute('''CREATE TABLE IF NOT EXISTS cash_sessions (
+            session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            opening_amount REAL NOT NULL DEFAULT 0,
+            closing_amount REAL DEFAULT 0,
+            expected_amount REAL DEFAULT 0,
+            difference REAL DEFAULT 0,
+            opened_at TEXT NOT NULL,
+            closed_at TEXT DEFAULT '',
+            is_open INTEGER DEFAULT 1,
+            notes TEXT DEFAULT '')''')
+
+        # Tabla de pagos múltiples por venta
+        cur.execute('''CREATE TABLE IF NOT EXISTS sale_payments (
+            payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_id INTEGER NOT NULL,
+            method TEXT NOT NULL,
+            amount REAL NOT NULL,
+            FOREIGN KEY (sale_id) REFERENCES sales(sale_id))''')
+
+        self.conn.commit()
+
     def _check_settings_table(self):
         cur = self.conn.cursor()
         cur.execute('''CREATE TABLE IF NOT EXISTS settings (
@@ -249,53 +269,6 @@ class DBManager:
             updated_at TEXT NOT NULL)''')
         self.conn.commit()
 
-    # ========== FASE 6 ==========
-    def _check_cash_sessions_table(self):
-        cur = self.conn.cursor()
-        cur.execute('''CREATE TABLE IF NOT EXISTS cash_sessions (
-            session_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            opened_at TEXT NOT NULL,
-            closed_at TEXT DEFAULT '',
-            initial_cash REAL DEFAULT 0,
-            counted_cash REAL DEFAULT 0,
-            difference REAL DEFAULT 0,
-            notes TEXT DEFAULT '')''')
-        self.conn.commit()
-
-    def _check_sale_payments_table(self):
-        cur = self.conn.cursor()
-        cur.execute('''CREATE TABLE IF NOT EXISTS sale_payments (
-            payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sale_id INTEGER NOT NULL,
-            method TEXT NOT NULL,
-            amount REAL NOT NULL,
-            date TEXT NOT NULL,
-            FOREIGN KEY (sale_id) REFERENCES sales(sale_id))''')
-        self.conn.commit()
-
-    def _check_customer_payments_table(self):
-        cur = self.conn.cursor()
-        cur.execute('''CREATE TABLE IF NOT EXISTS customer_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            customer_name TEXT DEFAULT '',
-            sale_id INTEGER,
-            method TEXT DEFAULT 'Efectivo',
-            amount REAL NOT NULL)''')
-        self.conn.commit()
-
-    def _check_cash_movements_table(self):
-        cur = self.conn.cursor()
-        cur.execute('''CREATE TABLE IF NOT EXISTS cash_movements (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            type TEXT NOT NULL,
-            amount REAL NOT NULL,
-            notes TEXT DEFAULT '')''')
-        self.conn.commit()
-
-    # ===== Utilidades =====
     def get_setting(self, key, default=None):
         conn = self.get_connection()
         cur = conn.cursor()
