@@ -1,765 +1,638 @@
-import tkinter as tk
 import os
-import subprocess
-from tkinter import ttk as _tkttk  # noqa
-import ttkbootstrap as ttk
-from ttkbootstrap import Toplevel
-from presentation.views.widgets import (
-    apply_titlebar_theme, center_window, show_popup_smooth,
-    get_menu_font, AutoCompleteEntry, MD, TreeviewTooltip,
-    popup_is_open, make_scrolled_treeview, get_business_display_text,
-)
+import sys
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
+from datetime import datetime
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
+from application.use_case.sale_use_case import SaleCase
+from application.use_case.product_use_case import ProductCase
 
 
-class PaymentView(ttk.Frame):
-    def __init__(self, parent, product_use_case, sale_use_case, db_manager,
-                 get_theme_func, on_business_click=None):
-        super().__init__(parent, bootstyle="dark")
-        self.product_use_case = product_use_case
-        self.sale_use_case = sale_use_case
-        self.db_manager = db_manager
-        self.get_theme = get_theme_func
-        self.on_business_click = on_business_click
-        self.cart = []
-        self.tooltip = None
-        self._draft_loaded = False
-        self.last_ticket_path = None
-        self.create_widgets()
-        self.refresh_cart()
-        self.after(300, lambda: self.scan_entry.focus_set())
-        self.after(800, self._check_cart_draft)
-        self._keep_scanner_focused()
+class PaymentView(tk.Toplevel):
+    def __init__(self, master, sale_case: SaleCase, product_case: ProductCase,
+                 on_sale_done=None, cashier_name=""):
+        super().__init__(master)
+        self.sale_case = sale_case
+        self.product_case = product_case
+        self.on_sale_done = on_sale_done
+        self.cashier_name = cashier_name
 
-    def _is_dark(self):
-        return True
+        self.title("Punto de Venta")
+        self.geometry("1200x720")
+        self.minsize(1000, 600)
 
-    def _keep_scanner_focused(self):
-        try:
-            if not popup_is_open():
-                fw = self.focus_get()
-                if fw is not None and not isinstance(fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
-                    try:
-                        if fw.winfo_toplevel() is self.winfo_toplevel():
-                            self.scan_entry.focus_set()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        self.after(700, self._keep_scanner_focused)
+        # Estado
+        self.cart = []  # lista de dicts
+        self.last_sale_id = None
+        self.last_sale = None
+        self.last_sale_items = []
 
-    def _check_cart_draft(self):
-        if self._draft_loaded:
-            return
-        try:
-            if not self.winfo_ismapped():
-                self.after(500, self._check_cart_draft)
-                return
-        except Exception:
-            pass
-        self._draft_loaded = True
-        try:
-            items, updated = self.sale_use_case.load_cart_draft()
-        except Exception:
-            return
-        if not items:
-            return
-        try:
-            total = sum(i["quantity"] * i["unit_price"] for i in items)
-            n = len(items)
-            fecha = updated or "(sin fecha)"
-            r = MD.yesno(
-                f"🛒 Se encontró un carrito sin cobrar:\n\n"
-                f"Productos: {n}\n"
-                f"Total: ${total:,.0f}\n"
-                f"Guardado: {fecha}\n\n"
-                f"¿Deseas recuperarlo?".replace(",", "."),
-                "Recuperar carrito", parent=self)
-            if r == "Yes":
-                self.cart = items
-                self.refresh_cart()
-                self.scan_entry.focus_set()
-            else:
-                self.sale_use_case.clear_cart_draft()
-                self.cart = []
-                self.refresh_cart()
-        except Exception:
-            pass
+        self._build()
 
-    def _save_cart_draft(self):
-        try:
-            if self.cart:
-                self.sale_use_case.save_cart_draft(self.cart)
-            else:
-                self.sale_use_case.clear_cart_draft()
-        except Exception:
-            pass
+        # Cargar borrador si existe
+        self._try_load_draft()
 
-    def create_widgets(self):
-        top = ttk.Frame(self, bootstyle="dark")
-        top.pack(padx=10, pady=(10, 5), fill="x")
+        # Aviso de caja
+        self._check_cash_session()
 
-        ttk.Label(top, text="📷 Escanear:", font=("Arial", 14, "bold"),
-                  bootstyle="inverse-dark").pack(side="left", padx=5)
-        self.scan_var = tk.StringVar()
-        self.scan_entry = ttk.Entry(top, textvariable=self.scan_var, width=22, font=("Arial", 14))
-        self.scan_entry.pack(side="left", padx=5)
-        self.scan_entry.bind("<Return>", self.add_by_barcode)
+    # ============================================================
+    # INTERFAZ
+    # ============================================================
+    def _build(self):
+        # ===== Barra superior =====
+        top = tk.Frame(self, bg="#1e88e5", height=50)
+        top.pack(fill="x")
 
-        ttk.Label(top, text="🔍 Buscar:", font=("Arial", 11),
-                  bootstyle="inverse-dark").pack(side="left", padx=(15, 5))
+        tk.Label(top, text="🛒 PUNTO DE VENTA", bg="#1e88e5", fg="white",
+                 font=("Segoe UI", 14, "bold")).pack(side="left", padx=15, pady=10)
 
-        self.search_var = tk.StringVar()
-        self.search_entry = AutoCompleteEntry(
-            top,
-            values_getter=self._get_product_labels,
-            on_select=self.add_by_search_value,
-            width=25,
-            font=("Arial", 11))
-        self.search_entry.configure(textvariable=self.search_var)
-        self.search_entry.pack(side="left", padx=5)
+        self.lbl_cash_status = tk.Label(top, text="", bg="#1e88e5", fg="white",
+                                        font=("Segoe UI", 10, "bold"))
+        self.lbl_cash_status.pack(side="right", padx=15)
 
-        ttk.Button(top, text="Agregar", command=self.add_by_search,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
+        # ===== Cuerpo dividido =====
+        body = tk.Frame(self)
+        body.pack(fill="both", expand=True)
 
-        cart_frame = ttk.Frame(self, bootstyle="dark")
-        cart_frame.pack(padx=10, pady=5, fill="both", expand=True)
+        # ----- Izquierda: búsqueda y productos -----
+        left = tk.Frame(body, bg="#f5f5f5")
+        left.pack(side="left", fill="both", expand=True)
 
-        self.tree_frame, self.tree = make_scrolled_treeview(
-            cart_frame,
-            columns=("ID", "Name", "Barcode", "Price", "Qty", "Subtotal"),
-            headings=[
-                ("ID", "ID", 50, "center"),
-                ("Name", "Producto", 300, "w"),
-                ("Barcode", "Código", 150, "w"),
-                ("Price", "P. Unit.", 110, "e"),
-                ("Qty", "Cantidad", 110, "center"),
-                ("Subtotal", "Subtotal", 120, "e"),
-            ],
-            bootstyle="dark")
-        self.tree_frame.pack(fill="both", expand=True)
-        self.tree.bind("<Button-3>", self._cart_context_menu)
-        self.tooltip = TreeviewTooltip(self.tree, font_size=11)
+        # Búsqueda
+        search_frame = tk.Frame(left, bg="#f5f5f5")
+        search_frame.pack(fill="x", padx=10, pady=10)
 
-        bottom = ttk.Frame(self, bootstyle="dark")
-        bottom.pack(fill="x", padx=10, pady=10)
-        tf = ttk.Frame(bottom, bootstyle="dark")
-        tf.pack(side="left")
-        ttk.Label(tf, text="TOTAL A PAGAR:", font=("Arial", 14, "bold"),
-                  bootstyle="inverse-dark").pack(anchor="w")
-        self.total_label = ttk.Label(tf, text="$0", font=("Arial", 36, "bold"),
-                                     background="#0a4d1f", foreground="#a8e6a8",
-                                     anchor="center", padding=10)
-        self.total_label.pack(anchor="w")
+        tk.Label(search_frame, text="🔍 Buscar (F3):", bg="#f5f5f5",
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.var_search = tk.StringVar()
+        self.var_search.trace_add("write", lambda *a: self.apply_filter())
+        self.entry_search = tk.Entry(search_frame, textvariable=self.var_search,
+                                      font=("Segoe UI", 12), width=35)
+        self.entry_search.pack(side="left", padx=8)
+        self.entry_search.bind("<Return>", lambda e: self.add_first_filtered())
 
-        bf = ttk.Frame(bottom, bootstyle="dark")
-        bf.pack(side="right")
-        ttk.Button(bf, text="🖨 Último Ticket", command=self.open_last_ticket,
-                   bootstyle="info").pack(side="left", padx=5, ipady=15)
-        ttk.Button(bf, text="💰 COBRAR (F12)", command=self.pay,
-                   style="DarkGreen.TButton").pack(side="left", padx=5, ipady=15, ipadx=15)
-        ttk.Button(bf, text="❌ Cancelar", command=self.clear_cart,
-                   bootstyle="danger").pack(side="left", padx=5, ipady=15)
+        tk.Button(search_frame, text="➕ Agregar", command=self.add_first_filtered,
+                  bg="#4CAF50", fg="white", font=("Segoe UI", 10, "bold"),
+                  padx=12, pady=4, relief="flat").pack(side="left", padx=4)
 
-        # Atajo F12 para cobrar
-        self.winfo_toplevel().bind('<F12>', lambda e: self.pay(), add="+")
+        # Lista de productos
+        list_frame = tk.Frame(left)
+        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-    def _get_product_labels(self):
-        vals = []
-        for p in self.product_use_case.list_active_products():
-            txt = f"{p.name}  |  {p.barcode}" if p.barcode else p.name
-            vals.append(txt)
-        return vals
+        cols = ("id", "name", "price", "stock", "unit")
+        self.tree_products = ttk.Treeview(list_frame, columns=cols,
+                                          show="headings", selectmode="browse")
+        for c, t, w in [("id", "ID", 50), ("name", "Producto", 260),
+                        ("price", "Precio", 100), ("stock", "Stock", 70),
+                        ("unit", "Unidad", 70)]:
+            self.tree_products.heading(c, text=t)
+            self.tree_products.column(c, width=w,
+                                       anchor="w" if c == "name" else "center")
+        vsb = ttk.Scrollbar(list_frame, orient="vertical",
+                            command=self.tree_products.yview)
+        self.tree_products.configure(yscrollcommand=vsb.set)
+        self.tree_products.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
 
-    def _find_by_barcode(self, codigo):
-        for p in self.product_use_case.list_active_products():
-            if str(p.barcode).strip() == codigo:
-                return p
-        return None
+        self.tree_products.bind("<Double-1>", lambda e: self.add_selected())
+        self.tree_products.bind("<Return>", lambda e: self.add_selected())
 
-    def add_by_search_value(self, value):
-        self.after(10, lambda: self._do_add_by_search(value))
+        # ----- Derecha: carrito y cobro -----
+        right = tk.Frame(body, bg="#ffffff", width=420)
+        right.pack(side="right", fill="y")
+        right.pack_propagate(False)
 
-    def _do_add_by_search(self, value):
-        q = value.split("|")[0].strip() if "|" in value else value
-        q_lower = q.lower()
-        enc = None
-        for p in self.product_use_case.list_active_products():
-            if str(p.barcode).strip() == q or p.name.lower() == q_lower:
-                enc = p
+        tk.Label(right, text="🧾 Carrito", bg="#ffffff",
+                 font=("Segoe UI", 12, "bold")).pack(pady=8)
+
+        cart_frame = tk.Frame(right)
+        cart_frame.pack(fill="both", expand=True, padx=8)
+
+        ccols = ("name", "qty", "price", "sub")
+        self.tree_cart = ttk.Treeview(cart_frame, columns=ccols,
+                                       show="headings", height=15)
+        for c, t, w in [("name", "Producto", 140), ("qty", "Cant.", 50),
+                        ("price", "P. Unit.", 70), ("sub", "Subtotal", 80)]:
+            self.tree_cart.heading(c, text=t)
+            self.tree_cart.column(c, width=w,
+                                   anchor="w" if c == "name" else "center")
+        self.tree_cart.pack(fill="both", expand=True)
+
+        self.tree_cart.bind("<Double-1>", lambda e: self.remove_selected())
+        self.tree_cart.bind("<Delete>", lambda e: self.remove_selected())
+
+        # Totales
+        totals = tk.Frame(right, bg="#ffffff")
+        totals.pack(fill="x", padx=8, pady=6)
+
+        tk.Label(totals, text="Subtotal:", bg="#ffffff",
+                 font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w")
+        self.lbl_subtotal = tk.Label(totals, text="$0", bg="#ffffff",
+                                      font=("Segoe UI", 10, "bold"))
+        self.lbl_subtotal.grid(row=0, column=1, sticky="e")
+
+        tk.Label(totals, text="Descuento:", bg="#ffffff",
+                 font=("Segoe UI", 10)).grid(row=1, column=0, sticky="w")
+        self.var_discount = tk.StringVar(value="0")
+        self.var_discount.trace_add("write", lambda *a: self.update_totals())
+        tk.Entry(totals, textvariable=self.var_discount, width=10,
+                 font=("Segoe UI", 10)).grid(row=1, column=1, sticky="e")
+
+        tk.Label(totals, text="TOTAL:", bg="#ffffff",
+                 font=("Segoe UI", 14, "bold")).grid(row=2, column=0,
+                                                      sticky="w", pady=(6, 0))
+        self.lbl_total = tk.Label(totals, text="$0", bg="#ffffff",
+                                   font=("Segoe UI", 16, "bold"), fg="#1e88e5")
+        self.lbl_total.grid(row=2, column=1, sticky="e", pady=(6, 0))
+
+        totals.columnconfigure(1, weight=1)
+
+        # Botones
+        btns = tk.Frame(right, bg="#ffffff")
+        btns.pack(fill="x", padx=8, pady=8)
+
+        tk.Button(btns, text="🗑️ Vaciar carrito", command=self.clear_cart,
+                  bg="#f44336", fg="white", font=("Segoe UI", 9, "bold"),
+                  relief="flat", pady=6).pack(fill="x", pady=2)
+
+        tk.Button(btns, text="💳 COBRAR", command=self.open_payment_dialog,
+                  bg="#4CAF50", fg="white", font=("Segoe UI", 13, "bold"),
+                  relief="flat", pady=12).pack(fill="x", pady=4)
+
+        # Último ticket
+        tk.Button(btns, text="🖨️ Reimprimir último ticket",
+                  command=self.reprint_last_ticket,
+                  bg="#607D8B", fg="white", font=("Segoe UI", 9, "bold"),
+                  relief="flat", pady=4).pack(fill="x", pady=2)
+
+        # Atajos
+        self.bind("<F3>", lambda e: self.entry_search.focus_set())
+        self.bind("<F12>", lambda e: self.open_payment_dialog())
+
+        # Cargar productos
+        self.refresh_products()
+
+    # ============================================================
+    # CAJA (idea 2)
+    # ============================================================
+    def _check_cash_session(self):
+        session = self.sale_case.get_current_cash_session()
+        if session:
+            self.lbl_cash_status.config(
+                text=f"💰 Caja abierta (base ${session['initial_amount']:,.0f})",
+                fg="#a5d6a7")
+        else:
+            self.lbl_cash_status.config(
+                text="⚠️ Caja NO abierta", fg="#ffeb3b")
+
+    # ============================================================
+    # PRODUCTOS
+    # ============================================================
+    def refresh_products(self):
+        self.all_products = self.product_case.list_active_products()
+        self.apply_filter()
+
+    def apply_filter(self):
+        q = self.var_search.get().strip().lower()
+        self.tree_products.delete(*self.tree_products.get_children())
+        self.filtered = []
+        for p in self.all_products:
+            if q:
+                txt = f"{p.name} {p.barcode or ''}".lower()
+                if q not in txt:
+                    continue
+            self.filtered.append(p)
+            precio = p.rounded_price if p.rounded_price else p.price
+            self.tree_products.insert("", "end", iid=str(p.product_id),
+                values=(p.product_id, p.name, f"${precio:,.0f}",
+                        p.stock, p.unit or "unidad"))
+            if len(self.filtered) >= 200:
                 break
-        if not enc:
-            for p in self.product_use_case.list_active_products():
-                if q_lower in p.name.lower():
-                    enc = p
-                    break
-        if not enc:
-            MD.show_warning(f"⚠️ No se encontró '{q}'.", "No encontrado", parent=self)
+
+    def add_first_filtered(self):
+        if self.filtered:
+            self.add_to_cart(self.filtered[0])
+
+    def add_selected(self):
+        sel = self.tree_products.selection()
+        if not sel:
             return
-        self.search_var.set("")
-        if enc.unit_type in ("peso", "volumen"):
-            self.ask_amount(enc)
-        else:
-            self.add_to_cart(enc, 1)
-        self.scan_entry.focus_set()
+        pid = int(sel[0])
+        prod = next((p for p in self.all_products if p.product_id == pid), None)
+        if prod:
+            self.add_to_cart(prod)
 
-    def add_by_search(self, event=None):
-        raw = self.search_var.get().strip()
-        if not raw:
-            return
-        self._do_add_by_search(raw)
-
-    def _cart_context_menu(self, event):
-        row = self.tree.identify_row(event.y)
-        if not row:
-            return
-        self.tree.selection_set(row)
-        self.tree.focus(row)
-        pid = int(self.tree.item(row, 'values')[0])
-        name = self.tree.item(row, 'values')[1]
-        style = ttk.Style()
-        m = tk.Menu(self, tearoff=0,
-                    bg=style.colors.bg, fg=style.colors.fg,
-                    activebackground=style.colors.selectbg,
-                    activeforeground=style.colors.selectfg,
-                    bd=1, relief="solid",
-                    font=get_menu_font())
-        m.add_command(label="➖ Quitar 1", command=lambda: self._confirm_remove_one(pid, name))
-        m.add_command(label="🗑️  Quitar producto completo",
-                      command=lambda: self._confirm_remove_all(pid, name))
-        m.add_separator()
-        m.add_command(label="🧹 Vaciar carrito", command=self.clear_cart)
-        try:
-            m.tk_popup(event.x_root, event.y_root)
-        finally:
-            m.grab_release()
-
-    def _confirm_remove_one(self, pid, name):
-        if MD.yesno(f"¿Quitar 1 de '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
-            for i, it in enumerate(self.cart):
-                if it["product_id"] == pid:
-                    it["quantity"] -= 1
-                    if it["quantity"] <= 0:
-                        self.cart.pop(i)
-                    else:
-                        it["subtotal"] = it["quantity"] * it["unit_price"]
-                    break
-            self.refresh_cart()
-            self._save_cart_draft()
-            self.scan_entry.focus_set()
-
-    def _confirm_remove_all(self, pid, name):
-        if MD.yesno(f"¿Quitar TODO '{name}' del carrito?", "Confirmar", parent=self) == "Yes":
-            self.cart = [i for i in self.cart if i["product_id"] != pid]
-            self.refresh_cart()
-            self._save_cart_draft()
-            self.scan_entry.focus_set()
-
-    def add_by_barcode(self, event=None):
-        codigo = self.scan_var.get().strip()
-        if not codigo:
-            return
-        enc = self._find_by_barcode(codigo)
-        if not enc:
-            MD.show_warning(f"⚠️ '{codigo}' no registrado.", "No encontrado", parent=self)
-            self.scan_var.set("")
-            self.scan_entry.focus_set()
-            return
-        self.scan_var.set("")
-        self.scan_entry.focus_set()
-        if enc.unit_type in ("peso", "volumen"):
-            self.ask_amount(enc)
-        else:
-            self.add_to_cart(enc, 1)
-
-    def ask_amount(self, product):
-        pop = Toplevel(self)
-        pop.title(f"Cantidad - {product.name}")
-        pop.geometry("400x320")
-        pop.transient(self.winfo_toplevel())
-        pop.withdraw()
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
-
-        tk.Label(pop, text=product.name, font=("Arial", 16, "bold"),
-                 bg=bg, fg=fg).pack(pady=12)
-        tk.Label(pop, text=f"Precio: ${product.price:,.0f}/{product.unit}".replace(",", "."),
-                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=5)
-        tk.Label(pop, text=f"Ingrese la cantidad en {product.unit}:",
-                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=10)
-        v = tk.StringVar(value="1")
-        e = ttk.Entry(pop, textvariable=v, width=15, font=("Arial", 20), justify="center")
-        e.pack(pady=5)
-        e.select_range(0, tk.END)
-        e.focus_set()
-
-        def ok(ev=None):
-            try:
-                c = float(v.get().replace(",", "."))
-                if c <= 0:
-                    raise ValueError
-            except ValueError:
-                MD.show_error("Cantidad inválida", "Error", parent=pop)
-                return "break"
-            pop.destroy()
-            self.add_to_cart(product, c)
-            self.scan_entry.focus_set()
-            return "break"
-
-        bf = tk.Frame(pop, bg=bg)
-        bf.pack(pady=15)
-        ttk.Button(bf, text="Agregar", command=ok, style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cancelar",
-                   command=lambda: [pop.destroy(), self.scan_entry.focus_set()]).pack(side="left", padx=5)
-        e.bind("<Return>", ok)
-        show_popup_smooth(pop)
-        try:
-            pop.grab_set()
-            pop.focus_force()
-        except Exception:
-            pass
-
-    def add_to_cart(self, product, cantidad):
-        precio = product.rounded_price if product.rounded_price else product.price
+    def add_to_cart(self, product, qty=1):
         for it in self.cart:
             if it["product_id"] == product.product_id:
-                it["quantity"] += cantidad
-                it["subtotal"] = it["quantity"] * it["unit_price"]
-                self.refresh_cart()
-                self._save_cart_draft()
+                it["quantity"] += qty
+                self.render_cart()
                 return
+        precio = product.rounded_price if product.rounded_price else product.price
         self.cart.append({
             "product_id": product.product_id,
             "product_name": product.name,
-            "barcode": product.barcode,
-            "unit": product.unit,
+            "barcode": product.barcode or "",
+            "quantity": qty,
+            "unit": product.unit or "unidad",
             "unit_price": precio,
-            "quantity": cantidad,
-            "subtotal": cantidad * precio,
         })
-        self.refresh_cart()
-        self._save_cart_draft()
+        self.render_cart()
+        self.save_draft()
 
-    def refresh_cart(self):
-        for r in self.tree.get_children():
-            self.tree.delete(r)
-        for it in self.cart:
-            qt = f"{it['quantity']:g} {it['unit']}" if it["unit"] != "unidad" else f"{int(it['quantity'])}"
-            self.tree.insert("", "end", values=(
-                it["product_id"], it["product_name"], it["barcode"],
-                f"${it['unit_price']:,.0f}".replace(",", "."), qt,
-                f"${it['subtotal']:,.0f}".replace(",", ".")))
-        tot = sum(i["subtotal"] for i in self.cart)
-        self.total_label.configure(text=f"${tot:,.0f}".replace(",", "."))
+    def render_cart(self):
+        self.tree_cart.delete(*self.tree_cart.get_children())
+        for i, it in enumerate(self.cart):
+            sub = it["quantity"] * it["unit_price"]
+            self.tree_cart.insert("", "end", iid=str(i),
+                values=(it["product_name"], f"{it['quantity']:g}",
+                        f"${it['unit_price']:,.0f}", f"${sub:,.0f}"))
+        self.update_totals()
+
+    def remove_selected(self):
+        sel = self.tree_cart.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self.cart):
+            del self.cart[idx]
+            self.render_cart()
+            self.save_draft()
 
     def clear_cart(self):
-        if not self.cart:
+        if self.cart and not messagebox.askyesno("Vaciar", "¿Vaciar carrito?"):
             return
-        if MD.yesno("¿Vaciar el carrito?", "Confirmar", parent=self) == "Yes":
-            self.cart = []
-            self.refresh_cart()
-            self.sale_use_case.clear_cart_draft()
-            self.scan_entry.focus_set()
+        self.cart.clear()
+        self.render_cart()
+        self.save_draft()
 
-    def open_last_ticket(self):
-        if not self.last_ticket_path or not os.path.exists(self.last_ticket_path):
-            MD.show_info("Aún no se ha generado ningún ticket en esta sesión.",
-                         "Sin tickets", parent=self)
-            return
+    def update_totals(self):
+        subtotal = sum(it["quantity"] * it["unit_price"] for it in self.cart)
         try:
-            os.startfile(self.last_ticket_path)
-        except Exception:
-            try:
-                subprocess.Popen(['explorer', '/select,', self.last_ticket_path])
-            except Exception as e:
-                MD.show_error(f"No se pudo abrir el ticket:\n{e}\n\nRuta: {self.last_ticket_path}",
-                              "Error", parent=self)
+            desc = float(self.var_discount.get() or 0)
+        except ValueError:
+            desc = 0.0
+        desc = max(0.0, min(desc, subtotal))
+        total = subtotal - desc
+        self.lbl_subtotal.config(text=f"${subtotal:,.0f}")
+        self.lbl_total.config(text=f"${total:,.0f}")
+        return subtotal, desc, total
 
-    def pay(self):
-        try:
-            self._pay_internal()
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            try:
-                MD.show_error(f"Error al abrir el pago:\n{e}", "Error", parent=self)
-            except Exception:
-                pass
-
-    def _pay_internal(self):
+    # ============================================================
+    # COBRO / PAGO MIXTO (idea 3)
+    # ============================================================
+    def open_payment_dialog(self):
         if not self.cart:
-            MD.show_warning("El carrito está vacío.", "Nada que cobrar", parent=self)
+            messagebox.showinfo("Cobrar", "El carrito está vacío.")
             return
-        subtotal = sum(i["subtotal"] for i in self.cart)
 
-        pop = Toplevel(self)
-        pop.title("Confirmar Pago")
-        pop.geometry("680x860")
-        pop.transient(self.winfo_toplevel())
-        pop.withdraw()
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
-
-        container = tk.Frame(pop, bg=bg)
-        container.pack(fill="both", expand=True)
-
-        refs = {}
-        state = {"updating": False}
-
-        def build_content(parent):
-            # Encabezado negocio
-            texto_negocio = get_business_display_text(self.db_manager)
-            if texto_negocio:
-                tk.Label(parent, text=texto_negocio,
-                         font=("Arial", 11, "bold"),
-                         bg=bg, fg="#7dd87d").pack(pady=(10, 2))
-
-            tk.Label(parent, text="💰 CONFIRMAR PAGO",
-                     font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(2, 6))
-
-            # Subtotal / Descuento / Total
-            sub_frame = tk.Frame(parent, bg=bg)
-            sub_frame.pack(pady=2)
-            tk.Label(sub_frame, text="Subtotal:",
-                     font=("Arial", 11), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
-            tk.Label(sub_frame, text=f"${subtotal:,.0f}".replace(",", "."),
-                     font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(side="left")
-
-            # Descuento
-            desc_frame = tk.Frame(parent, bg=bg)
-            desc_frame.pack(pady=(2, 4))
-            tk.Label(desc_frame, text="Descuento:",
-                     font=("Arial", 10), bg=bg, fg=fg).pack(side="left", padx=(0, 5))
-            desc_tipo_var = tk.StringVar(value="monto")
-            ttk.Radiobutton(desc_frame, text="$", variable=desc_tipo_var,
-                            value="monto", bootstyle="info").pack(side="left", padx=2)
-            ttk.Radiobutton(desc_frame, text="%", variable=desc_tipo_var,
-                            value="porcentaje", bootstyle="info").pack(side="left", padx=2)
-            desc_var = tk.StringVar(value="0")
-            ttk.Entry(desc_frame, textvariable=desc_var, width=10,
-                      font=("Arial", 11), justify="center").pack(side="left", padx=5)
-
-            # Total (verde)
-            total_frame = tk.Frame(parent, bg="#0a4d1f", padx=20, pady=8)
-            total_frame.pack(pady=(4, 8))
-            tk.Label(total_frame, text="TOTAL A PAGAR",
-                     font=("Arial", 9, "bold"),
-                     bg="#0a4d1f", fg="#a8e6a8").pack()
-            total_lbl = tk.Label(total_frame, text=f"${subtotal:,.0f}".replace(",", "."),
-                                 font=("Arial", 24, "bold"),
-                                 bg="#0a4d1f", fg="#a8e6a8")
-            total_lbl.pack()
-
-            # Nombre cliente
-            tk.Label(parent, text="Nombre del cliente:",
-                     font=("Arial", 10), bg=bg, fg=fg).pack(pady=(2, 2))
-            nombre_var = tk.StringVar()
-            ttk.Entry(parent, textvariable=nombre_var, width=40,
-                      font=("Arial", 11)).pack(pady=3, padx=20)
-
-            # Deuda previa label
-            deuda_lbl = tk.Label(parent, text="", font=("Arial", 10, "bold"),
-                                 bg=bg, fg="#ffd166", wraplength=600, justify="center")
-            deuda_lbl.pack(pady=4, padx=10)
-
-            # === MÉTODOS DE PAGO ===
-            tk.Label(parent, text="Métodos de pago (deja en blanco los que no uses):",
-                     font=("Arial", 10, "bold"), bg=bg, fg=fg).pack(pady=(8, 3))
-
-            metodos_frame = tk.Frame(parent, bg=bg)
-            metodos_frame.pack(pady=2)
-
-            # Efectivo
-            tk.Label(metodos_frame, text="💵 Efectivo:",
-                     font=("Arial", 10), bg=bg, fg=fg).grid(row=0, column=0, padx=5, pady=2, sticky="e")
-            ef_var = tk.StringVar(value="")
-            ttk.Entry(metodos_frame, textvariable=ef_var, width=12,
-                      font=("Arial", 11), justify="center").grid(row=0, column=1, padx=5, pady=2)
-
-            # Transferencia
-            tk.Label(metodos_frame, text="🏦 Transferencia:",
-                     font=("Arial", 10), bg=bg, fg=fg).grid(row=1, column=0, padx=5, pady=2, sticky="e")
-            tr_var = tk.StringVar(value="")
-            ttk.Entry(metodos_frame, textvariable=tr_var, width=12,
-                      font=("Arial", 11), justify="center").grid(row=1, column=1, padx=5, pady=2)
-
-            # Tarjeta
-            tk.Label(metodos_frame, text="💳 Tarjeta:",
-                     font=("Arial", 10), bg=bg, fg=fg).grid(row=2, column=0, padx=5, pady=2, sticky="e")
-            ta_var = tk.StringVar(value="")
-            ttk.Entry(metodos_frame, textvariable=ta_var, width=12,
-                      font=("Arial", 11), justify="center").grid(row=2, column=1, padx=5, pady=2)
-
-            # Resumen
-            resumen_lbl = tk.Label(parent, text="", font=("Arial", 10),
-                                   bg=bg, fg="#a8e6a8", justify="center")
-            resumen_lbl.pack(pady=4, padx=10)
-
-            # Fiado
-            fiado_var = tk.BooleanVar(value=False)
-            fiado_check = ttk.Checkbutton(parent,
-                                          text="📝 Marcar el resto como FIADO",
-                                          variable=fiado_var,
-                                          bootstyle="warning-round-toggle")
-            fiado_check.pack(pady=4)
-
-            # Abono (solo si debe)
-            abono_var = tk.BooleanVar(value=False)
-            abono_monto_var = tk.StringVar(value="")
-            abono_frame = tk.Frame(parent, bg=bg)
-
-            # Notas
-            tk.Label(parent, text="Notas (opcional):",
-                     font=("Arial", 10), bg=bg, fg=fg).pack(pady=(6, 2))
-            notas_var = tk.StringVar()
-            ttk.Entry(parent, textvariable=notas_var, width=40).pack(pady=3, padx=20)
-
-            refs.update({
-                "subtotal": subtotal,
-                "total_lbl": total_lbl,
-                "desc_var": desc_var,
-                "desc_tipo_var": desc_tipo_var,
-                "nombre_var": nombre_var,
-                "deuda_lbl": deuda_lbl,
-                "ef_var": ef_var,
-                "tr_var": tr_var,
-                "ta_var": ta_var,
-                "resumen_lbl": resumen_lbl,
-                "fiado_var": fiado_var,
-                "abono_var": abono_var,
-                "abono_monto_var": abono_monto_var,
-                "abono_frame": abono_frame,
-                "notas_var": notas_var,
-            })
-
-        def build_bottom(parent):
-            def confirmar():
-                nombre = refs["nombre_var"].get().strip()
-                desc_aplicado = calcular_descuento()
-                total_actual = max(0.0, subtotal - desc_aplicado)
-
-                # Leer montos
-                try:
-                    ef = float(refs["ef_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                except ValueError:
-                    ef = 0.0
-                try:
-                    tr = float(refs["tr_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                except ValueError:
-                    tr = 0.0
-                try:
-                    ta = float(refs["ta_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                except ValueError:
-                    ta = 0.0
-
-                pagos = []
-                if ef > 0:
-                    pagos.append({"method": "Efectivo", "amount": ef})
-                if tr > 0:
-                    pagos.append({"method": "Transferencia", "amount": tr})
-                if ta > 0:
-                    pagos.append({"method": "Tarjeta", "amount": ta})
-
-                total_pagado = ef + tr + ta
-                es_fiado = refs["fiado_var"].get()
-
-                # Validar
-                if not pagos and not es_fiado:
-                    MD.show_warning("Debes ingresar al menos un método de pago o marcar FIADO.",
-                                    "Faltan datos", parent=pop)
-                    return
-
-                if total_pagado > total_actual + 0.01:
-                    MD.show_warning(
-                        f"El total ingresado (${total_pagado:,.0f}) es mayor al total a pagar (${total_actual:,.0f}).".replace(",", "."),
-                        "Monto excedido", parent=pop)
-                    return
-
-                if es_fiado and not nombre:
-                    MD.show_error("Para FIADO debes ingresar el nombre del cliente.",
-                                  "Falta nombre", parent=pop)
-                    return
-
-                if abs(total_pagado - total_actual) > 0.01 and not es_fiado:
-                    falta = total_actual - total_pagado
-                    if not MD.yesno(
-                            f"El total ingresado es ${total_pagado:,.0f} y falta ${falta:,.0f}.\n"
-                            f"¿Deseas marcar la diferencia como FIADO?".replace(",", "."),
-                            "Diferencia detectada", parent=pop) == "Yes":
-                        return
-                    es_fiado = True
-                    if not nombre:
-                        MD.show_error("Para FIADO debes ingresar el nombre del cliente.",
-                                      "Falta nombre", parent=pop)
-                        return
-
-                # Abono a deuda (si marcado)
-                monto_abono = 0.0
-                if refs["abono_var"].get() and nombre:
-                    try:
-                        monto_abono = float(
-                            refs["abono_monto_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                    except ValueError:
-                        monto_abono = 0.0
-
-                # Método principal (el de mayor monto o el primero)
-                if pagos:
-                    metodo_principal = max(pagos, key=lambda x: x["amount"])["method"]
-                else:
-                    metodo_principal = "Fiado"
-
-                try:
-                    sale_id, total_final, display_num = self.sale_use_case.create_sale(
-                        self.cart,
-                        payments=pagos if pagos else None,
-                        payment_method=metodo_principal,
-                        notes=refs["notas_var"].get().strip(),
-                        customer_name=nombre,
-                        is_credit=es_fiado,
-                        discount=desc_aplicado,
-                        register_customer_payment_amount=monto_abono)
-
-                    # Generar ticket
-                    base_dir = os.path.join(os.path.dirname(self.db_manager.db_path), "tickets")
-                    ticket_path = self.sale_use_case.generate_ticket_pdf(sale_id, base_dir=base_dir)
-                    if ticket_path:
-                        self.last_ticket_path = ticket_path
-
-                    # Mensaje final
-                    msg = f"✅ Venta #{display_num:02d} registrada.\n\n"
-                    msg += f"Subtotal: ${subtotal:,.0f}\n".replace(",", ".")
-                    if desc_aplicado > 0:
-                        msg += f"Descuento: -${desc_aplicado:,.0f}\n".replace(",", ".")
-                    msg += f"TOTAL: ${total_final:,.0f}\n".replace(",", ".")
-                    for p in pagos:
-                        msg += f"  • {p['method']}: ${p['amount']:,.0f}\n".replace(",", ".")
-                    if es_fiado:
-                        msg += f"\n📌 FIADO a: {nombre}\n"
-                        if nombre:
-                            deuda = self.sale_use_case.get_pending_by_customer(nombre)
-                            msg += f"💰 Nueva deuda: ${deuda:,.0f}\n".replace(",", ".")
-                    if monto_abono > 0:
-                        aplicado, saldo = self.sale_use_case.apply_payment_to_customer(
-                            nombre, monto_abono, method=metodo_principal)
-                        msg += f"\n💵 Abono aplicado: ${aplicado:,.0f}\n".replace(",", ".")
-                        if saldo <= 0.01:
-                            msg += "✅ Deuda SALDADA por completo.\n"
-                        else:
-                            msg += f"📌 Saldo pendiente: ${saldo:,.0f}\n".replace(",", ".")
-                    if ticket_path:
-                        msg += f"\n🖨 Ticket guardado en:\n{ticket_path}"
-
-                    self.cart = []
-                    self.refresh_cart()
-                    self.sale_use_case.clear_cart_draft()
-                    pop.destroy()
-                    MD.show_info(msg, "Venta Exitosa", parent=self)
-                    self.scan_entry.focus_set()
-
-                    # Ofrecer abrir el ticket
-                    if ticket_path:
-                        r = MD.yesno("¿Deseas abrir el ticket ahora?",
-                                     "Abrir ticket", parent=self)
-                        if r == "Yes":
-                            self.open_last_ticket()
-                except Exception as e:
-                    MD.show_error(f"Error: {e}", "Error", parent=pop)
-
-            ttk.Button(parent, text="✅ Confirmar Pago", command=confirmar,
-                       style="DarkGreen.TButton").pack(side="left", padx=8, ipady=8, ipadx=15)
-            ttk.Button(parent, text="Cancelar",
-                       command=pop.destroy).pack(side="left", padx=8, ipady=8)
-
-        # ====== Lógica de recálculo ======
-        def calcular_descuento():
-            try:
-                v = float(refs["desc_var"].get().replace(",", ".") or 0)
-            except ValueError:
-                v = 0.0
-            if v < 0:
-                v = 0.0
-            if refs["desc_tipo_var"].get() == "porcentaje":
-                if v > 100:
-                    v = 100.0
-                return subtotal * (v / 100.0)
-            else:
-                if v > subtotal:
-                    v = subtotal
-                return v
-
-        def actualizar_total(*args):
-            try:
-                desc = calcular_descuento()
-                total_actual = max(0.0, subtotal - desc)
-                refs["total_lbl"].configure(text=f"${total_actual:,.0f}".replace(",", "."))
-                actualizar_resumen()
-            except Exception:
-                pass
-
-        def actualizar_resumen(*args):
-            try:
-                desc = calcular_descuento()
-                total_actual = max(0.0, subtotal - desc)
-                ef = float(refs["ef_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                tr = float(refs["tr_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                ta = float(refs["ta_var"].get().replace("$", "").replace(".", "").replace(",", ".") or 0)
-                total_ing = ef + tr + ta
-                falta = total_actual - total_ing
-                if falta <= 0.01:
-                    txt = f"✅ Ingresado: ${total_ing:,.0f}".replace(",", ".")
-                else:
-                    txt = f"💵 Ingresado: ${total_ing:,.0f}   |   Falta: ${falta:,.0f}".replace(",", ".")
-                refs["resumen_lbl"].configure(text=txt)
-            except ValueError:
-                refs["resumen_lbl"].configure(text="")
-
-        def on_nombre_change(*args):
-            nombre = refs["nombre_var"].get().strip()
-            # Limpiar frame de abono
-            for w in refs["abono_frame"].winfo_children():
-                w.destroy()
-            refs["abono_var"].set(False)
-            refs["abono_monto_var"].set("")
-
-            if not nombre:
-                refs["deuda_lbl"].configure(text="")
-                refs["abono_frame"].pack_forget()
+        # Aviso de caja
+        if not self.sale_case.has_open_cash_session():
+            if not messagebox.askyesno(
+                    "Caja cerrada",
+                    "⚠️ No has abierto la caja hoy.\n¿Deseas continuar de todas formas?"):
                 return
-            try:
-                deuda = self.sale_use_case.get_pending_by_customer(nombre)
-            except Exception:
-                deuda = 0
-            if deuda > 0:
-                refs["deuda_lbl"].configure(
-                    text=f"⚠️ {nombre} ya debe ${deuda:,.0f} de fiados anteriores.".replace(",", "."),
-                    fg="#ffd166")
-                # Mostrar checkbox de abono
-                ttk.Checkbutton(refs["abono_frame"], text="💵 Abonar",
-                                variable=refs["abono_var"],
-                                bootstyle="success-round-toggle").pack(side="left", padx=5)
-                tk.Label(refs["abono_frame"], text="Monto:", bg=bg, fg=fg,
-                         font=("Arial", 10)).pack(side="left", padx=5)
-                ttk.Entry(refs["abono_frame"], textvariable=refs["abono_monto_var"],
-                          width=12, font=("Arial", 11), justify="center").pack(side="left", padx=5)
-                refs["abono_frame"].pack(pady=4)
-            else:
-                refs["deuda_lbl"].configure(
-                    text=f"ℹ️ {nombre} no tiene deudas previas.", fg="#a8e6a8")
-                refs["abono_frame"].pack_forget()
 
-        # Traces
-        refs["desc_var"].trace_add("write", actualizar_total)
-        refs["desc_tipo_var"].trace_add("write", actualizar_total)
-        refs["ef_var"].trace_add("write", actualizar_resumen)
-        refs["tr_var"].trace_add("write", actualizar_resumen)
-        refs["ta_var"].trace_add("write", actualizar_resumen)
-        refs["nombre_var"].trace_add("write", on_nombre_change)
+        subtotal, desc, total = self.update_totals()
+        PaymentDialog(self, self.sale_case, self.cart, subtotal, desc, total,
+                      on_success=self._on_sale_success,
+                      cashier_name=self.cashier_name)
 
-        make_scrollable(container, build_content, build_bottom, bg=bg)
-        actualizar_total()
+    def _on_sale_success(self, sale_id, total, display_number,
+                         items, payments):
+        """Callback llamado tras cobrar."""
+        # Guardar para reimprimir
+        self.last_sale_id = sale_id
+        self.last_sale = self.sale_case.get_sale_by_id(sale_id)
+        self.last_sale_items = items
+        self._last_payments = payments
 
-        show_popup_smooth(pop)
+        # Generar ticket automáticamente
         try:
-            pop.grab_set()
-            pop.focus_force()
+            from presentation.views.widgets import generate_ticket_pdf
+            ruta = generate_ticket_pdf(
+                self.last_sale, items, payments=payments,
+                business_name="MI NEGOCIO",
+                cashier_name=self.cashier_name)
+            # Preguntar si desea abrir
+            if messagebox.askyesno("Ticket",
+                                   f"Venta #{display_number} registrada.\n"
+                                   f"Ticket generado:\n{ruta}\n\n¿Abrir el PDF?"):
+                self._open_file(ruta)
+        except Exception as e:
+            print(f"Error generando ticket: {e}")
+
+        self.cart.clear()
+        self.var_discount.set("0")
+        self.render_cart()
+        self.save_draft()
+        self.refresh_products()
+        self._check_cash_session()
+
+        if self.on_sale_done:
+            self.on_sale_done()
+
+    def reprint_last_ticket(self):
+        if not self.last_sale:
+            messagebox.showinfo("Reimprimir", "No hay ticket reciente.")
+            return
+        try:
+            from presentation.views.widgets import generate_ticket_pdf
+            ruta = generate_ticket_pdf(
+                self.last_sale, self.last_sale_items,
+                payments=getattr(self, "_last_payments", None),
+                business_name="MI NEGOCIO",
+                cashier_name=self.cashier_name,
+                is_copy=True)
+            if messagebox.askyesno("Reimprimir",
+                                   f"Copia generada:\n{ruta}\n\n¿Abrir?"):
+                self._open_file(ruta)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo generar: {e}")
+
+    def _open_file(self, ruta):
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(ruta)
+            elif sys.platform == "darwin":
+                os.system(f'open "{ruta}"')
+            else:
+                os.system(f'xdg-open "{ruta}"')
         except Exception:
             pass
+
+    # ============================================================
+    # BORRADOR
+    # ============================================================
+    def save_draft(self):
+        try:
+            self.sale_case.save_cart_draft(self.cart)
+        except Exception:
+            pass
+
+    def _try_load_draft(self):
+        try:
+            items, when = self.sale_case.load_cart_draft()
+            if not items:
+                return
+            if messagebox.askyesno(
+                    "Borrador",
+                    f"Hay un carrito sin cobrar del {when}.\n¿Recuperarlo?"):
+                self.cart = items
+                self.render_cart()
+        except Exception:
+            pass
+
+
+# ================================================================
+# DIÁLOGO DE PAGO (con pago mixto)
+# ================================================================
+class PaymentDialog(tk.Toplevel):
+    def __init__(self, master, sale_case, items, subtotal, discount, total,
+                 on_success=None, cashier_name=""):
+        super().__init__(master)
+        self.sale_case = sale_case
+        self.items = items
+        self.subtotal = subtotal
+        self.discount = discount
+        self.total = total
+        self.on_success = on_success
+        self.cashier_name = cashier_name
+
+        self.title("Cobrar venta")
+        self.geometry("560x720")
+        self.transient(master)
+        self.grab_set()
+        self.resizable(False, True)
+
+        self.payment_rows = []  # lista de dicts
+        self._build()
+
+    def _build(self):
+        cont = tk.Frame(self, padx=15, pady=15)
+        cont.pack(fill="both", expand=True)
+
+        # Total grande
+        tk.Label(cont, text="TOTAL A COBRAR", font=("Segoe UI", 10, "bold"),
+                 fg="#666").pack()
+        tk.Label(cont, text=f"${self.total:,.0f}",
+                 font=("Segoe UI", 26, "bold"), fg="#1e88e5").pack(pady=(0, 10))
+
+        if self.discount > 0:
+            tk.Label(cont, text=f"Subtotal: ${self.subtotal:,.0f}  "
+                                f"Descuento: -${self.discount:,.0f}",
+                     font=("Segoe UI", 9), fg="#666").pack()
+
+        # ===== Datos del cliente =====
+        cli_frame = tk.LabelFrame(cont, text="Datos del cliente (opcional)",
+                                  font=("Segoe UI", 9, "bold"), padx=8, pady=6)
+        cli_frame.pack(fill="x", pady=10)
+
+        f = tk.Frame(cli_frame); f.pack(fill="x")
+        tk.Label(f, text="Cliente:", width=10, anchor="w").pack(side="left")
+        self.var_customer = tk.StringVar()
+        tk.Entry(f, textvariable=self.var_customer, width=30,
+                 font=("Segoe UI", 10)).pack(side="left")
+
+        f2 = tk.Frame(cli_frame); f2.pack(fill="x", pady=(4, 0))
+        tk.Label(f2, text="Notas:", width=10, anchor="w").pack(side="left")
+        self.var_notes = tk.StringVar()
+        tk.Entry(f2, textvariable=self.var_notes, width=30,
+                 font=("Segoe UI", 10)).pack(side="left")
+
+        # ===== Fiado =====
+        self.var_is_credit = tk.IntVar(value=0)
+        tk.Checkbutton(cli_frame, text="🔴 Venta a crédito (FIADO)",
+                       variable=self.var_is_credit, font=("Segoe UI", 9, "bold"),
+                       fg="#c62828").pack(anchor="w", pady=(6, 0))
+
+        # ===== Pago mixto =====
+        self.var_mixed = tk.IntVar(value=0)
+        mixed_frame = tk.LabelFrame(cont, text="Forma de pago",
+                                     font=("Segoe UI", 9, "bold"), padx=8, pady=6)
+        mixed_frame.pack(fill="x", pady=10)
+
+        tk.Checkbutton(mixed_frame, text="💳 Pago dividido (múltiples métodos)",
+                       variable=self.var_mixed, command=self._toggle_mixed,
+                       font=("Segoe UI", 9)).pack(anchor="w")
+
+        self.mixed_body = tk.Frame(mixed_frame)
+        self.mixed_body.pack(fill="x", pady=(6, 0))
+
+        # Fila simple (método único)
+        self.simple_frame = tk.Frame(mixed_frame)
+        self.simple_frame.pack(fill="x", pady=4)
+        tk.Label(self.simple_frame, text="Método:", width=10,
+                 anchor="w").pack(side="left")
+        self.var_simple_method = tk.StringVar(value="Efectivo")
+        ttk.Combobox(self.simple_frame, textvariable=self.var_simple_method,
+                     values=["Efectivo", "Transferencia", "Tarjeta"],
+                     state="readonly", width=20).pack(side="left")
+
+        # Filas de pago mixto
+        self.rows_container = tk.Frame(self.mixed_body)
+        self.rows_container.pack(fill="x")
+
+        tk.Button(self.mixed_body, text="➕ Agregar método",
+                  command=lambda: self._add_row(), bg="#2196F3", fg="white",
+                  relief="flat", font=("Segoe UI", 9)).pack(pady=4)
+
+        # Label "Faltan"
+        self.lbl_faltan = tk.Label(mixed_frame, text="", font=("Segoe UI", 10, "bold"))
+        self.lbl_faltan.pack(anchor="w", pady=(6, 0))
+
+        self._toggle_mixed()
+
+        # ===== BOTONES =====
+        btns = tk.Frame(cont)
+        btns.pack(fill="x", pady=(15, 0))
+        tk.Button(btns, text="💵 COBRAR", command=self.do_payment,
+                  bg="#4CAF50", fg="white", font=("Segoe UI", 12, "bold"),
+                  padx=25, pady=10, relief="flat").pack(side="right", padx=4)
+        tk.Button(btns, text="Cancelar", command=self.destroy,
+                  bg="#9E9E9E", fg="white", font=("Segoe UI", 10, "bold"),
+                  padx=20, pady=10, relief="flat").pack(side="right", padx=4)
+
+    # ============================================================
+    # PAGO MIXTO
+    # ============================================================
+    def _toggle_mixed(self):
+        activo = self.var_mixed.get() == 1
+        for child in self.simple_frame.winfo_children():
+            try:
+                child.configure(state="disabled" if activo else "normal")
+            except Exception:
+                pass
+        for child in self.mixed_body.winfo_children():
+            if child is self.rows_container or isinstance(child, tk.Button):
+                try:
+                    child.configure(state="normal" if activo else "disabled")
+                except Exception:
+                    pass
+        if activo and not self.payment_rows:
+            self._add_row()
+            self._add_row()
+        if not activo:
+            for w in self.rows_container.winfo_children():
+                w.destroy()
+            self.payment_rows.clear()
+            self.lbl_faltan.config(text="")
+        else:
+            self._update_faltan()
+
+    def _add_row(self):
+        idx = len(self.payment_rows)
+        f = tk.Frame(self.rows_container, pady=3)
+        f.pack(fill="x")
+
+        tk.Label(f, text=f"Método {idx+1}:", width=10, anchor="w").pack(side="left")
+        var_m = tk.StringVar(value="Efectivo")
+        ttk.Combobox(f, textvariable=var_m,
+                     values=["Efectivo", "Transferencia", "Tarjeta"],
+                     state="readonly", width=15).pack(side="left", padx=4)
+
+        tk.Label(f, text="$").pack(side="left")
+        var_a = tk.StringVar(value="0")
+        ent = tk.Entry(f, textvariable=var_a, width=12, font=("Segoe UI", 10))
+        ent.pack(side="left", padx=4)
+
+        row = {"frame": f, "method": var_m, "amount": var_a, "widget": f}
+        self.payment_rows.append(row)
+
+        var_a.trace_add("write", lambda *a: self._update_faltan())
+        # Limpiar botón
+        tk.Button(f, text="✖", command=lambda r=row: self._remove_row(r),
+                  bg="#f44336", fg="white", relief="flat",
+                  font=("Segoe UI", 8), padx=4).pack(side="left", padx=2)
+
+        self._update_faltan()
+
+    def _remove_row(self, row):
+        if row in self.payment_rows:
+            row["frame"].destroy()
+            self.payment_rows.remove(row)
+            self._update_faltan()
+
+    def _update_faltan(self):
+        try:
+            suma = sum(float(r["amount"].get() or 0) for r in self.payment_rows)
+        except ValueError:
+            suma = 0.0
+        faltan = self.total - suma
+        if abs(faltan) < 0.5:
+            self.lbl_faltan.config(text="✅ Cubierto", fg="#2e7d32")
+        elif faltan > 0:
+            self.lbl_faltan.config(text=f"Faltan: ${faltan:,.0f}", fg="#c62828")
+        else:
+            self.lbl_faltan.config(text=f"Vuelto: ${abs(faltan):,.0f}", fg="#1565c0")
+
+    # ============================================================
+    # COBRAR
+    # ============================================================
+    def do_payment(self):
+        is_credit = self.var_is_credit.get() == 1
+        customer = self.var_customer.get().strip()
+        notes = self.var_notes.get().strip()
+
+        if is_credit and not customer:
+            messagebox.showwarning("Fiado", "Escribe el nombre del cliente para el fiado.")
+            return
+
+        # Preparar items para sale_case
+        items_data = [{
+            "product_id": it["product_id"],
+            "product_name": it["product_name"],
+            "barcode": it.get("barcode", ""),
+            "quantity": it["quantity"],
+            "unit": it.get("unit", "unidad"),
+            "unit_price": it["unit_price"],
+        } for it in self.items]
+
+        # Pago mixto
+        payments = None
+        principal_method = self.var_simple_method.get()
+
+        if self.var_mixed.get() == 1 and self.payment_rows:
+            payments = []
+            for r in self.payment_rows:
+                try:
+                    amt = float(r["amount"].get() or 0)
+                except ValueError:
+                    amt = 0.0
+                if amt > 0:
+                    payments.append({"method": r["method"].get(), "amount": amt})
+            if not payments:
+                messagebox.showwarning("Pago", "Ingresa montos en los métodos.")
+                return
+            suma = sum(p["amount"] for p in payments)
+            if suma < self.total - 0.5:
+                messagebox.showwarning("Pago", f"Faltan ${self.total - suma:,.0f}")
+                return
+            # Método principal: el de mayor monto
+            principal_method = max(payments, key=lambda x: x["amount"])["method"]
+
+        # Crear venta
+        try:
+            sale_id, total, display_number = self.sale_case.create_sale(
+                items_data,
+                payment_method=principal_method,
+                notes=notes,
+                customer_name=customer,
+                is_credit=is_credit,
+                discount=self.discount,
+                payments=payments,
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo registrar:\n{e}")
+            return
+
+        messagebox.showinfo("Venta registrada",
+                            f"✅ Venta #{display_number}\nTotal: ${total:,.0f}")
+
+        if self.on_success:
+            self.on_success(sale_id, total, display_number, items_data, payments)
+        self.destroy()
