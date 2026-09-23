@@ -15,7 +15,7 @@ class Sale:
     def __init__(self, sale_id, date, total, payment_method, notes, items=None):
         self.sale_id = sale_id
         self.date = date
-        self.total = total  # total final (subtotal - discount)
+        self.total = total
         self.payment_method = payment_method
         self.notes = notes
         self.items = items if items else []
@@ -24,9 +24,10 @@ class Sale:
         self.is_paid = 1
         self.amount_paid = 0.0
         self.display_number = sale_id
-        # Nuevos
-        self.subtotal = total  # por defecto igual al total
+        self.subtotal = total
         self.discount = 0.0
+        # Pagos (para pago mixto)
+        self.payments = []
 
     def pending(self):
         return max(0.0, self.total - self.amount_paid)
