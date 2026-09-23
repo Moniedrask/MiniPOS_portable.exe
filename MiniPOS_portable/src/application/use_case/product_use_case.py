@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from domain.models.product import Product
 from infrastucture.db.db_manager import DBManager
 
@@ -29,6 +29,9 @@ class ProductCase:
             r["expiry_date"] if "expiry_date" in keys else "",
         )
 
+    # ============================================================
+    # CRUD BÁSICO
+    # ============================================================
     def add_product(self, name, barcode, price, stock,
                     unit_type="unidad", unit="unidad",
                     group_name="", cost=0.0, margin_percent=20.0,
@@ -87,7 +90,6 @@ class ProductCase:
         conn = self.db.get_connection()
         cur = conn.cursor()
 
-        # Obtener precio anterior para historial
         cur.execute("SELECT price, rounded_price FROM products WHERE product_id = ?",
                     (product_id,))
         row = cur.fetchone()
@@ -111,7 +113,6 @@ class ProductCase:
              product_id))
         conn.commit()
 
-        # Registrar cambio de precio si cambió
         if register_history:
             cambio_precio = abs(old_price - price) > 0.001
             cambio_redondeo = abs(old_rounded - rounded_price) > 0.001
@@ -119,6 +120,47 @@ class ProductCase:
                 self.register_price_change(
                     product_id, old_price, price, old_rounded, rounded_price)
 
+    def delete_product(self, product_id):
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM price_history WHERE product_id = ?", (product_id,))
+        cur.execute("DELETE FROM products WHERE product_id = ?", (product_id,))
+        conn.commit()
+
+    def set_group_name(self, product_ids, group_name):
+        if not product_ids:
+            return
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        for pid in product_ids:
+            cur.execute("UPDATE products SET group_name = ? WHERE product_id = ?",
+                        (group_name, pid))
+        conn.commit()
+
+    # ============================================================
+    # IDEA 4: PRODUCTOS PAUSADOS
+    # ============================================================
+    def set_paused(self, product_id, paused):
+        """Pausa o reactiva un producto sin borrarlo."""
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE products SET paused = ? WHERE product_id = ?",
+                    (1 if paused else 0, product_id))
+        conn.commit()
+
+    def set_paused_bulk(self, product_ids, paused):
+        if not product_ids:
+            return
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        for pid in product_ids:
+            cur.execute("UPDATE products SET paused = ? WHERE product_id = ?",
+                        (1 if paused else 0, pid))
+        conn.commit()
+
+    # ============================================================
+    # IDEA 28: HISTORIAL DE PRECIOS
+    # ============================================================
     def register_price_change(self, product_id, old_price, new_price,
                               old_rounded=0.0, new_rounded=0.0):
         """Guarda un cambio de precio en el historial."""
@@ -155,15 +197,22 @@ class ProductCase:
             })
         return result
 
-    def get_all_price_history(self):
-        """Devuelve todo el historial con el nombre del producto."""
+    def get_all_price_history(self, start_date=None, end_date=None):
+        """Devuelve todo el historial con el nombre del producto.
+        Opcional: filtrar por rango de fechas.
+        """
         cur = self.db.get_connection().cursor()
-        cur.execute('''
+        sql = '''
             SELECT ph.*, p.name AS product_name, p.barcode AS product_barcode
             FROM price_history ph
             LEFT JOIN products p ON ph.product_id = p.product_id
-            ORDER BY ph.date DESC
-        ''')
+        '''
+        params = []
+        if start_date and end_date:
+            sql += " WHERE date(ph.date) BETWEEN ? AND ? "
+            params.extend([start_date, end_date])
+        sql += " ORDER BY ph.date DESC"
+        cur.execute(sql, params)
         rows = cur.fetchall()
         result = []
         for r in rows:
@@ -182,31 +231,14 @@ class ProductCase:
         return result
 
     def delete_price_history_for_product(self, product_id):
-        """Borra el historial de un producto (por si quiere limpiarlo)."""
         conn = self.db.get_connection()
         cur = conn.cursor()
         cur.execute("DELETE FROM price_history WHERE product_id = ?", (product_id,))
         conn.commit()
 
-    def delete_product(self, product_id):
-        conn = self.db.get_connection()
-        cur = conn.cursor()
-        # Eliminar el historial del producto antes de borrarlo
-        cur.execute("DELETE FROM price_history WHERE product_id = ?", (product_id,))
-        cur.execute("DELETE FROM products WHERE product_id = ?", (product_id,))
-        conn.commit()
-
-    def set_group_name(self, product_ids, group_name):
-        if not product_ids:
-            return
-        conn = self.db.get_connection()
-        cur = conn.cursor()
-        for pid in product_ids:
-            cur.execute("UPDATE products SET group_name = ? WHERE product_id = ?",
-                        (group_name, pid))
-        conn.commit()
-
-    # ============ SUGERENCIA DE PAQUETE ============
+    # ============================================================
+    # IDEA 25 + 27: SUGERENCIA INTELIGENTE DE PAQUETE
+    # ============================================================
     def find_last_package_for_name(self, name):
         """
         Busca el último producto con nombre similar que tenga datos de paquete.
@@ -217,7 +249,6 @@ class ProductCase:
         name_lower = str(name).strip().lower()
         try:
             cur = self.db.get_connection().cursor()
-            # Buscar productos con is_package = 1 cuyo nombre sea similar
             cur.execute('''
                 SELECT name, package_cost, package_units
                 FROM products
@@ -246,7 +277,126 @@ class ProductCase:
         except Exception:
             return None
 
-    # ============ BORRADOR ============
+    # ============================================================
+    # IDEA 16: VENCIMIENTO DE PRODUCTOS
+    # ============================================================
+    def get_expiry_settings(self):
+        """Lee configuración de alertas de vencimiento desde settings."""
+        return {
+            "warn_days_1": int(self.db.get_setting("expiry_warn_days_1", "15") or 15),
+            "warn_days_2": int(self.db.get_setting("expiry_warn_days_2", "7") or 7),
+            "offer_days": int(self.db.get_setting("expiry_offer_days", "2") or 2),
+            "offer_discount": float(self.db.get_setting("expiry_offer_discount", "20") or 20),
+        }
+
+    def set_expiry_settings(self, warn_days_1, warn_days_2, offer_days, offer_discount):
+        self.db.set_setting("expiry_warn_days_1", str(int(warn_days_1)))
+        self.db.set_setting("expiry_warn_days_2", str(int(warn_days_2)))
+        self.db.set_setting("expiry_offer_days", str(int(offer_days)))
+        self.db.set_setting("expiry_offer_discount", str(float(offer_discount)))
+
+    def get_products_with_expiry(self):
+        """Devuelve todos los productos con fecha de vencimiento válida."""
+        cur = self.db.get_connection().cursor()
+        cur.execute("""
+            SELECT * FROM products
+            WHERE expiry_date IS NOT NULL AND expiry_date != ''
+            ORDER BY date(expiry_date) ASC
+        """)
+        rows = cur.fetchall()
+        return [self._row_to_product(r) for r in rows]
+
+    def get_expiring_products(self, days=None):
+        """
+        Devuelve productos que vencen dentro de `days` (o el máximo
+        configurado si days=None). Cada item incluye:
+        - product
+        - days_left (int, puede ser negativo si ya venció)
+        - status: 'expired' | 'offer' | 'warn1' | 'warn2' | 'ok'
+        """
+        cfg = self.get_expiry_settings()
+        if days is None:
+            days = max(cfg["warn_days_1"], cfg["warn_days_2"], cfg["offer_days"])
+
+        hoy = datetime.now().date()
+        resultado = []
+        for p in self.get_products_with_expiry():
+            try:
+                exp = datetime.strptime(p.expiry_date, "%Y-%m-%d").date()
+            except Exception:
+                continue
+            days_left = (exp - hoy).days
+
+            if days_left < 0:
+                status = "expired"
+            elif days_left <= cfg["offer_days"]:
+                status = "offer"
+            elif days_left <= cfg["warn_days_2"]:
+                status = "warn2"
+            elif days_left <= cfg["warn_days_1"]:
+                status = "warn1"
+            else:
+                status = "ok"
+
+            if status != "ok" or days_left <= days:
+                resultado.append({
+                    "product": p,
+                    "days_left": days_left,
+                    "status": status,
+                })
+        return resultado
+
+    def get_expiring_count(self):
+        """Cantidad de productos con alguna alerta (para badges)."""
+        return len([x for x in self.get_expiring_products() if x["status"] != "ok"])
+
+    def apply_offer_discount(self, product_id, discount_percent=None):
+        """
+        Aplica un descuento al precio redondeado de un producto (idea 16 → oferta).
+        Guarda como cambio de precio en el historial.
+        """
+        cfg = self.get_expiry_settings()
+        if discount_percent is None:
+            discount_percent = cfg["offer_discount"]
+
+        p = self.get_product(product_id)
+        if not p:
+            return False, "Producto no encontrado"
+
+        old_price = float(p.price or 0)
+        old_rounded = float(p.rounded_price or p.price or 0)
+        base = old_rounded if old_rounded > 0 else old_price
+        new_rounded = round(base * (1 - discount_percent / 100.0), 2)
+        new_price = round(old_price * (1 - discount_percent / 100.0), 2)
+
+        self.update_product(
+            product_id, p.name, p.barcode, new_price, p.stock,
+            unit_type=p.unit_type, unit=p.unit, group_name=p.group_name,
+            cost=p.cost, margin_percent=p.margin_percent,
+            rounded_price=new_rounded,
+            round_enabled=p.round_enabled, round_to=p.round_to,
+            package_cost=p.package_cost, package_units=p.package_units,
+            is_package=p.is_package, paused=p.paused,
+            expiry_date=p.expiry_date,
+            register_history=True,
+        )
+        return True, f"Descuento del {discount_percent}% aplicado"
+
+    # ============================================================
+    # IDEA 5: ETIQUETAS (necesita datos del producto)
+    # ============================================================
+    def get_products_for_labels(self, product_ids=None):
+        """
+        Devuelve los productos que se van a imprimir en etiquetas.
+        Si product_ids es None, devuelve todos los activos.
+        """
+        if product_ids:
+            return [p for p in (self.get_product(pid) for pid in product_ids) if p]
+        return self.list_active_products()
+
+    # ============================================================
+    # BORRADOR
+    # ============================================================
     def save_product_draft(self, data):
         try:
             conn = self.db.get_connection()
