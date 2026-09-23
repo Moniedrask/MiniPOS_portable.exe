@@ -7,7 +7,7 @@ class SaleCase:
     def __init__(self, db_manager):
         self.db = db_manager
 
-    # ============ CONTADOR VISUAL DE VENTAS ============
+    # ============ CONTADOR DE VENTAS ============
     def get_sale_number_offset(self):
         try:
             val = self.db.get_setting("sale_number_offset", "0")
@@ -66,14 +66,13 @@ class SaleCase:
         except Exception:
             return False
 
-    # ============ CREAR VENTA (con pagos mixtos) ============
+    # ============ CREAR VENTA ============
     def create_sale(self, items, payment_method="Efectivo", notes="",
                     customer_name="", is_credit=False, discount=0.0,
                     payments=None):
         """
-        payments: lista opcional de dicts {method, amount} para pago mixto.
-                  Si se pasa, sobrescribe payment_method.
-                  Si no se pasa, se crea un único pago con payment_method.
+        payments: lista opcional de dicts [{"method": "Efectivo", "amount": 5000}, ...]
+        Si se pasa, se guarda el desglose en sale_payments.
         """
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -87,21 +86,14 @@ class SaleCase:
         amount_paid = 0.0 if is_credit else total
         offset = self.get_sale_number_offset()
 
-        # Determinar método principal (para compatibilidad con la columna vieja)
-        if payments and len(payments) > 0:
-            metodo_principal = "Mixto" if len(payments) > 1 else payments[0]["method"]
-        else:
-            metodo_principal = payment_method
-
         cur.execute(
             "INSERT INTO sales (date, total, payment_method, notes, customer_name, "
             "is_credit, is_paid, amount_paid, display_offset, discount, subtotal) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (now, total, metodo_principal, notes, customer_name,
+            (now, total, payment_method, notes, customer_name,
              1 if is_credit else 0, is_paid, amount_paid, offset, discount, subtotal))
         sale_id = cur.lastrowid
 
-        # Guardar items
         for it in items:
             sub = it["quantity"] * it["unit_price"]
             cur.execute(
@@ -113,21 +105,22 @@ class SaleCase:
                 cur.execute("UPDATE products SET stock = stock - ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
 
-        # Guardar pagos (mixto o único)
-        if payments:
+        # Desglose de pagos mixtos
+        if payments and len(payments) > 1:
             for p in payments:
-                if p["amount"] > 0:
-                    cur.execute(
-                        "INSERT INTO sale_payments (sale_id, method, amount) VALUES (?,?,?)",
-                        (sale_id, p["method"], p["amount"]))
-        else:
-            cur.execute(
-                "INSERT INTO sale_payments (sale_id, method, amount) VALUES (?,?,?)",
-                (sale_id, metodo_principal, total))
+                cur.execute(
+                    "INSERT INTO sale_payments (sale_id, method, amount) VALUES (?,?,?)",
+                    (sale_id, p.get("method", "Otro"), p.get("amount", 0)))
 
         conn.commit()
         display_number = sale_id - offset
         return sale_id, total, display_number
+
+    def get_sale_payments(self, sale_id):
+        """Devuelve lista de dicts con los métodos de pago de una venta."""
+        cur = self.db.get_connection().cursor()
+        cur.execute("SELECT method, amount FROM sale_payments WHERE sale_id = ?", (sale_id,))
+        return [{"method": r["method"], "amount": r["amount"]} for r in cur.fetchall()]
 
     def _rows_to_sales(self, rows):
         conn = self.db.get_connection()
@@ -149,28 +142,8 @@ class SaleCase:
             sale.display_number = s["sale_id"] - (offset or 0)
             sale.discount = s["discount"] if "discount" in keys else 0.0
             sale.subtotal = s["subtotal"] if "subtotal" in keys else s["total"]
-            # Cargar pagos múltiples
-            cur.execute("SELECT method, amount FROM sale_payments WHERE sale_id = ?",
-                        (s["sale_id"],))
-            sale.payments = [dict(r) for r in cur.fetchall()]
             sales.append(sale)
         return sales
-
-    def get_sale_by_id(self, sale_id):
-        cur = self.db.get_connection().cursor()
-        cur.execute("SELECT * FROM sales WHERE sale_id = ?", (sale_id,))
-        row = cur.fetchone()
-        if not row:
-            return None
-        return self._rows_to_sales([row])[0]
-
-    def get_last_sale(self):
-        cur = self.db.get_connection().cursor()
-        cur.execute("SELECT * FROM sales ORDER BY sale_id DESC LIMIT 1")
-        row = cur.fetchone()
-        if not row:
-            return None
-        return self._rows_to_sales([row])[0]
 
     def get_sales_by_day(self, date_str):
         cur = self.db.get_connection().cursor()
@@ -193,6 +166,15 @@ class SaleCase:
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT * FROM sales ORDER BY sale_id DESC LIMIT ?", (limit,))
         return self._rows_to_sales(cur.fetchall())
+
+    def get_sale_by_id(self, sale_id):
+        cur = self.db.get_connection().cursor()
+        cur.execute("SELECT * FROM sales WHERE sale_id = ?", (sale_id,))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        sales = self._rows_to_sales(rows)
+        return sales[0] if sales else None
 
     def get_credit_sales(self, only_unpaid=True):
         cur = self.db.get_connection().cursor()
@@ -270,8 +252,8 @@ class SaleCase:
             if it["product_id"]:
                 cur.execute("UPDATE products SET stock = stock + ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
-        cur.execute("DELETE FROM sale_payments WHERE sale_id = ?", (sale_id,))
         cur.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
+        cur.execute("DELETE FROM sale_payments WHERE sale_id = ?", (sale_id,))
         cur.execute("DELETE FROM sales WHERE sale_id = ?", (sale_id,))
         conn.commit()
 
@@ -328,7 +310,6 @@ class SaleCase:
             "fiados": (fiados_c, fiados_t),
         }
 
-    # ============ CIERRE DE CAJA ============
     def get_cash_closing(self, date_str):
         try:
             sales = self.get_sales_by_day(date_str)
@@ -350,15 +331,17 @@ class SaleCase:
             total_descuento += (s.discount if hasattr(s, "discount") else 0.0)
             productos_vendidos += sum(it.quantity for it in s.items)
 
-            # Agrupar por pagos múltiples
-            pagos = getattr(s, "payments", None)
+            pagos = self.get_sale_payments(s.sale_id)
             if pagos:
                 for p in pagos:
                     m = p["method"]
                     if m not in metodos:
                         metodos[m] = {"count": 0, "total": 0.0}
-                    metodos[m]["count"] += 1
                     metodos[m]["total"] += p["amount"]
+                principal = s.payment_method or "Otro"
+                if principal not in metodos:
+                    metodos[principal] = {"count": 0, "total": 0.0}
+                metodos[principal]["count"] += 1
             else:
                 metodo = s.payment_method or "Otro"
                 if metodo not in metodos:
@@ -386,74 +369,71 @@ class SaleCase:
             "efectivo_esperado": efectivo_esperado,
         }
 
-    # ============ BASE DE CAJA ============
-    def get_current_session(self):
-        """Devuelve la sesión de caja actual (abierta) o None."""
+    # ============ FASE 6: BASE DE CAJA ============
+    def get_current_cash_session(self):
         cur = self.db.get_connection().cursor()
-        cur.execute("SELECT * FROM cash_sessions WHERE is_open = 1 ORDER BY session_id DESC LIMIT 1")
+        cur.execute("SELECT * FROM cash_sessions WHERE is_open = 1 ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
         if not row:
             return None
-        return dict(row)
-
-    def open_cash_session(self, opening_amount, notes=""):
-        """Abre una nueva sesión de caja."""
-        conn = self.db.get_connection()
-        cur = conn.cursor()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        hoy = datetime.now().strftime("%Y-%m-%d")
-        cur.execute(
-            "INSERT INTO cash_sessions (date, opening_amount, opened_at, is_open, notes) "
-            "VALUES (?,?,?,1,?)",
-            (hoy, float(opening_amount or 0), now, notes or ""))
-        conn.commit()
-        return cur.lastrowid
-
-    def close_cash_session(self, session_id, closing_amount, notes=""):
-        """Cierra la sesión y calcula diferencia."""
-        conn = self.db.get_connection()
-        cur = conn.cursor()
-        # Calcular efectivo esperado del día (ventas en efectivo desde apertura)
-        cur.execute("SELECT opened_at FROM cash_sessions WHERE session_id = ?", (session_id,))
-        row = cur.fetchone()
-        if not row:
-            return None
-        opened_at = row["opened_at"]
-
-        # Buscar ventas desde opened_at
-        cur.execute("""
-            SELECT COALESCE(SUM(sp.amount), 0) AS total_efectivo
-            FROM sale_payments sp
-            JOIN sales s ON sp.sale_id = s.sale_id
-            WHERE sp.method = 'Efectivo' AND s.date >= ?
-        """, (opened_at,))
-        r = cur.fetchone()
-        total_efectivo = r["total_efectivo"] if r else 0.0
-
-        # Sumar base inicial
-        cur.execute("SELECT opening_amount FROM cash_sessions WHERE session_id = ?", (session_id,))
-        base = cur.fetchone()["opening_amount"] or 0.0
-        expected = base + total_efectivo
-
-        difference = float(closing_amount or 0) - expected
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cur.execute(
-            "UPDATE cash_sessions SET closing_amount = ?, expected_amount = ?, "
-            "difference = ?, closed_at = ?, is_open = 0, notes = ? WHERE session_id = ?",
-            (float(closing_amount or 0), expected, difference, now, notes or "", session_id))
-        conn.commit()
         return {
-            "opening_amount": base,
-            "total_efectivo_ventas": total_efectivo,
-            "expected": expected,
-            "closing": float(closing_amount or 0),
-            "difference": difference,
+            "id": row["id"],
+            "open_date": row["open_date"],
+            "close_date": row["close_date"],
+            "initial_amount": row["initial_amount"],
+            "final_expected": row["final_expected"],
+            "final_counted": row["final_counted"],
+            "difference": row["difference"],
+            "notes": row["notes"],
+            "is_open": row["is_open"],
         }
 
-    def get_recent_sessions(self, limit=30):
-        cur = self.db.get_connection().cursor()
-        cur.execute("SELECT * FROM cash_sessions ORDER BY session_id DESC LIMIT ?", (limit,))
-        return [dict(r) for r in cur.fetchall()]
+    def open_cash_session(self, initial_amount, notes=""):
+        current = self.get_current_cash_session()
+        if current:
+            return current
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute(
+            "INSERT INTO cash_sessions (open_date, initial_amount, notes, is_open) "
+            "VALUES (?,?,?,1)",
+            (now, float(initial_amount or 0), notes))
+        conn.commit()
+        return self.get_current_cash_session()
+
+    def close_cash_session(self, counted_amount, notes=""):
+        current = self.get_current_cash_session()
+        if not current:
+            return None
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        closing = self.get_cash_closing(hoy)
+        efectivo_ventas = closing.get("efectivo_esperado", 0.0)
+        esperado = current["initial_amount"] + efectivo_ventas
+        diferencia = float(counted_amount or 0) - esperado
+
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute(
+            "UPDATE cash_sessions SET close_date=?, final_expected=?, final_counted=?, "
+            "difference=?, notes=?, is_open=0 WHERE id=?",
+            (now, esperado, float(counted_amount or 0), diferencia,
+             notes or current["notes"], current["id"]))
+        conn.commit()
+        return {
+            "id": current["id"],
+            "open_date": current["open_date"],
+            "close_date": now,
+            "initial_amount": current["initial_amount"],
+            "final_expected": esperado,
+            "final_counted": float(counted_amount or 0),
+            "difference": diferencia,
+            "notes": notes,
+        }
+
+    def has_open_cash_session(self):
+        return self.get_current_cash_session() is not None
 
     # ============ BORRADOR DE CARRITO ============
     def save_cart_draft(self, items):
@@ -463,4 +443,31 @@ class SaleCase:
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             data = json.dumps(items, ensure_ascii=False)
             cur.execute(
-                "INSERT OR REPLACE INTO cart_draft (id, data,
+                "INSERT OR REPLACE INTO cart_draft (id, data, updated_at) VALUES (1, ?, ?)",
+                (data, now))
+            conn.commit()
+        except Exception:
+            pass
+
+    def load_cart_draft(self):
+        try:
+            cur = self.db.get_connection().cursor()
+            cur.execute("SELECT data, updated_at FROM cart_draft WHERE id = 1")
+            row = cur.fetchone()
+            if not row:
+                return None, None
+            items = json.loads(row["data"])
+            if not items:
+                return None, None
+            return items, row["updated_at"]
+        except Exception:
+            return None, None
+
+    def clear_cart_draft(self):
+        try:
+            conn = self.db.get_connection()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM cart_draft WHERE id = 1")
+            conn.commit()
+        except Exception:
+            pass
