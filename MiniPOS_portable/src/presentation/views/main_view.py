@@ -2615,808 +2615,807 @@ class MainView(tk.Tk):
             win.focus_force()
         except Exception:
             pass
-            
-# ============================================================
-# FIADOS — versión completa con checkboxes y hotkeys
-# ============================================================
-def show_credit_sales(self):
-    win = tk.Toplevel(self)
-    win.title("Fiados - Cuentas por cobrar")
-    win.geometry("1150x720")
-    win.transient(self)
-    win.configure(bg=self.style.colors.bg)
-    win.withdraw()
-    bg = self.style.colors.bg
-    fg = self.style.colors.fg
+    # ============================================================
+    # FIADOS — versión completa con checkboxes y hotkeys
+    # ============================================================
+    def show_credit_sales(self):
+        win = tk.Toplevel(self)
+        win.title("Fiados - Cuentas por cobrar")
+        win.geometry("1150x720")
+        win.transient(self)
+        win.configure(bg=self.style.colors.bg)
+        win.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
 
-    container = tk.Frame(win, bg=bg)
-    container.pack(fill="both", expand=True)
+        container = tk.Frame(win, bg=bg)
+        container.pack(fill="both", expand=True)
 
-    grupos_map = {}
-    marcados = set()
-    refs = {}
+        grupos_map = {}
+        marcados = set()
+        refs = {}
 
-    def build_content(parent):
-        tk.Label(parent,
-                 text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
-                 font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
+        def build_content(parent):
+            tk.Label(parent,
+                     text="💳 CUENTAS POR COBRAR (agrupado por cliente)",
+                     font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
 
-        resumen_lbl = tk.Label(parent, text="",
-                                font=("Arial", 12, "bold"),
-                                bg=bg, fg=fg)
-        resumen_lbl.pack(pady=4)
-        refs["resumen_lbl"] = resumen_lbl
+            resumen_lbl = tk.Label(parent, text="",
+                                    font=("Arial", 12, "bold"),
+                                    bg=bg, fg=fg)
+            resumen_lbl.pack(pady=4)
+            refs["resumen_lbl"] = resumen_lbl
 
-        tree_frame = ttk.Frame(parent, bootstyle="dark")
-        tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
+            tree_frame = ttk.Frame(parent, bootstyle="dark")
+            tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
 
-        tf2, tree = make_scrolled_treeview(
-            tree_frame,
-            columns=("Sel", "Cliente", "Fiados", "Total",
-                     "Abonado", "Pendiente"),
-            headings=[
-                ("Sel", "☐", 40, "center"),
-                ("Cliente", "Cliente", 240, "center"),
-                ("Fiados", "# Fiados", 90, "center"),
-                ("Total", "Total fiado", 140, "center"),
-                ("Abonado", "Abonado", 140, "center"),
-                ("Pendiente", "Pendiente", 140, "center"),
-            ],
-            bootstyle="dark")
-        tf2.pack(fill="both", expand=True)
+            tf2, tree = make_scrolled_treeview(
+                tree_frame,
+                columns=("Sel", "Cliente", "Fiados", "Total",
+                         "Abonado", "Pendiente"),
+                headings=[
+                    ("Sel", "☐", 40, "center"),
+                    ("Cliente", "Cliente", 240, "center"),
+                    ("Fiados", "# Fiados", 90, "center"),
+                    ("Total", "Total fiado", 140, "center"),
+                    ("Abonado", "Abonado", 140, "center"),
+                    ("Pendiente", "Pendiente", 140, "center"),
+                ],
+                bootstyle="dark")
+            tf2.pack(fill="both", expand=True)
 
-        tree.heading("Sel", text="☐", command=toggle_all)
-        refs["tree"] = tree
+            tree.heading("Sel", text="☐", command=toggle_all)
+            refs["tree"] = tree
 
-        tree.bind("<Double-1>", ver_detalle)
-        tree.bind("<Button-1>", on_click, add="+")
-        tree.bind("<Button-3>", on_right_click)
-        win.bind("<Control-F12>", on_ctrl_f12)
-        win.bind("<Shift-F12>", on_shift_f12)
-        tree.bind("<Control-F12>", on_ctrl_f12)
-        tree.bind("<Shift-F12>", on_shift_f12)
+            tree.bind("<Double-1>", ver_detalle)
+            tree.bind("<Button-1>", on_click, add="+")
+            tree.bind("<Button-3>", on_right_click)
+            win.bind("<Control-F12>", on_ctrl_f12)
+            win.bind("<Shift-F12>", on_shift_f12)
+            tree.bind("<Control-F12>", on_ctrl_f12)
+            tree.bind("<Shift-F12>", on_shift_f12)
 
-    def build_bottom(parent):
-        ttk.Button(parent, text="📋 Más detalles",
-                   command=lambda: ver_detalle(),
-                   bootstyle="info").pack(side="left", padx=5)
-        ttk.Button(parent, text="💵 Abonar (más antigua)",
-                   command=lambda: abonar(),
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(parent, text="✅ Marcar como pagado",
-                   command=lambda: marcar_pagado(),
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(parent, text="☑ Marcar todos",
-                   command=lambda: toggle_all(),
-                   bootstyle="secondary").pack(side="left", padx=5)
-        ttk.Button(parent, text="🗑️ Eliminar marcados",
-                   command=lambda: eliminar_marcados(),
-                   bootstyle="danger").pack(side="left", padx=5)
-        ttk.Button(parent, text="🔄 Refrescar",
-                   command=lambda: recargar(),
-                   bootstyle="secondary").pack(side="left", padx=5)
+        def build_bottom(parent):
+            ttk.Button(parent, text="📋 Más detalles",
+                       command=lambda: ver_detalle(),
+                       bootstyle="info").pack(side="left", padx=5)
+            ttk.Button(parent, text="💵 Abonar (más antigua)",
+                       command=lambda: abonar(),
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(parent, text="✅ Marcar como pagado",
+                       command=lambda: marcar_pagado(),
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(parent, text="☑ Marcar todos",
+                       command=lambda: toggle_all(),
+                       bootstyle="secondary").pack(side="left", padx=5)
+            ttk.Button(parent, text="🗑️ Eliminar marcados",
+                       command=lambda: eliminar_marcados(),
+                       bootstyle="danger").pack(side="left", padx=5)
+            ttk.Button(parent, text="🔄 Refrescar",
+                       command=lambda: recargar(),
+                       bootstyle="secondary").pack(side="left", padx=5)
 
-    def actualizar_heading_sel():
-        try:
-            tree = refs.get("tree")
-            if not tree:
+        def actualizar_heading_sel():
+            try:
+                tree = refs.get("tree")
+                if not tree:
+                    return
+                if not grupos_map or len(marcados) == 0:
+                    texto = "☐"
+                elif len(marcados) >= len(grupos_map):
+                    texto = "☑"
+                else:
+                    texto = "◪"
+                tree.heading("Sel", text=texto)
+            except Exception:
+                pass
+
+        def toggle_mark(iid):
+            if not iid or iid not in grupos_map:
                 return
-            if not grupos_map or len(marcados) == 0:
-                texto = "☐"
-            elif len(marcados) >= len(grupos_map):
-                texto = "☑"
-            else:
-                texto = "◪"
-            tree.heading("Sel", text=texto)
-        except Exception:
-            pass
-
-    def toggle_mark(iid):
-        if not iid or iid not in grupos_map:
-            return
-        tree = refs.get("tree")
-        if iid in marcados:
-            marcados.discard(iid)
-            try:
-                tree.set(iid, "Sel", "☐")
-            except Exception:
-                pass
-        else:
-            marcados.add(iid)
-            try:
-                tree.set(iid, "Sel", "☑")
-            except Exception:
-                pass
-        actualizar_heading_sel()
-
-    def toggle_all():
-        tree = refs.get("tree")
-        if not tree or not grupos_map:
-            return
-        if len(marcados) >= len(grupos_map):
-            marcados.clear()
-            for iid in grupos_map:
+            tree = refs.get("tree")
+            if iid in marcados:
+                marcados.discard(iid)
                 try:
                     tree.set(iid, "Sel", "☐")
                 except Exception:
                     pass
-        else:
-            marcados.clear()
-            for iid in grupos_map:
+            else:
                 marcados.add(iid)
                 try:
                     tree.set(iid, "Sel", "☑")
                 except Exception:
                     pass
-        actualizar_heading_sel()
+            actualizar_heading_sel()
 
-    def desmarcar_todos():
-        tree = refs.get("tree")
-        marcados.clear()
-        if tree:
-            for iid in grupos_map:
-                try:
-                    tree.set(iid, "Sel", "☐")
-                except Exception:
-                    pass
-        actualizar_heading_sel()
-
-    def restaurar_foco():
-        try:
-            if win.winfo_exists():
-                win.lift()
-                win.focus_force()
-        except Exception:
-            pass
-
-    def recargar():
-        tree = refs.get("tree")
-        if not tree:
-            return
-        for r in tree.get_children():
-            tree.delete(r)
-        grupos_map.clear()
-        marcados.clear()
-        ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
-        ventas = [v for v in ventas if v.pending() > 0.01]
-        grupos = self.sale_use_case.group_sales_by_customer(ventas)
-        total_global = 0.0
-        for g in grupos:
-            total_global += g["pending"]
-            iid = tree.insert("", "end", values=(
-                "☐", g["customer_name"], g["count"],
-                f"${g['total']:,.0f}".replace(",", "."),
-                f"${g['paid']:,.0f}".replace(",", "."),
-                f"${g['pending']:,.0f}".replace(",", ".")))
-            grupos_map[iid] = g
-        try:
-            refs["resumen_lbl"].configure(
-                text=f"👥 {len(grupos)} clientes con deuda   |   "
-                     f"💰 Total por cobrar: ${total_global:,.0f}".replace(
-                         ",", "."))
-        except Exception:
-            pass
-        actualizar_heading_sel()
-
-    def ver_detalle(event=None):
-        tree = refs.get("tree")
-        if not tree:
-            return
-        sel = tree.selection()
-        if not sel:
-            MD.show_warning("Selecciona un cliente primero.",
-                            "Sin selección", parent=win)
-            restaurar_foco()
-            return
-        g = grupos_map.get(sel[0])
-        if not g:
-            return
-        det = tk.Toplevel(win)
-        det.title(f"Fiados de {g['customer_name']}")
-        det.geometry("950x560")
-        det.transient(win)
-        det.configure(bg=bg)
-        det.withdraw()
-
-        tk.Label(det, text=f"👤 {g['customer_name']}",
-                 font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=8)
-        tk.Label(det,
-                 text=f"Total: ${g['total']:,.0f}   |   "
-                      f"Abonado: ${g['paid']:,.0f}   |   "
-                      f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
-                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=4)
-
-        f2 = ttk.Frame(det, bootstyle="dark")
-        f2.pack(fill="both", expand=True, padx=12, pady=6)
-        tf2, t2 = make_scrolled_treeview(
-            f2,
-            columns=("ID", "Fecha", "Productos", "Total",
-                     "Abonado", "Pendiente"),
-            headings=[
-                ("ID", "#", 60, "center"),
-                ("Fecha", "Fecha", 130, "center"),
-                ("Productos", "Productos", 280, "center"),
-                ("Total", "Total", 90, "center"),
-                ("Abonado", "Abonado", 90, "center"),
-                ("Pendiente", "Pendiente", 100, "center"),
-            ],
-            bootstyle="dark")
-        tf2.pack(fill="both", expand=True)
-
-        for sale in sorted(g["sales"], key=lambda x: x.date):
-            resumen_items = ", ".join(
-                f"{it.quantity:g}x {it.product_name[:18]}"
-                for it in sale.items[:3])
-            if len(sale.items) > 3:
-                resumen_items += f" (+{len(sale.items) - 3} más)"
-            t2.insert("", "end", values=(
-                f"#{sale.display_number:02d}",
-                sale.date, resumen_items,
-                f"${sale.total:,.0f}".replace(",", "."),
-                f"${sale.amount_paid:,.0f}".replace(",", "."),
-                f"${sale.pending():,.0f}".replace(",", ".")))
-
-        bf2 = tk.Frame(det, bg=bg)
-        bf2.pack(side="bottom", pady=8)
-        ttk.Button(bf2, text="Cerrar",
-                   command=lambda: [det.destroy(), restaurar_foco()]).pack()
-
-        show_popup_smooth(det)
-        try:
-            det.grab_set()
-            det.focus_force()
-        except Exception:
-            pass
-
-    def on_click(event):
-        try:
+        def toggle_all():
             tree = refs.get("tree")
-            region = tree.identify("region", event.x, event.y)
-            if region != "cell":
+            if not tree or not grupos_map:
                 return
-            col = tree.identify_column(event.x)
-            row = tree.identify_row(event.y)
-            if not row:
-                return
-            if col == "#1":
-                toggle_mark(row)
-        except Exception:
-            pass
+            if len(marcados) >= len(grupos_map):
+                marcados.clear()
+                for iid in grupos_map:
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
+            else:
+                marcados.clear()
+                for iid in grupos_map:
+                    marcados.add(iid)
+                    try:
+                        tree.set(iid, "Sel", "☑")
+                    except Exception:
+                        pass
+            actualizar_heading_sel()
 
-    def abonar():
-        tree = refs.get("tree")
-        if not tree:
-            return
-        iid = None
-        if marcados:
-            iid = next(iter(marcados))
-        else:
+        def desmarcar_todos():
+            tree = refs.get("tree")
+            marcados.clear()
+            if tree:
+                for iid in grupos_map:
+                    try:
+                        tree.set(iid, "Sel", "☐")
+                    except Exception:
+                        pass
+            actualizar_heading_sel()
+
+        def restaurar_foco():
+            try:
+                if win.winfo_exists():
+                    win.lift()
+                    win.focus_force()
+            except Exception:
+                pass
+
+        def recargar():
+            tree = refs.get("tree")
+            if not tree:
+                return
+            for r in tree.get_children():
+                tree.delete(r)
+            grupos_map.clear()
+            marcados.clear()
+            ventas = self.sale_use_case.get_credit_sales(only_unpaid=True)
+            ventas = [v for v in ventas if v.pending() > 0.01]
+            grupos = self.sale_use_case.group_sales_by_customer(ventas)
+            total_global = 0.0
+            for g in grupos:
+                total_global += g["pending"]
+                iid = tree.insert("", "end", values=(
+                    "☐", g["customer_name"], g["count"],
+                    f"${g['total']:,.0f}".replace(",", "."),
+                    f"${g['paid']:,.0f}".replace(",", "."),
+                    f"${g['pending']:,.0f}".replace(",", ".")))
+                grupos_map[iid] = g
+            try:
+                refs["resumen_lbl"].configure(
+                    text=f"👥 {len(grupos)} clientes con deuda   |   "
+                         f"💰 Total por cobrar: ${total_global:,.0f}".replace(
+                             ",", "."))
+            except Exception:
+                pass
+            actualizar_heading_sel()
+
+        def ver_detalle(event=None):
+            tree = refs.get("tree")
+            if not tree:
+                return
             sel = tree.selection()
-            if sel:
-                iid = sel[0]
-        if not iid:
-            MD.show_warning("Selecciona un cliente primero.",
-                            "Sin selección", parent=win)
-            restaurar_foco()
-            return
-        g = grupos_map.get(iid)
-        if not g:
-            return
-        ventas_pend = [v for v in g["sales"] if v.pending() > 0.01]
-        if not ventas_pend:
-            MD.show_info("Este cliente no tiene deudas pendientes.",
-                         "Listo", parent=win)
-            restaurar_foco()
-            return
-        venta = sorted(ventas_pend, key=lambda x: x.sale_id)[0]
-        pendiente = venta.pending()
-        self._abonar_dialog(win, venta, pendiente, recargar)
+            if not sel:
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            g = grupos_map.get(sel[0])
+            if not g:
+                return
+            det = tk.Toplevel(win)
+            det.title(f"Fiados de {g['customer_name']}")
+            det.geometry("950x560")
+            det.transient(win)
+            det.configure(bg=bg)
+            det.withdraw()
 
-    def marcar_pagado():
-        tree = refs.get("tree")
-        if not tree:
-            return
-        if not marcados and not tree.selection():
-            MD.show_warning("Marca o selecciona un cliente primero.",
-                            "Sin selección", parent=win)
-            restaurar_foco()
-            return
-        iids = list(marcados) if marcados else list(tree.selection())
-        total_marcar = sum(grupos_map[i]["pending"] for i in iids
-                           if i in grupos_map)
-        if MD.yesno(
-                f"¿Marcar TODOS los fiados pendientes de {len(iids)} "
-                f"cliente(s) como PAGADOS?\n"
-                f"Total a marcar: ${total_marcar:,.0f}".replace(",", "."),
-                "Confirmar", parent=win) != "Yes":
-            restaurar_foco()
-            return
-        for iid in iids:
+            tk.Label(det, text=f"👤 {g['customer_name']}",
+                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=8)
+            tk.Label(det,
+                     text=f"Total: ${g['total']:,.0f}   |   "
+                          f"Abonado: ${g['paid']:,.0f}   |   "
+                          f"Pendiente: ${g['pending']:,.0f}".replace(",", "."),
+                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=4)
+
+            f2 = ttk.Frame(det, bootstyle="dark")
+            f2.pack(fill="both", expand=True, padx=12, pady=6)
+            tf2, t2 = make_scrolled_treeview(
+                f2,
+                columns=("ID", "Fecha", "Productos", "Total",
+                         "Abonado", "Pendiente"),
+                headings=[
+                    ("ID", "#", 60, "center"),
+                    ("Fecha", "Fecha", 130, "center"),
+                    ("Productos", "Productos", 280, "center"),
+                    ("Total", "Total", 90, "center"),
+                    ("Abonado", "Abonado", 90, "center"),
+                    ("Pendiente", "Pendiente", 100, "center"),
+                ],
+                bootstyle="dark")
+            tf2.pack(fill="both", expand=True)
+
+            for sale in sorted(g["sales"], key=lambda x: x.date):
+                resumen_items = ", ".join(
+                    f"{it.quantity:g}x {it.product_name[:18]}"
+                    for it in sale.items[:3])
+                if len(sale.items) > 3:
+                    resumen_items += f" (+{len(sale.items) - 3} más)"
+                t2.insert("", "end", values=(
+                    f"#{sale.display_number:02d}",
+                    sale.date, resumen_items,
+                    f"${sale.total:,.0f}".replace(",", "."),
+                    f"${sale.amount_paid:,.0f}".replace(",", "."),
+                    f"${sale.pending():,.0f}".replace(",", ".")))
+
+            bf2 = tk.Frame(det, bg=bg)
+            bf2.pack(side="bottom", pady=8)
+            ttk.Button(bf2, text="Cerrar",
+                       command=lambda: [det.destroy(), restaurar_foco()]).pack()
+
+            show_popup_smooth(det)
+            try:
+                det.grab_set()
+                det.focus_force()
+            except Exception:
+                pass
+
+        def on_click(event):
+            try:
+                tree = refs.get("tree")
+                region = tree.identify("region", event.x, event.y)
+                if region != "cell":
+                    return
+                col = tree.identify_column(event.x)
+                row = tree.identify_row(event.y)
+                if not row:
+                    return
+                if col == "#1":
+                    toggle_mark(row)
+            except Exception:
+                pass
+
+        def abonar():
+            tree = refs.get("tree")
+            if not tree:
+                return
+            iid = None
+            if marcados:
+                iid = next(iter(marcados))
+            else:
+                sel = tree.selection()
+                if sel:
+                    iid = sel[0]
+            if not iid:
+                MD.show_warning("Selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
             g = grupos_map.get(iid)
             if not g:
-                continue
-            for v in g["sales"]:
-                if v.pending() > 0.01:
-                    self.sale_use_case.mark_as_paid(v.sale_id)
-        recargar()
-        MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
-        restaurar_foco()
+                return
+            ventas_pend = [v for v in g["sales"] if v.pending() > 0.01]
+            if not ventas_pend:
+                MD.show_info("Este cliente no tiene deudas pendientes.",
+                             "Listo", parent=win)
+                restaurar_foco()
+                return
+            venta = sorted(ventas_pend, key=lambda x: x.sale_id)[0]
+            pendiente = venta.pending()
+            self._abonar_dialog(win, venta, pendiente, recargar)
 
-    def eliminar_marcados():
-        if not marcados:
-            MD.show_warning("No hay clientes marcados.",
-                            "Sin selección", parent=win)
-            restaurar_foco()
-            return
-        total_fiados = sum(grupos_map[i]["count"] for i in marcados
-                           if i in grupos_map)
-        total_dinero = sum(grupos_map[i]["total"] for i in marcados
-                           if i in grupos_map)
-        if MD.yesno(
-                f"⚠️ ¿Eliminar TODOS los fiados de los {len(marcados)} "
-                f"clientes marcados?\n\n"
-                f"Se eliminarán {total_fiados} fiados por un total de "
-                f"${total_dinero:,.0f}.\n"
-                f"Esto restaurará el stock de todos los productos.".replace(
-                    ",", "."),
-                "Confirmar eliminación total", parent=win) != "Yes":
-            restaurar_foco()
-            return
-        pw = self._ask_password_1234(win)
-        if not pw:
-            restaurar_foco()
-            return
-        total_borradas = 0
-        for iid in list(marcados):
-            g = grupos_map.get(iid)
-            if not g:
-                continue
-            for s in g["sales"]:
-                self.sale_use_case.delete_sale(s.sale_id)
-                total_borradas += 1
-        MD.show_info(
-            f"✅ {total_borradas} fiados eliminados y stock restaurado.",
-            "Listo", parent=win)
-        recargar()
-        if self.current_page == "inventario":
-            self.inventory_view.load_products()
-        restaurar_foco()
-
-    def on_ctrl_f12(event=None):
-        tree = refs.get("tree")
-        if not tree:
-            return
-        iid = None
-        if marcados:
-            iid = next(iter(marcados))
-        else:
-            sel = tree.selection()
-            if sel:
-                iid = sel[0]
-        if not iid:
-            MD.show_warning("Marca o selecciona un cliente primero.",
-                            "Sin selección", parent=win)
-            restaurar_foco()
-            return
-        g = grupos_map.get(iid)
-        if not g or not g["sales"]:
-            return
-        venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
-        sid = venta_reciente.sale_id
-        display = venta_reciente.display_number
-        if MD.yesno(
-                f"⚠️ ¿Eliminar el fiado más reciente de "
-                f"'{g['customer_name']}'?\n\n"
-                f"Venta #{display:02d} - ${venta_reciente.total:,.0f}\n"
-                f"Esto restaurará el stock.".replace(",", "."),
-                "Confirmar eliminación", parent=win) != "Yes":
-            restaurar_foco()
-            return
-        pw = self._ask_password_1234(win)
-        if not pw:
-            restaurar_foco()
-            return
-        self.sale_use_case.delete_sale(sid)
-        MD.show_info(
-            f"Fiado #{display:02d} eliminado y stock restaurado.",
-            "Listo", parent=win)
-        recargar()
-        if self.current_page == "inventario":
-            self.inventory_view.load_products()
-        restaurar_foco()
-
-    def on_shift_f12(event=None):
-        eliminar_marcados()
-
-    def on_right_click(event):
-        try:
+        def marcar_pagado():
             tree = refs.get("tree")
-            row = tree.identify_row(event.y)
-            if row:
-                tree.selection_set(row)
-                tree.focus(row)
-            style = ttk.Style()
-            m = tk.Menu(win, tearoff=0,
-                        bg=style.colors.bg, fg=style.colors.fg,
-                        activebackground=style.colors.selectbg,
-                        activeforeground=style.colors.selectfg,
-                        bd=1, relief="solid",
-                        font=get_menu_font())
-            m.add_command(label="👁️  Ver detalle", command=ver_detalle)
-            m.add_command(label="💵 Abonar (más antigua)", command=abonar)
-            m.add_command(label="✅ Marcar como pagado",
-                          command=marcar_pagado)
-            m.add_separator()
-            if row:
-                marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
-                m.add_command(label=marca,
-                              command=lambda r=row: toggle_mark(r))
-            m.add_command(label="☑ Marcar todos", command=toggle_all)
-            m.add_command(label="☐ Desmarcar todos",
-                          command=desmarcar_todos)
-            m.add_separator()
-            m.add_command(
-                label=f"🗑️  Eliminar marcados ({len(marcados)})",
-                command=eliminar_marcados)
-            try:
-                m.tk_popup(event.x_root, event.y_root)
-            finally:
-                m.grab_release()
-        except Exception:
-            pass
+            if not tree:
+                return
+            if not marcados and not tree.selection():
+                MD.show_warning("Marca o selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            iids = list(marcados) if marcados else list(tree.selection())
+            total_marcar = sum(grupos_map[i]["pending"] for i in iids
+                               if i in grupos_map)
+            if MD.yesno(
+                    f"¿Marcar TODOS los fiados pendientes de {len(iids)} "
+                    f"cliente(s) como PAGADOS?\n"
+                    f"Total a marcar: ${total_marcar:,.0f}".replace(",", "."),
+                    "Confirmar", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            for iid in iids:
+                g = grupos_map.get(iid)
+                if not g:
+                    continue
+                for v in g["sales"]:
+                    if v.pending() > 0.01:
+                        self.sale_use_case.mark_as_paid(v.sale_id)
+            recargar()
+            MD.show_info("Fiados marcados como pagados.", "Listo", parent=win)
+            restaurar_foco()
 
-    make_scrollable(container, build_content, build_bottom, bg=bg)
-    recargar()
-
-    show_popup_smooth(win)
-    try:
-        win.grab_set()
-        win.focus_force()
-    except Exception:
-        pass
-
-# ============================================================
-# ABONAR
-# ============================================================
-def _abonar_dialog(self, parent, venta, pendiente, on_done):
-    pop = tk.Toplevel(parent)
-    pop.title(f"Abonar a venta #{venta.display_number:02d}")
-    pop.geometry("440x520")
-    pop.transient(parent)
-    pop.configure(bg=self.style.colors.bg)
-    pop.withdraw()
-    bg = self.style.colors.bg
-    fg = self.style.colors.fg
-
-    container = tk.Frame(pop, bg=bg)
-    container.pack(fill="both", expand=True)
-    refs = {}
-
-    def build_content(parent):
-        tk.Label(parent, text="💵 Registrar Abono",
-                 font=("Arial", 16, "bold"), bg=bg, fg=fg).pack(
-                     pady=(15, 6))
-        cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
-        tk.Label(parent, text=f"Cliente: {cliente}", font=("Arial", 12),
-                 bg=bg, fg=fg).pack(pady=4)
-        tk.Label(parent, text=f"Venta #{venta.display_number:02d}",
-                 font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").pack(
-                     pady=2)
-        tk.Label(parent,
-                 text=f"Total: ${venta.total:,.0f}".replace(",", "."),
-                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
-        tk.Label(parent,
-                 text=f"Abonado: ${venta.amount_paid:,.0f}".replace(
-                     ",", "."),
-                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
-        tk.Label(parent,
-                 text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
-                 font=("Arial", 14, "bold"),
-                 bg="#0a4d1f", fg="#a8e6a8",
-                 padx=10, pady=8).pack(pady=10)
-
-        tk.Label(parent, text="Método del abono:",
-                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=(8, 3))
-        metodo_var = tk.StringVar(value="Efectivo")
-        mf = tk.Frame(parent, bg=bg)
-        mf.pack(pady=3)
-        for m in ["Efectivo", "Transferencia", "Tarjeta", "Otro"]:
-            ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m,
-                            bootstyle="info").pack(side="left", padx=4)
-        refs["metodo_var"] = metodo_var
-
-        tk.Label(parent, text="Monto del abono:",
-                 bg=bg, fg=fg).pack(pady=(10, 3))
-        monto_var = tk.StringVar()
-        e = ttk.Entry(parent, textvariable=monto_var, width=20,
-                      font=("Arial", 16), justify="center")
-        e.pack(pady=5)
-        refs["entry"] = e
-        refs["monto_var"] = monto_var
-
-    def build_bottom(parent):
-        def aplicar(ev=None):
-            try:
-                monto = float(refs["monto_var"].get().replace(
-                    "$", "").replace(".", "").replace(",", "."))
-                if monto <= 0:
-                    raise ValueError
-            except ValueError:
-                MD.show_error("Monto inválido", "Error", parent=pop)
-                return "break"
-            if monto > pendiente + 0.01:
-                if MD.yesno(
-                        f"El monto (${monto:,.0f}) es mayor al pendiente "
-                        f"(${pendiente:,.0f}).\n"
-                        f"¿Registrar solo ${pendiente:,.0f}?".replace(
-                            ",", "."),
-                        "Confirmar", parent=pop) != "Yes":
-                    return "break"
-                monto = pendiente
-            try:
-                self.sale_use_case.add_payment(
-                    venta.sale_id, monto,
-                    method=refs["metodo_var"].get(),
-                    customer_name=venta.customer_name or "")
-                pop.destroy()
-                MD.show_info(
-                    f"✅ Abono de ${monto:,.0f} registrado.".replace(
+        def eliminar_marcados():
+            if not marcados:
+                MD.show_warning("No hay clientes marcados.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            total_fiados = sum(grupos_map[i]["count"] for i in marcados
+                               if i in grupos_map)
+            total_dinero = sum(grupos_map[i]["total"] for i in marcados
+                               if i in grupos_map)
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar TODOS los fiados de los {len(marcados)} "
+                    f"clientes marcados?\n\n"
+                    f"Se eliminarán {total_fiados} fiados por un total de "
+                    f"${total_dinero:,.0f}.\n"
+                    f"Esto restaurará el stock de todos los productos.".replace(
                         ",", "."),
-                    "Listo", parent=parent)
-                on_done()
+                    "Confirmar eliminación total", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                restaurar_foco()
+                return
+            total_borradas = 0
+            for iid in list(marcados):
+                g = grupos_map.get(iid)
+                if not g:
+                    continue
+                for s in g["sales"]:
+                    self.sale_use_case.delete_sale(s.sale_id)
+                    total_borradas += 1
+            MD.show_info(
+                f"✅ {total_borradas} fiados eliminados y stock restaurado.",
+                "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+            restaurar_foco()
+
+        def on_ctrl_f12(event=None):
+            tree = refs.get("tree")
+            if not tree:
+                return
+            iid = None
+            if marcados:
+                iid = next(iter(marcados))
+            else:
+                sel = tree.selection()
+                if sel:
+                    iid = sel[0]
+            if not iid:
+                MD.show_warning("Marca o selecciona un cliente primero.",
+                                "Sin selección", parent=win)
+                restaurar_foco()
+                return
+            g = grupos_map.get(iid)
+            if not g or not g["sales"]:
+                return
+            venta_reciente = max(g["sales"], key=lambda x: x.sale_id)
+            sid = venta_reciente.sale_id
+            display = venta_reciente.display_number
+            if MD.yesno(
+                    f"⚠️ ¿Eliminar el fiado más reciente de "
+                    f"'{g['customer_name']}'?\n\n"
+                    f"Venta #{display:02d} - ${venta_reciente.total:,.0f}\n"
+                    f"Esto restaurará el stock.".replace(",", "."),
+                    "Confirmar eliminación", parent=win) != "Yes":
+                restaurar_foco()
+                return
+            pw = self._ask_password_1234(win)
+            if not pw:
+                restaurar_foco()
+                return
+            self.sale_use_case.delete_sale(sid)
+            MD.show_info(
+                f"Fiado #{display:02d} eliminado y stock restaurado.",
+                "Listo", parent=win)
+            recargar()
+            if self.current_page == "inventario":
+                self.inventory_view.load_products()
+            restaurar_foco()
+
+        def on_shift_f12(event=None):
+            eliminar_marcados()
+
+        def on_right_click(event):
+            try:
+                tree = refs.get("tree")
+                row = tree.identify_row(event.y)
+                if row:
+                    tree.selection_set(row)
+                    tree.focus(row)
+                style = ttk.Style()
+                m = tk.Menu(win, tearoff=0,
+                            bg=style.colors.bg, fg=style.colors.fg,
+                            activebackground=style.colors.selectbg,
+                            activeforeground=style.colors.selectfg,
+                            bd=1, relief="solid",
+                            font=get_menu_font())
+                m.add_command(label="👁️  Ver detalle", command=ver_detalle)
+                m.add_command(label="💵 Abonar (más antigua)", command=abonar)
+                m.add_command(label="✅ Marcar como pagado",
+                              command=marcar_pagado)
+                m.add_separator()
+                if row:
+                    marca = "☑ Desmarcar" if row in marcados else "☐ Marcar"
+                    m.add_command(label=marca,
+                                  command=lambda r=row: toggle_mark(r))
+                m.add_command(label="☑ Marcar todos", command=toggle_all)
+                m.add_command(label="☐ Desmarcar todos",
+                              command=desmarcar_todos)
+                m.add_separator()
+                m.add_command(
+                    label=f"🗑️  Eliminar marcados ({len(marcados)})",
+                    command=eliminar_marcados)
                 try:
-                    parent.lift()
-                    parent.focus_force()
-                except Exception:
-                    pass
-            except Exception as ex:
-                MD.show_error(f"Error: {ex}", "Error", parent=pop)
-            return "break"
+                    m.tk_popup(event.x_root, event.y_root)
+                finally:
+                    m.grab_release()
+            except Exception:
+                pass
 
-        def cancelar(ev=None):
-            pop.destroy()
-            return "break"
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+        recargar()
 
-        refs["aplicar"] = aplicar
-        pop.bind("<Escape>", cancelar)
-
-        ttk.Button(parent, text="Registrar abono", command=aplicar,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(parent, text="Cancelar",
-                   command=pop.destroy).pack(side="left", padx=5)
-
-    make_scrollable(container, build_content, build_bottom, bg=bg)
-
-    try:
-        e = refs.get("entry")
-        if e:
-            e.bind("<Return>", refs.get("aplicar"))
-            e.bind("<KP_Enter>", refs.get("aplicar"))
-    except Exception:
-        pass
-
-    show_popup_smooth(pop)
-    try:
-        pop.grab_set()
-        pop.focus_force()
-    except Exception:
-        pass
-
-    def set_focus():
+        show_popup_smooth(win)
         try:
-            if pop.winfo_exists():
-                e = refs.get("entry")
-                if e:
-                    e.focus_set()
+            win.grab_set()
+            win.focus_force()
         except Exception:
             pass
-    pop.after(50, set_focus)
-    pop.after(250, set_focus)
 
-# ============================================================
-# AUTO-INICIO (Windows + Linux)
-# ============================================================
-def _get_startup_bat_path(self):
-    startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
-                           'Start Menu', 'Programs', 'Startup')
-    return os.path.join(startup, 'MiniPOS_Portable.bat')
+    # ============================================================
+    # ABONAR
+    # ============================================================
+    def _abonar_dialog(self, parent, venta, pendiente, on_done):
+        pop = tk.Toplevel(parent)
+        pop.title(f"Abonar a venta #{venta.display_number:02d}")
+        pop.geometry("440x520")
+        pop.transient(parent)
+        pop.configure(bg=self.style.colors.bg)
+        pop.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
 
-def _get_linux_autostart_path(self):
-    autostart = os.path.expanduser("~/.config/autostart")
-    return os.path.join(autostart, "MiniPOS.desktop")
+        container = tk.Frame(pop, bg=bg)
+        container.pack(fill="both", expand=True)
+        refs = {}
 
-def _is_autostart_enabled(self):
-    try:
-        if platform.system() == "Windows":
-            return os.path.exists(self._get_startup_bat_path())
-        elif platform.system() == "Linux":
-            return os.path.exists(self._get_linux_autostart_path())
-    except Exception:
+        def build_content(parent):
+            tk.Label(parent, text="💵 Registrar Abono",
+                     font=("Arial", 16, "bold"), bg=bg, fg=fg).pack(
+                         pady=(15, 6))
+            cliente = venta.customer_name if venta.customer_name else "(sin nombre)"
+            tk.Label(parent, text=f"Cliente: {cliente}", font=("Arial", 12),
+                     bg=bg, fg=fg).pack(pady=4)
+            tk.Label(parent, text=f"Venta #{venta.display_number:02d}",
+                     font=("Arial", 11, "italic"), bg=bg, fg="#a8e6a8").pack(
+                         pady=2)
+            tk.Label(parent,
+                     text=f"Total: ${venta.total:,.0f}".replace(",", "."),
+                     font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
+            tk.Label(parent,
+                     text=f"Abonado: ${venta.amount_paid:,.0f}".replace(
+                         ",", "."),
+                     font=("Arial", 12), bg=bg, fg=fg).pack(pady=3)
+            tk.Label(parent,
+                     text=f"Pendiente: ${pendiente:,.0f}".replace(",", "."),
+                     font=("Arial", 14, "bold"),
+                     bg="#0a4d1f", fg="#a8e6a8",
+                     padx=10, pady=8).pack(pady=10)
+
+            tk.Label(parent, text="Método del abono:",
+                     font=("Arial", 11), bg=bg, fg=fg).pack(pady=(8, 3))
+            metodo_var = tk.StringVar(value="Efectivo")
+            mf = tk.Frame(parent, bg=bg)
+            mf.pack(pady=3)
+            for m in ["Efectivo", "Transferencia", "Tarjeta", "Otro"]:
+                ttk.Radiobutton(mf, text=m, variable=metodo_var, value=m,
+                                bootstyle="info").pack(side="left", padx=4)
+            refs["metodo_var"] = metodo_var
+
+            tk.Label(parent, text="Monto del abono:",
+                     bg=bg, fg=fg).pack(pady=(10, 3))
+            monto_var = tk.StringVar()
+            e = ttk.Entry(parent, textvariable=monto_var, width=20,
+                          font=("Arial", 16), justify="center")
+            e.pack(pady=5)
+            refs["entry"] = e
+            refs["monto_var"] = monto_var
+
+        def build_bottom(parent):
+            def aplicar(ev=None):
+                try:
+                    monto = float(refs["monto_var"].get().replace(
+                        "$", "").replace(".", "").replace(",", "."))
+                    if monto <= 0:
+                        raise ValueError
+                except ValueError:
+                    MD.show_error("Monto inválido", "Error", parent=pop)
+                    return "break"
+                if monto > pendiente + 0.01:
+                    if MD.yesno(
+                            f"El monto (${monto:,.0f}) es mayor al pendiente "
+                            f"(${pendiente:,.0f}).\n"
+                            f"¿Registrar solo ${pendiente:,.0f}?".replace(
+                                ",", "."),
+                            "Confirmar", parent=pop) != "Yes":
+                        return "break"
+                    monto = pendiente
+                try:
+                    self.sale_use_case.add_payment(
+                        venta.sale_id, monto,
+                        method=refs["metodo_var"].get(),
+                        customer_name=venta.customer_name or "")
+                    pop.destroy()
+                    MD.show_info(
+                        f"✅ Abono de ${monto:,.0f} registrado.".replace(
+                            ",", "."),
+                        "Listo", parent=parent)
+                    on_done()
+                    try:
+                        parent.lift()
+                        parent.focus_force()
+                    except Exception:
+                        pass
+                except Exception as ex:
+                    MD.show_error(f"Error: {ex}", "Error", parent=pop)
+                return "break"
+
+            def cancelar(ev=None):
+                pop.destroy()
+                return "break"
+
+            refs["aplicar"] = aplicar
+            pop.bind("<Escape>", cancelar)
+
+            ttk.Button(parent, text="Registrar abono", command=aplicar,
+                       style="DarkGreen.TButton").pack(side="left", padx=5)
+            ttk.Button(parent, text="Cancelar",
+                       command=pop.destroy).pack(side="left", padx=5)
+
+        make_scrollable(container, build_content, build_bottom, bg=bg)
+
+        try:
+            e = refs.get("entry")
+            if e:
+                e.bind("<Return>", refs.get("aplicar"))
+                e.bind("<KP_Enter>", refs.get("aplicar"))
+        except Exception:
+            pass
+
+        show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+            pop.focus_force()
+        except Exception:
+            pass
+
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e = refs.get("entry")
+                    if e:
+                        e.focus_set()
+            except Exception:
+                pass
+        pop.after(50, set_focus)
+        pop.after(250, set_focus)
+
+    # ============================================================
+    # AUTO-INICIO (Windows + Linux)
+    # ============================================================
+    def _get_startup_bat_path(self):
+        startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
+                               'Start Menu', 'Programs', 'Startup')
+        return os.path.join(startup, 'MiniPOS_Portable.bat')
+
+    def _get_linux_autostart_path(self):
+        autostart = os.path.expanduser("~/.config/autostart")
+        return os.path.join(autostart, "MiniPOS.desktop")
+
+    def _is_autostart_enabled(self):
+        try:
+            if platform.system() == "Windows":
+                return os.path.exists(self._get_startup_bat_path())
+            elif platform.system() == "Linux":
+                return os.path.exists(self._get_linux_autostart_path())
+        except Exception:
+            return False
         return False
-    return False
 
-def toggle_autostart(self):
-    sistema = platform.system()
-    if sistema == "Windows":
-        bat = self._get_startup_bat_path()
-        if self.autostart_var.get():
-            try:
-                with open(bat, 'w', encoding='utf-8') as f:
-                    f.write(f'@echo off\nstart "" "{sys.executable}"\n')
-                MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
-                             parent=self)
-            except Exception as e:
-                self.autostart_var.set(False)
-                MD.show_error(f"Error: {e}", "Error", parent=self)
+    def toggle_autostart(self):
+        sistema = platform.system()
+        if sistema == "Windows":
+            bat = self._get_startup_bat_path()
+            if self.autostart_var.get():
+                try:
+                    with open(bat, 'w', encoding='utf-8') as f:
+                        f.write(f'@echo off\nstart "" "{sys.executable}"\n')
+                    MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
+                                 parent=self)
+                except Exception as e:
+                    self.autostart_var.set(False)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+            else:
+                try:
+                    if os.path.exists(bat):
+                        os.remove(bat)
+                    MD.show_info("❌ Auto-inicio DESACTIVADO.",
+                                 "Auto-inicio", parent=self)
+                except Exception as e:
+                    self.autostart_var.set(True)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+        elif sistema == "Linux":
+            desktop = self._get_linux_autostart_path()
+            if self.autostart_var.get():
+                try:
+                    os.makedirs(os.path.dirname(desktop), exist_ok=True)
+                    if getattr(sys, 'frozen', False):
+                        exe = sys.executable
+                    else:
+                        exe = f"python3 {os.path.abspath(sys.argv[0])}"
+                    contenido = (
+                        "[Desktop Entry]\n"
+                        "Type=Application\n"
+                        "Name=MiniPOS Portable\n"
+                        "Comment=Punto de Venta\n"
+                        f"Exec={exe}\n"
+                        "Terminal=false\n"
+                        "X-GNOME-Autostart-enabled=true\n"
+                    )
+                    with open(desktop, 'w', encoding='utf-8') as f:
+                        f.write(contenido)
+                    os.chmod(desktop, 0o755)
+                    MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
+                                 parent=self)
+                except Exception as e:
+                    self.autostart_var.set(False)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+            else:
+                try:
+                    if os.path.exists(desktop):
+                        os.remove(desktop)
+                    MD.show_info("❌ Auto-inicio DESACTIVADO.",
+                                 "Auto-inicio", parent=self)
+                except Exception as e:
+                    self.autostart_var.set(True)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
         else:
-            try:
-                if os.path.exists(bat):
-                    os.remove(bat)
-                MD.show_info("❌ Auto-inicio DESACTIVADO.",
-                             "Auto-inicio", parent=self)
-            except Exception as e:
-                self.autostart_var.set(True)
-                MD.show_error(f"Error: {e}", "Error", parent=self)
-    elif sistema == "Linux":
-        desktop = self._get_linux_autostart_path()
-        if self.autostart_var.get():
-            try:
-                os.makedirs(os.path.dirname(desktop), exist_ok=True)
-                if getattr(sys, 'frozen', False):
-                    exe = sys.executable
-                else:
-                    exe = f"python3 {os.path.abspath(sys.argv[0])}"
-                contenido = (
-                    "[Desktop Entry]\n"
-                    "Type=Application\n"
-                    "Name=MiniPOS Portable\n"
-                    "Comment=Punto de Venta\n"
-                    f"Exec={exe}\n"
-                    "Terminal=false\n"
-                    "X-GNOME-Autostart-enabled=true\n"
-                )
-                with open(desktop, 'w', encoding='utf-8') as f:
-                    f.write(contenido)
-                os.chmod(desktop, 0o755)
-                MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
-                             parent=self)
-            except Exception as e:
-                self.autostart_var.set(False)
-                MD.show_error(f"Error: {e}", "Error", parent=self)
-        else:
-            try:
-                if os.path.exists(desktop):
-                    os.remove(desktop)
-                MD.show_info("❌ Auto-inicio DESACTIVADO.",
-                             "Auto-inicio", parent=self)
-            except Exception as e:
-                self.autostart_var.set(True)
-                MD.show_error(f"Error: {e}", "Error", parent=self)
-    else:
-        MD.show_warning(f"Auto-inicio no soportado en {sistema}.",
-                        "No soportado", parent=self)
+            MD.show_warning(f"Auto-inicio no soportado en {sistema}.",
+                            "No soportado", parent=self)
 
-# ============================================================
-# REPORTES
-# ============================================================
-def generate_daily_report(self):
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    sales = self.sale_use_case.get_sales_by_day(hoy)
-    if not sales:
-        MD.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
-        return
-    arch = filedialog.asksaveasfilename(
-        defaultextension=".txt",
-        initialfile=f"ventas_{hoy}.txt",
-        filetypes=[("Texto", "*.txt")])
-    if not arch:
-        return
-    total_dia = sum(s.total for s in sales)
-    total_prod = sum(i.quantity for s in sales for i in s.items)
-    L = ["=" * 60, "      REPORTE DE VENTAS DEL DÍA",
-         f"      Fecha: {hoy}",
-         f"      Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-         "=" * 60, ""]
-    for s in sales:
-        hora = s.date.split(" ")[1] if " " in s.date else ""
-        cliente = f" - {s.customer_name}" if s.customer_name else ""
-        fiado = " [FIADO]" if s.is_credit else ""
-        L.append(f"Venta #{s.display_number:02d}  -  {hora}  -  "
-                 f"{s.payment_method}{cliente}{fiado}")
-        L.append(f"  {'Cant.':>8}  {'Producto':<30} "
-                 f"{'P.Unit':>10} {'Subtotal':>12}")
-        for it in s.items:
-            L.append(f"  {it.quantity:>8g}  {it.product_name[:30]:<30} "
-                     f"${it.unit_price:>9,.0f} "
-                     f"${it.subtotal:>11,.0f}".replace(",", "."))
-        if getattr(s, "discount", 0) > 0:
-            L.append(f"  Descuento: -${s.discount:,.0f}".replace(",", "."))
-        L.append(f"  {'':>8}  {'':<30} {'':>10} "
-                 f"${s.total:>11,.0f}".replace(",", "."))
-        L.append("")
-    L += ["=" * 60,
-          f"TOTAL DEL DÍA:      ${total_dia:>12,.0f}".replace(",", "."),
-          f"VENTAS REALIZADAS:  {len(sales)}",
-          f"PRODUCTOS VENDIDOS: {total_prod:g}", "=" * 60]
-    try:
-        with open(arch, "w", encoding="utf-8") as f:
-            f.write("\n".join(L))
-        MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
-    except Exception as e:
-        MD.show_error(f"Error: {e}", "Error", parent=self)
+    # ============================================================
+    # REPORTES
+    # ============================================================
+    def generate_daily_report(self):
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        sales = self.sale_use_case.get_sales_by_day(hoy)
+        if not sales:
+            MD.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
+            return
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=f"ventas_{hoy}.txt",
+            filetypes=[("Texto", "*.txt")])
+        if not arch:
+            return
+        total_dia = sum(s.total for s in sales)
+        total_prod = sum(i.quantity for s in sales for i in s.items)
+        L = ["=" * 60, "      REPORTE DE VENTAS DEL DÍA",
+             f"      Fecha: {hoy}",
+             f"      Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+             "=" * 60, ""]
+        for s in sales:
+            hora = s.date.split(" ")[1] if " " in s.date else ""
+            cliente = f" - {s.customer_name}" if s.customer_name else ""
+            fiado = " [FIADO]" if s.is_credit else ""
+            L.append(f"Venta #{s.display_number:02d}  -  {hora}  -  "
+                     f"{s.payment_method}{cliente}{fiado}")
+            L.append(f"  {'Cant.':>8}  {'Producto':<30} "
+                     f"{'P.Unit':>10} {'Subtotal':>12}")
+            for it in s.items:
+                L.append(f"  {it.quantity:>8g}  {it.product_name[:30]:<30} "
+                         f"${it.unit_price:>9,.0f} "
+                         f"${it.subtotal:>11,.0f}".replace(",", "."))
+            if getattr(s, "discount", 0) > 0:
+                L.append(f"  Descuento: -${s.discount:,.0f}".replace(",", "."))
+            L.append(f"  {'':>8}  {'':<30} {'':>10} "
+                     f"${s.total:>11,.0f}".replace(",", "."))
+            L.append("")
+        L += ["=" * 60,
+              f"TOTAL DEL DÍA:      ${total_dia:>12,.0f}".replace(",", "."),
+              f"VENTAS REALIZADAS:  {len(sales)}",
+              f"PRODUCTOS VENDIDOS: {total_prod:g}", "=" * 60]
+        try:
+            with open(arch, "w", encoding="utf-8") as f:
+                f.write("\n".join(L))
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
 
-def generate_monthly_report(self):
-    try:
-        import openpyxl
-        from openpyxl.styles import Font, Alignment, PatternFill
-    except ImportError:
-        MD.show_error("Falta openpyxl.", "Error", parent=self)
-        return
-    ym = datetime.now().strftime("%Y-%m")
-    sales = self.sale_use_case.get_sales_by_month(ym)
-    if not sales:
-        MD.show_info("No hay ventas este mes.", "Reporte vacío",
-                     parent=self)
-        return
-    arch = filedialog.asksaveasfilename(
-        defaultextension=".xlsx",
-        initialfile=f"ventas_{ym}.xlsx",
-        filetypes=[("Excel", "*.xlsx")])
-    if not arch:
-        return
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = f"Ventas {ym}"
-    ws.append(["Venta #", "Fecha", "Cliente", "Método", "Fiado",
-               "Producto", "Código", "Cantidad", "Unidad",
-               "P. Unit.", "Subtotal Item",
-               "Desc. Venta", "Total Venta"])
-    for c in ws[1]:
-        c.font = Font(bold=True, color="FFFFFF")
-        c.fill = PatternFill("solid", fgColor="305496")
-        c.alignment = Alignment(horizontal="center")
-    for s in sales:
-        for i, it in enumerate(s.items):
-            desc_venta = getattr(s, "discount", 0) if i == 0 else ""
-            total_venta = s.total if i == 0 else ""
-            ws.append([
-                f"#{s.display_number:02d}", s.date, s.customer_name,
-                s.payment_method, "Sí" if s.is_credit else "No",
-                it.product_name, it.barcode,
-                it.quantity, "unidad", it.unit_price, it.subtotal,
-                desc_venta, total_venta
-            ])
-    total = sum(s.total for s in sales)
-    ws.append([])
-    ws.append(["", "", "", "", "", "", "", "", "", "", "",
-               "TOTAL:", total])
-    for col, w in zip("ABCDEFGHIJKLM",
-                      [10, 20, 25, 15, 8, 30, 20, 10, 10,
-                       12, 12, 12, 12]):
-        ws.column_dimensions[col].width = w
-    try:
-        wb.save(arch)
-        MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
-    except Exception as e:
-        MD.show_error(f"Error: {e}", "Error", parent=self)
+    def generate_monthly_report(self):
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, Alignment, PatternFill
+        except ImportError:
+            MD.show_error("Falta openpyxl.", "Error", parent=self)
+            return
+        ym = datetime.now().strftime("%Y-%m")
+        sales = self.sale_use_case.get_sales_by_month(ym)
+        if not sales:
+            MD.show_info("No hay ventas este mes.", "Reporte vacío",
+                         parent=self)
+            return
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            initialfile=f"ventas_{ym}.xlsx",
+            filetypes=[("Excel", "*.xlsx")])
+        if not arch:
+            return
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Ventas {ym}"
+        ws.append(["Venta #", "Fecha", "Cliente", "Método", "Fiado",
+                   "Producto", "Código", "Cantidad", "Unidad",
+                   "P. Unit.", "Subtotal Item",
+                   "Desc. Venta", "Total Venta"])
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="305496")
+            c.alignment = Alignment(horizontal="center")
+        for s in sales:
+            for i, it in enumerate(s.items):
+                desc_venta = getattr(s, "discount", 0) if i == 0 else ""
+                total_venta = s.total if i == 0 else ""
+                ws.append([
+                    f"#{s.display_number:02d}", s.date, s.customer_name,
+                    s.payment_method, "Sí" if s.is_credit else "No",
+                    it.product_name, it.barcode,
+                    it.quantity, "unidad", it.unit_price, it.subtotal,
+                    desc_venta, total_venta
+                ])
+        total = sum(s.total for s in sales)
+        ws.append([])
+        ws.append(["", "", "", "", "", "", "", "", "", "", "",
+                   "TOTAL:", total])
+        for col, w in zip("ABCDEFGHIJKLM",
+                          [10, 20, 25, 15, 8, 30, 20, 10, 10,
+                           12, 12, 12, 12]):
+            ws.column_dimensions[col].width = w
+        try:
+            wb.save(arch)
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
 
-# ============================================================
-# EXPORTAR / IMPORTAR BD
-# ============================================================
-def export_db(self):
-    arch = filedialog.asksaveasfilename(
-        defaultextension=".db",
-        filetypes=[("SQLite", "*.db")])
-    if arch:
-        self.db_manager.close_connection()
-        shutil.copy2(self.db_path, arch)
-        MD.show_info("Base de datos exportada.", "Listo", parent=self)
+    # ============================================================
+    # EXPORTAR / IMPORTAR BD
+    # ============================================================
+    def export_db(self):
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".db",
+            filetypes=[("SQLite", "*.db")])
+        if arch:
+            self.db_manager.close_connection()
+            shutil.copy2(self.db_path, arch)
+            MD.show_info("Base de datos exportada.", "Listo", parent=self)
 
-def import_db(self):
-    arch = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
-    if arch and MD.yesno("¿Reemplazar datos?", "Confirmar",
-                         parent=self) == "Yes":
-        self.db_manager.close_connection()
-        shutil.copy2(arch, self.db_path)
-        self.inventory_view.load_products()
-        MD.show_info("Importada.", "Listo", parent=self)
+    def import_db(self):
+        arch = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
+        if arch and MD.yesno("¿Reemplazar datos?", "Confirmar",
+                             parent=self) == "Yes":
+            self.db_manager.close_connection()
+            shutil.copy2(arch, self.db_path)
+            self.inventory_view.load_products()
+            MD.show_info("Importada.", "Listo", parent=self)
