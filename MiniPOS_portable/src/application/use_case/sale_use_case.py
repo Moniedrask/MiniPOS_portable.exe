@@ -8,7 +8,7 @@ class SaleCase:
         self.db = db_manager
 
     # ============================================================
-    # CONTADOR DE VENTAS
+    # CONTADOR VISUAL DE VENTAS
     # ============================================================
     def get_sale_number_offset(self):
         try:
@@ -24,13 +24,14 @@ class SaleCase:
             pass
 
     def reset_sale_number_counter(self):
+        """Reinicia el contador VISUAL a #01 sin borrar datos."""
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT COALESCE(MAX(sale_id), 0) m FROM sales")
         max_id = cur.fetchone()["m"]
         self.set_sale_number_offset(max_id)
 
     # ============================================================
-    # AUTO-RESET DIARIO
+    # AUTO-RESET DIARIO (Fase 2)
     # ============================================================
     def is_auto_reset_enabled(self):
         try:
@@ -71,14 +72,14 @@ class SaleCase:
             return False
 
     # ============================================================
-    # CREAR VENTA (con pago mixto)
+    # CREAR VENTA (con pago mixto, idea 3)
     # ============================================================
     def create_sale(self, items, payment_method="Efectivo", notes="",
                     customer_name="", is_credit=False, discount=0.0,
                     payments=None):
         """
         payments: lista opcional de dicts [{"method": "Efectivo", "amount": 5000}, ...]
-        Si se pasa, se guarda el desglose en sale_payments.
+        Si se pasa con >1 método, se guarda el desglose en sale_payments.
         """
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -93,11 +94,11 @@ class SaleCase:
         offset = self.get_sale_number_offset()
 
         cur.execute(
-            "INSERT INTO sales (date, total, payment_method, notes, customer_name, "
-            "is_credit, is_paid, amount_paid, display_offset, discount, subtotal) "
+            "INSERT INTO sales (date, total, subtotal, discount, payment_method, "
+            "notes, customer_name, is_credit, is_paid, amount_paid, display_offset) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (now, total, payment_method, notes, customer_name,
-             1 if is_credit else 0, is_paid, amount_paid, offset, discount, subtotal))
+            (now, total, subtotal, discount, payment_method, notes, customer_name,
+             1 if is_credit else 0, is_paid, amount_paid, offset))
         sale_id = cur.lastrowid
 
         for it in items:
@@ -111,6 +112,7 @@ class SaleCase:
                 cur.execute("UPDATE products SET stock = stock - ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
 
+        # Desglose de pagos mixtos
         if payments and len(payments) > 1:
             for p in payments:
                 cur.execute(
@@ -122,7 +124,7 @@ class SaleCase:
         return sale_id, total, display_number
 
     def get_sale_payments(self, sale_id):
-        """Devuelve lista de dicts con los métodos de pago de una venta."""
+        """Devuelve lista de pagos de una venta."""
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT method, amount FROM sale_payments WHERE sale_id = ?", (sale_id,))
         return [{"method": r["method"], "amount": r["amount"]} for r in cur.fetchall()]
@@ -136,9 +138,14 @@ class SaleCase:
         sales = []
         for s in rows:
             cur.execute("SELECT * FROM sale_items WHERE sale_id = ?", (s["sale_id"],))
-            items = [SaleItem(r["item_id"], r["sale_id"], r["product_id"], r["product_name"],
-                              r["barcode"], r["quantity"], r["unit_price"], r["subtotal"])
-                     for r in cur.fetchall()]
+            items = []
+            for r in cur.fetchall():
+                keys = r.keys()
+                items.append(SaleItem(
+                    r["item_id"], r["sale_id"], r["product_id"], r["product_name"],
+                    r["barcode"] if "barcode" in keys else "",
+                    r["quantity"], r["unit_price"], r["subtotal"],
+                    r["returned_qty"] if "returned_qty" in keys else 0))
             sale = Sale(s["sale_id"], s["date"], s["total"],
                         s["payment_method"], s["notes"], items)
             keys = s.keys()
@@ -207,7 +214,8 @@ class SaleCase:
                     (sale_id,))
         conn.commit()
 
-    def add_payment(self, sale_id, amount):
+    def add_payment(self, sale_id, amount, method=None, customer_name=""):
+        """Registra un abono a una venta (fiado)."""
         conn = self.db.get_connection()
         cur = conn.cursor()
         cur.execute("SELECT total, amount_paid FROM sales WHERE sale_id = ?", (sale_id,))
@@ -303,6 +311,7 @@ class SaleCase:
                             (it["quantity"], it["product_id"]))
         cur.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
         cur.execute("DELETE FROM sale_payments WHERE sale_id = ?", (sale_id,))
+        cur.execute("DELETE FROM returns WHERE sale_id = ?", (sale_id,))
         cur.execute("DELETE FROM sales WHERE sale_id = ?", (sale_id,))
         conn.commit()
 
@@ -311,9 +320,9 @@ class SaleCase:
     # ============================================================
     def register_return(self, sale_id, items_to_return, reason="", return_type="producto"):
         """
-        items_to_return: lista de dicts [{"item_id": X, "quantity": N}, ...]
+        items_to_return: [{"item_id": X, "quantity": N}, ...]
         Restaura stock, actualiza returned_qty, guarda en returns/return_items.
-        Si todos los items quedan devueltos, marca la venta como is_returned=1.
+        Si todos los items quedan devueltos, marca venta como is_returned=1.
         Devuelve (ok, mensaje, total_devuelto).
         """
         conn = self.db.get_connection()
@@ -322,7 +331,6 @@ class SaleCase:
         cur.execute("SELECT sale_id FROM sales WHERE sale_id = ?", (sale_id,))
         if not cur.fetchone():
             return False, "Venta no encontrada", 0.0
-
         if not items_to_return:
             return False, "No hay productos para devolver", 0.0
 
@@ -340,13 +348,13 @@ class SaleCase:
             row = cur.fetchone()
             if not row:
                 continue
-            ya_devuelto = row["returned_qty"] or 0
-            pendiente = row["quantity"] - ya_devuelto
+            keys = row.keys()
+            ya_devuelto = row["returned_qty"] if "returned_qty" in keys else 0
+            pendiente = row["quantity"] - (ya_devuelto or 0)
             if qty > pendiente:
                 qty = pendiente
             if qty <= 0:
                 continue
-
             sub = qty * row["unit_price"]
             total_devuelto += sub
             items_validos.append({
@@ -373,17 +381,14 @@ class SaleCase:
                 "quantity, unit_price, subtotal) VALUES (?,?,?,?,?,?)",
                 (return_id, it["product_id"], it["product_name"],
                  it["quantity"], it["unit_price"], it["subtotal"]))
-
             cur.execute(
                 "UPDATE sale_items SET returned_qty = COALESCE(returned_qty, 0) + ? "
                 "WHERE item_id = ?",
                 (it["quantity"], it["item_id"]))
-
             if it["product_id"]:
                 cur.execute("UPDATE products SET stock = stock + ? WHERE product_id = ?",
                             (it["quantity"], it["product_id"]))
 
-        # ¿Todo devuelto?
         cur.execute(
             "SELECT COUNT(*) c FROM sale_items "
             "WHERE sale_id = ? AND COALESCE(returned_qty, 0) < quantity",
@@ -396,7 +401,6 @@ class SaleCase:
         return True, f"Devolución registrada (${total_devuelto:,.0f})", total_devuelto
 
     def get_returns_by_sale(self, sale_id):
-        """Devuelve las devoluciones asociadas a una venta."""
         cur = self.db.get_connection().cursor()
         cur.execute("SELECT * FROM returns WHERE sale_id = ? ORDER BY date DESC", (sale_id,))
         rows = cur.fetchall()
@@ -428,10 +432,7 @@ class SaleCase:
         return [dict(r) for r in cur.fetchall()]
 
     def get_product_return_count(self, product_id, product_name=None):
-        """
-        Cuenta cuántas veces se ha devuelto un producto.
-        Aviso 'este producto se ha devuelto X veces'.
-        """
+        """Cuenta cuántas veces se ha devuelto un producto."""
         cur = self.db.get_connection().cursor()
         if product_id:
             cur.execute(
@@ -444,7 +445,6 @@ class SaleCase:
         return row["c"] if row else 0
 
     def get_returned_total_by_day(self, date_str):
-        """Suma del dinero devuelto en un día (para restar en el cierre)."""
         cur = self.db.get_connection().cursor()
         cur.execute(
             "SELECT COALESCE(SUM(total_returned), 0) t FROM returns WHERE date LIKE ?",
@@ -477,7 +477,7 @@ class SaleCase:
         }
 
     # ============================================================
-    # CIERRE DE CAJA
+    # CIERRE DE CAJA (Fase 6)
     # ============================================================
     def get_cash_closing(self, date_str):
         try:
@@ -523,9 +523,24 @@ class SaleCase:
             else:
                 total_abonos += (s.amount_paid or 0.0)
 
-        efectivo_esperado = metodos.get("Efectivo", {}).get("total", 0.0)
+        # Sesión de caja y movimientos
+        session = self.get_cash_session_by_date(date_str)
+        initial_cash = session["initial_amount"] if session else 0.0
+        counted_cash = session["final_counted"] if session else 0.0
+        mov = self.get_cash_movements_by_date(date_str)
+        ingresos = sum(m["amount"] for m in mov if m["type"] == "ingreso")
+        retiros = sum(m["amount"] for m in mov if m["type"] == "retiro")
+        gastos = sum(m["amount"] for m in mov if m["type"] == "gasto")
+
+        efectivo_ventas = metodos.get("Efectivo", {}).get("total", 0.0)
+        abonos_efectivo = 0.0  # Se puede refinar con pagos de abonos
         total_devuelto = self.get_returned_total_by_day(date_str)
-        efectivo_esperado -= total_devuelto
+
+        # Efectivo esperado
+        efectivo_esperado = (initial_cash + efectivo_ventas + abonos_efectivo
+                             + ingresos - retiros - gastos - total_devuelto)
+
+        difference = (counted_cash - efectivo_esperado) if counted_cash else 0.0
 
         return {
             "date": date_str,
@@ -539,19 +554,26 @@ class SaleCase:
             "total_abonos": total_abonos,
             "total_devuelto": total_devuelto,
             "efectivo_esperado": efectivo_esperado,
+            "initial_cash": initial_cash,
+            "counted_cash": counted_cash,
+            "difference": difference,
+            "ingresos": ingresos,
+            "retiros": retiros,
+            "gastos": gastos,
         }
 
     # ============================================================
-    # IDEA 2: BASE DE CAJA
+    # SESIONES DE CAJA (idea 2)
     # ============================================================
     def get_current_cash_session(self):
         cur = self.db.get_connection().cursor()
-        cur.execute("SELECT * FROM cash_sessions WHERE is_open = 1 ORDER BY id DESC LIMIT 1")
+        cur.execute("SELECT * FROM cash_sessions WHERE is_open = 1 "
+                    "ORDER BY session_id DESC LIMIT 1")
         row = cur.fetchone()
         if not row:
             return None
         return {
-            "id": row["id"],
+            "session_id": row["session_id"],
             "open_date": row["open_date"],
             "close_date": row["close_date"],
             "initial_amount": row["initial_amount"],
@@ -561,6 +583,38 @@ class SaleCase:
             "notes": row["notes"],
             "is_open": row["is_open"],
         }
+
+    def get_cash_session_by_date(self, date_str):
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT * FROM cash_sessions WHERE date(open_date) = ? "
+            "ORDER BY session_id DESC LIMIT 1", (date_str,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+    def get_or_create_today_cash_session(self):
+        """Devuelve la sesión abierta de hoy o la crea con base 0."""
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        # Buscar sesión de hoy (abierta o cerrada)
+        session = self.get_cash_session_by_date(hoy)
+        if session:
+            return session
+        # Buscar sesión abierta de un día anterior (y cerrarla)
+        current = self.get_current_cash_session()
+        if current:
+            return current
+        # Crear nueva
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute(
+            "INSERT INTO cash_sessions (open_date, initial_amount, notes, is_open) "
+            "VALUES (?,?,?,1)",
+            (now, 0.0, ""))
+        conn.commit()
+        return self.get_cash_session_by_date(hoy)
 
     def open_cash_session(self, initial_amount, notes=""):
         current = self.get_current_cash_session()
@@ -576,30 +630,53 @@ class SaleCase:
         conn.commit()
         return self.get_current_cash_session()
 
+    def update_counted_cash(self, session_id, counted_amount, notes=""):
+        """Registra el efectivo contado en una sesión."""
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT initial_amount, open_date FROM cash_sessions WHERE session_id = ?",
+            (session_id,))
+        row = cur.fetchone()
+        if not row:
+            return False, "Sesión no encontrada"
+        # Calcular esperado
+        date_str = row["open_date"][:10]
+        closing = self.get_cash_closing(date_str)
+        expected = closing["efectivo_esperado"]
+        difference = float(counted_amount or 0) - expected
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cur.execute(
+            "UPDATE cash_sessions SET close_date=?, final_expected=?, "
+            "final_counted=?, difference=?, notes=? WHERE session_id=?",
+            (now, expected, float(counted_amount or 0), difference,
+             notes or "", session_id))
+        conn.commit()
+        return True, "Efectivo contado registrado"
+
     def close_cash_session(self, counted_amount, notes=""):
-        current = self.get_current_cash_session()
-        if not current:
+        session = self.get_current_cash_session()
+        if not session:
             return None
         hoy = datetime.now().strftime("%Y-%m-%d")
         closing = self.get_cash_closing(hoy)
-        efectivo_ventas = closing.get("efectivo_esperado", 0.0)
-        esperado = current["initial_amount"] + efectivo_ventas
+        esperado = closing["efectivo_esperado"]
         diferencia = float(counted_amount or 0) - esperado
 
         conn = self.db.get_connection()
         cur = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cur.execute(
-            "UPDATE cash_sessions SET close_date=?, final_expected=?, final_counted=?, "
-            "difference=?, notes=?, is_open=0 WHERE id=?",
+            "UPDATE cash_sessions SET close_date=?, final_expected=?, "
+            "final_counted=?, difference=?, notes=?, is_open=0 WHERE session_id=?",
             (now, esperado, float(counted_amount or 0), diferencia,
-             notes or current["notes"], current["id"]))
+             notes or session["notes"], session["session_id"]))
         conn.commit()
         return {
-            "id": current["id"],
-            "open_date": current["open_date"],
+            "session_id": session["session_id"],
+            "open_date": session["open_date"],
             "close_date": now,
-            "initial_amount": current["initial_amount"],
+            "initial_amount": session["initial_amount"],
             "final_expected": esperado,
             "final_counted": float(counted_amount or 0),
             "difference": diferencia,
@@ -616,14 +693,76 @@ class SaleCase:
             "ORDER BY open_date DESC", (start_date, end_date))
         return [dict(r) for r in cur.fetchall()]
 
+    def get_cash_session_summary(self, session_id=None):
+        """Resumen de la sesión de caja (para cuadre)."""
+        if session_id:
+            cur = self.db.get_connection().cursor()
+            cur.execute("SELECT * FROM cash_sessions WHERE session_id = ?", (session_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            date_str = row["open_date"][:10]
+        else:
+            session = self.get_current_cash_session()
+            if not session:
+                return None
+            session_id = session["session_id"]
+            date_str = session["open_date"][:10]
+
+        closing = self.get_cash_closing(date_str)
+        return {
+            "session_id": session_id,
+            "date": date_str,
+            "expected_cash": closing["efectivo_esperado"],
+            "initial_cash": closing["initial_cash"],
+            "counted_cash": closing["counted_cash"],
+            "difference": closing["difference"],
+            "movements": self.get_cash_movements(session_id),
+        }
+
+    # ============================================================
+    # MOVIMIENTOS DE CAJA (Fase 6)
+    # ============================================================
+    def register_cash_movement(self, type_, amount, notes=""):
+        """Registra un movimiento: 'ingreso', 'retiro' o 'gasto'."""
+        if type_ not in ("ingreso", "retiro", "gasto"):
+            return False, "Tipo inválido"
+        amount = float(amount or 0)
+        if amount <= 0:
+            return False, "Monto inválido"
+        conn = self.db.get_connection()
+        cur = conn.cursor()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        session = self.get_current_cash_session()
+        session_id = session["session_id"] if session else None
+        cur.execute(
+            "INSERT INTO cash_movements (session_id, date, type, amount, notes) "
+            "VALUES (?,?,?,?,?)",
+            (session_id, now, type_, amount, notes))
+        conn.commit()
+        return True, "Movimiento registrado"
+
+    def get_cash_movements(self, session_id=None):
+        cur = self.db.get_connection().cursor()
+        if session_id:
+            cur.execute("SELECT * FROM cash_movements WHERE session_id = ? ORDER BY date",
+                        (session_id,))
+        else:
+            cur.execute("SELECT * FROM cash_movements ORDER BY date DESC LIMIT 100")
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_cash_movements_by_date(self, date_str):
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT * FROM cash_movements WHERE date LIKE ? ORDER BY date",
+            (f"{date_str}%",))
+        return [dict(r) for r in cur.fetchall()]
+
     # ============================================================
     # IDEA 11: DATOS PARA GRÁFICOS
     # ============================================================
     def get_top_products(self, limit=10, start_date=None, end_date=None):
-        """
-        Top N productos más vendidos por cantidad.
-        Cada item: {product_id, product_name, quantity, total, profit}
-        """
+        """Top N productos por cantidad vendida."""
         cur = self.db.get_connection().cursor()
         sql = '''
             SELECT si.product_id,
@@ -648,7 +787,6 @@ class SaleCase:
 
         result = []
         for r in rows:
-            # Ganancia real = (precio venta - costo) * cantidad
             profit = 0.0
             if r["product_id"]:
                 cur.execute("SELECT cost FROM products WHERE product_id = ?",
@@ -666,9 +804,6 @@ class SaleCase:
         return result
 
     def get_sales_last_days(self, days=7):
-        """
-        Devuelve lista de {date, count, total, profit} para los últimos `days` días.
-        """
         hoy = datetime.now().date()
         resultado = []
         for i in range(days - 1, -1, -1):
@@ -687,10 +822,6 @@ class SaleCase:
         return resultado
 
     def get_sales_by_hour(self, start_date=None, end_date=None):
-        """
-        Ventas agrupadas por hora del día (0-23).
-        Devuelve lista de 24 dicts {hour, count, total}.
-        """
         cur = self.db.get_connection().cursor()
         sql = '''
             SELECT strftime('%H', date) AS hour,
@@ -715,12 +846,8 @@ class SaleCase:
         } for h in range(24)]
 
     def get_profit_summary(self, start_date=None, end_date=None):
-        """
-        Ganancias reales: venta - costo, en un rango.
-        Devuelve {total_sales, total_cost, total_profit, total_returns, net_profit}
-        """
+        """Ganancias reales: venta - costo, en un rango."""
         cur = self.db.get_connection().cursor()
-
         sql = '''
             SELECT si.product_id, si.quantity, si.subtotal
             FROM sale_items si
@@ -765,10 +892,6 @@ class SaleCase:
         }
 
     def get_daily_profit_last_days(self, days=7):
-        """
-        Ganancias reales por día para los últimos `days` días.
-        Cada item: {date, sales, cost, profit}
-        """
         hoy = datetime.now().date()
         resultado = []
         for i in range(days - 1, -1, -1):
@@ -782,6 +905,23 @@ class SaleCase:
                 "profit": res["total_profit"],
             })
         return resultado
+
+    # ============================================================
+    # TICKET PDF (método interno de SaleCase)
+    # ============================================================
+    def generate_ticket_pdf(self, sale_id, base_dir=None):
+        """Genera un PDF del ticket de una venta. Devuelve la ruta."""
+        try:
+            sale = self.get_sale_by_id(sale_id)
+            if not sale:
+                return None
+            payments = self.get_sale_payments(sale_id)
+            from presentation.views.widgets import generate_ticket_pdf as _gen
+            return _gen(sale, sale.items, payments=payments,
+                        output_path=None)
+        except Exception as e:
+            print(f"Error generate_ticket_pdf: {e}")
+            return None
 
     # ============================================================
     # BORRADOR DE CARRITO
