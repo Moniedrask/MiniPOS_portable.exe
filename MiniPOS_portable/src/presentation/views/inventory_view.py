@@ -1,257 +1,435 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
 import os
 import sys
-from datetime import datetime, timedelta
+import tkinter as tk
+import ttkbootstrap as ttk
+from ttkbootstrap import Toplevel
+from datetime import datetime
+from tkinter import simpledialog
 
-# Asegurar imports desde src
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
-
-from application.use_case.product_use_case import ProductCase
-from application.use_case.sale_use_case import SaleCase
+from presentation.views.widgets import (
+    MD, show_popup_smooth, get_menu_font,
+    AutoCompleteEntry, TreeviewTooltip, popup_is_open,
+    make_scrolled_treeview,
+)
 
 
-class InventoryView(tk.Toplevel):
-    def __init__(self, master, product_case: ProductCase, sale_case: SaleCase = None):
-        super().__init__(master)
-        self.product_case = product_case
-        self.sale_case = sale_case
+class InventoryView(ttk.Frame):
+    def __init__(self, parent, product_use_case, db_manager,
+                 get_theme_func, on_business_click=None):
+        super().__init__(parent, bootstyle="dark")
+        self.product_use_case = product_use_case
+        self.db_manager = db_manager
+        self.get_theme = get_theme_func
+        self.on_business_click = on_business_click
 
-        self.title("Inventario")
-        self.geometry("1200x700")
-        self.minsize(1000, 600)
-
-        # Estilos
-        self._configure_styles()
-
-        # Datos
-        self.all_products = []
+        self.sort_col = None
+        self.sort_reverse = False
         self.filtered_products = []
-        self._sort_column = None
-        self._sort_reverse = False
-        self._label_selection = set()  # para selección múltiple de etiquetas
+        self.tooltip = None
+        self._draft_checked = False
+        self._label_selection = set()
 
-        # ===== Barra superior =====
-        top = tk.Frame(self, bg="#f0f0f0", height=50)
-        top.pack(side="top", fill="x")
+        self.create_widgets()
+        self.load_products()
+        self.after(300, lambda: self.scan_entry.focus_set())
+        self.after(800, self._check_product_draft)
+        self._keep_scanner_focused()
 
-        tk.Label(top, text="🔍", bg="#f0f0f0", font=("Segoe UI", 12)).pack(side="left", padx=(10, 2), pady=10)
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *a: self.apply_filter())
-        tk.Entry(top, textvariable=self.search_var, font=("Segoe UI", 11), width=30)\
-            .pack(side="left", padx=5, pady=10)
-
-        # Filtros
-        tk.Label(top, text="Grupo:", bg="#f0f0f0").pack(side="left", padx=(10, 2))
-        self.filter_group = ttk.Combobox(top, state="readonly", width=15)
-        self.filter_group.pack(side="left")
-        self.filter_group.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
-
-        tk.Label(top, text="Estado:", bg="#f0f0f0").pack(side="left", padx=(10, 2))
-        self.filter_status = ttk.Combobox(
-            top, state="readonly", width=15,
-            values=["Todos", "Activos", "Pausados", "Por vencer", "Vencidos", "En oferta"])
-        self.filter_status.set("Todos")
-        self.filter_status.pack(side="left")
-        self.filter_status.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
-
-        # Contadores
-        self.lbl_count = tk.Label(top, text="0 productos", bg="#f0f0f0",
-                                  font=("Segoe UI", 10, "bold"), fg="#333")
-        self.lbl_count.pack(side="right", padx=10)
-
-        # ===== Barra de botones =====
-        btns = tk.Frame(self, bg="#e8e8e8")
-        btns.pack(side="top", fill="x")
-
-        def mk_btn(text, cmd, bg="#4CAF50"):
-            b = tk.Button(btns, text=text, command=cmd, bg=bg, fg="white",
-                          font=("Segoe UI", 9, "bold"), padx=12, pady=6,
-                          relief="flat", cursor="hand2")
-            b.pack(side="left", padx=4, pady=6)
-            return b
-
-        mk_btn("➕ Agregar", self.open_add_dialog, "#4CAF50")
-        mk_btn("✏️ Editar", self.open_edit_dialog, "#2196F3")
-        mk_btn("🗑️ Eliminar", self.delete_selected, "#f44336")
-        mk_btn("⏸️ Pausar / Reactivar", self.toggle_paused, "#FF9800")
-        mk_btn("📦 Agrupar", self.group_selected, "#9C27B0")
-        mk_btn("🖨️ Etiquetas PDF", self.print_labels, "#607D8B")
-        mk_btn("📊 Gráficos", self.open_charts, "#00BCD4")
-        mk_btn("🔔 Vencimientos", self.open_expiry_alerts, "#E91E63")
-        mk_btn("💰 Hist. precios", self.open_price_history_global, "#795548")
-        mk_btn("🔄 Refrescar", self.refresh, "#555555")
-
-        # ===== Tabla =====
-        table_frame = tk.Frame(self)
-        table_frame.pack(fill="both", expand=True, padx=8, pady=8)
-
-        columns = ("id", "name", "barcode", "group", "price", "rounded", "cost",
-                   "margin", "stock", "unit", "expiry", "status")
-        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings",
-                                 selectmode="extended")
-
-        headers = {
-            "id": ("ID", 50),
-            "name": ("Nombre", 220),
-            "barcode": ("Código", 120),
-            "group": ("Grupo", 100),
-            "price": ("Precio", 90),
-            "rounded": ("P. Redondeado", 110),
-            "cost": ("Costo", 90),
-            "margin": ("% Gan.", 70),
-            "stock": ("Stock", 70),
-            "unit": ("Unidad", 80),
-            "expiry": ("Vence", 100),
-            "status": ("Estado", 100),
-        }
-        for col, (text, width) in headers.items():
-            self.tree.heading(col, text=text,
-                              command=lambda c=col: self.sort_by(c))
-            anchor = "w" if col in ("name", "barcode", "group") else "center"
-            self.tree.column(col, width=width, anchor=anchor)
-
-        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        table_frame.rowconfigure(0, weight=1)
-        table_frame.columnconfigure(0, weight=1)
-
-        # Colores por estado
-        self.tree.tag_configure("expired", background="#ffcdd2")
-        self.tree.tag_configure("offer", background="#ffe0b2")
-        self.tree.tag_configure("warn2", background="#fff9c4")
-        self.tree.tag_configure("warn1", background="#e1f5fe")
-        self.tree.tag_configure("paused", foreground="#888888", background="#eeeeee")
-
-        # Doble clic → editar
-        self.tree.bind("<Double-1>", lambda e: self.open_edit_dialog())
-
-        # ===== Barra inferior de acciones seleccionadas =====
-        bottom = tk.Frame(self, bg="#f0f0f0")
-        bottom.pack(side="bottom", fill="x")
-
-        self.lbl_sel = tk.Label(bottom, text="0 seleccionados", bg="#f0f0f0",
-                                font=("Segoe UI", 9))
-        self.lbl_sel.pack(side="left", padx=10, pady=5)
-
-        tk.Button(bottom, text="📋 Ver detalle", command=self.open_detail_dialog,
-                  bg="#3F51B5", fg="white", relief="flat", padx=10, pady=4,
-                  cursor="hand2").pack(side="right", padx=5, pady=4)
-        tk.Button(bottom, text="🏷️ Seleccionar para etiquetas",
-                  command=self.toggle_label_selection,
-                  bg="#607D8B", fg="white", relief="flat", padx=10, pady=4,
-                  cursor="hand2").pack(side="right", padx=5, pady=4)
-
-        self.tree.bind("<<TreeviewSelect>>", lambda e: self.update_sel_count())
-
-        # Cargar
-        self.refresh()
-
-    # ============================================================
-    # ESTILOS
-    # ============================================================
-    def _configure_styles(self):
-        style = ttk.Style(self)
+    def _keep_scanner_focused(self):
         try:
-            style.theme_use("clam")
+            if not popup_is_open():
+                fw = self.focus_get()
+                if fw is not None and not isinstance(
+                        fw, (ttk.Entry, tk.Entry, ttk.Combobox)):
+                    try:
+                        if fw.winfo_toplevel() is self.winfo_toplevel():
+                            self.scan_entry.focus_set()
+                    except Exception:
+                        pass
         except Exception:
             pass
-        style.configure("Treeview", rowheight=26, font=("Segoe UI", 9))
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+        self.after(700, self._keep_scanner_focused)
 
     # ============================================================
-    # CARGA Y FILTROS
+    # BORRADOR DE PRODUCTO
     # ============================================================
-    def refresh(self):
-        self.all_products = self.product_case.list_products()
+    def _check_product_draft(self):
+        if self._draft_checked:
+            return
+        try:
+            if not self.winfo_ismapped():
+                self.after(500, self._check_product_draft)
+                return
+        except Exception:
+            pass
+        self._draft_checked = True
+        try:
+            data, updated = self.product_use_case.load_product_draft()
+        except Exception:
+            return
+        if not data:
+            return
+        name = (data.get("name") or "").strip()
+        barcode = (data.get("barcode") or "").strip()
+        if not name and not barcode:
+            self.product_use_case.clear_product_draft()
+            return
+        try:
+            mode = data.get("mode", "create")
+            titulo = "editar" if mode == "edit" else "agregar"
+            fecha = updated or "(sin fecha)"
+            r = MD.yesno(
+                f"📝 Se encontró un producto a medio {titulo}:\n\n"
+                f"Nombre: {name or '(vacío)'}\n"
+                f"Código: {barcode or '(vacío)'}\n"
+                f"Guardado: {fecha}\n\n"
+                f"¿Deseas recuperarlo?",
+                "Recuperar borrador", parent=self)
+            if r == "Yes":
+                self._open_draft(data)
+            else:
+                self.product_use_case.clear_product_draft()
+        except Exception:
+            pass
+
+    def _open_draft(self, data):
+        mode = data.get("mode", "create")
+        pid = data.get("product_id")
+        self.open_product_form(
+            "Editar Producto" if mode == "edit" else "Agregar Producto",
+            pid,
+            data.get("name", ""),
+            data.get("barcode", ""),
+            float(data.get("price", 0) or 0),
+            float(data.get("stock", 0) or 0),
+            data.get("type", "unidad"),
+            data.get("unit", "unidad"),
+            auto_select=False,
+            from_draft=True)
+
+    # ============================================================
+    # UI
+    # ============================================================
+    def create_widgets(self):
+        # ---- Escanear ----
+        scan_frame = ttk.Frame(self, bootstyle="dark")
+        scan_frame.pack(padx=10, pady=(10, 5), fill="x")
+        ttk.Label(scan_frame, text="📷 Escanear código:",
+                  font=("Arial", 11, "bold"),
+                  bootstyle="inverse-dark").pack(side="left", padx=5)
+        self.scan_var = tk.StringVar()
+        self.scan_entry = ttk.Entry(scan_frame, textvariable=self.scan_var,
+                                    width=30, font=("Arial", 11))
+        self.scan_entry.pack(side="left", padx=5)
+        self.scan_entry.bind("<Return>", self.lookup_barcode)
+        ttk.Button(scan_frame, text="🔍 Buscar Código",
+                   command=lambda: self.lookup_barcode(None),
+                   style="DarkGreen.TButton").pack(side="left", padx=5)
+
+        # ---- Búsqueda ----
+        search_frame = ttk.Frame(self, bootstyle="dark")
+        search_frame.pack(padx=10, pady=5, fill="x")
+        ttk.Label(search_frame, text="🔍 Búsqueda (autocompleta):",
+                  bootstyle="inverse-dark").pack(side="left", padx=5)
+
+        self.search_var = tk.StringVar()
+        self.search_entry = AutoCompleteEntry(
+            search_frame,
+            values_getter=self._get_product_labels,
+            on_select=self._on_search_select,
+            width=35,
+            font=("Arial", 11))
+        self.search_entry.configure(textvariable=self.search_var)
+        self.search_entry.pack(side="left", padx=5)
+        self.search_entry.bind('<KeyRelease>', self._on_search_key, add='+')
+
+        ttk.Button(search_frame, text="Limpiar", command=self._clear_search,
+                   bootstyle="secondary").pack(side="left", padx=5)
+
+        # ---- Filtros ----
+        filt_frame = ttk.Frame(self, bootstyle="dark")
+        filt_frame.pack(padx=10, pady=3, fill="x")
+
+        ttk.Label(filt_frame, text="Grupo:",
+                  bootstyle="inverse-dark").pack(side="left", padx=(0, 3))
+        self.filter_group = ttk.Combobox(filt_frame, state="readonly", width=12)
+        self.filter_group.pack(side="left", padx=3)
+        self.filter_group.bind("<<ComboboxSelected>>",
+                                lambda e: self.filter_products())
+
+        ttk.Label(filt_frame, text="Estado:",
+                  bootstyle="inverse-dark").pack(side="left", padx=(10, 3))
+        self.filter_status = ttk.Combobox(
+            filt_frame, state="readonly", width=14,
+            values=["Todos", "Activos", "Pausados", "Por vencer",
+                    "Vencidos", "En oferta"])
+        self.filter_status.set("Todos")
+        self.filter_status.pack(side="left", padx=3)
+        self.filter_status.bind("<<ComboboxSelected>>",
+                                 lambda e: self.filter_products())
+
+        self.lbl_count = tk.Label(filt_frame, text="0 productos",
+                                   font=("Arial", 9, "bold"),
+                                   bootstyle="inverse-dark")
+        self.lbl_count.pack(side="right", padx=6)
+
+        # ---- Tabla ----
+        frame = ttk.Frame(self, bootstyle="dark")
+        frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        self.columns = [
+            ("ID", "ID", 50, "center"),
+            ("Name", "Producto", 220, "w"),
+            ("Barcode", "Código", 130, "w"),
+            ("Group", "Grupo", 90, "center"),
+            ("Price", "Precio", 85, "e"),
+            ("Rounded", "Redondeado", 95, "e"),
+            ("Stock", "Stock", 70, "center"),
+            ("Unit", "Unidad", 70, "center"),
+            ("Expiry", "Vence", 90, "center"),
+            ("Status", "Estado", 100, "center"),
+        ]
+
+        self.tree_frame, self.tree = make_scrolled_treeview(
+            frame,
+            columns=[c[0] for c in self.columns],
+            headings=[(c[0], c[1] + "  ⇅", c[2], c[3]) for c in self.columns],
+            bootstyle="dark")
+        self.tree_frame.pack(fill="both", expand=True)
+
+        for key, label, w, anchor in self.columns:
+            self.tree.heading(key, text=label + "  ⇅",
+                              command=lambda k=key: self.sort_by(k))
+
+        # Colores por estado
+        self.tree.tag_configure("expired", background="#5c1a1a")
+        self.tree.tag_configure("offer", background="#5c3a10")
+        self.tree.tag_configure("warn2", background="#5c5c10")
+        self.tree.tag_configure("warn1", background="#10405c")
+        self.tree.tag_configure("paused", foreground="#888888")
+        self.tree.tag_configure("low_stock", foreground="#ff8888")
+
+        self.tree.bind("<Double-1>", self.view_product_popup)
+        self.tree.bind("<Button-3>", self.show_context_menu)
+        self.tree.bind("<<TreeviewSelect>>",
+                       lambda e: self._update_sel_count())
+
+        self.tooltip = TreeviewTooltip(self.tree, font_size=11)
+
+        # ---- Botonera ----
+        btn_frame = ttk.Frame(self, bootstyle="dark")
+        btn_frame.pack(fill="x", padx=10, pady=6)
+
+        def mk_btn(text, cmd, bootstyle="secondary"):
+            return ttk.Button(btn_frame, text=text, command=cmd,
+                              bootstyle=bootstyle)
+
+        mk_btn("➕ Agregar (F2)", self.add_product_popup,
+               "success").pack(side="left", padx=3)
+        mk_btn("✏️ Editar", self._edit_selected).pack(side="left", padx=3)
+        mk_btn("🗑️ Eliminar", self._delete_selected,
+               "danger").pack(side="left", padx=3)
+        mk_btn("⏸️ Pausar/Reanudar", self._toggle_paused,
+               "warning").pack(side="left", padx=3)
+        mk_btn("📦 Agrupar", self._group_selected).pack(side="left", padx=3)
+        mk_btn("🖨️ Etiquetas PDF", self.print_labels,
+               "info").pack(side="left", padx=3)
+        mk_btn("📊 Gráficos", self.open_charts,
+               "info").pack(side="left", padx=3)
+        mk_btn("🔔 Vencimientos", self.open_expiry_alerts,
+               "danger").pack(side="left", padx=3)
+        mk_btn("💰 Hist. precios", self.open_price_history_global,
+               "secondary").pack(side="left", padx=3)
+        mk_btn("↩️ Devoluciones", self.open_returns_window,
+               "warning").pack(side="left", padx=3)
+
+        self.lbl_sel = tk.Label(btn_frame, text="0 seleccionados",
+                                 font=("Arial", 9),
+                                 bootstyle="inverse-dark")
+        self.lbl_sel.pack(side="right", padx=6)
+
+    def _update_sel_count(self):
+        try:
+            n = len(self.tree.selection())
+            self.lbl_sel.configure(text=f"{n} seleccionados")
+        except Exception:
+            pass
+
+    # ============================================================
+    # CARGA / FILTROS
+    # ============================================================
+    def load_products(self):
+        try:
+            self.filtered_products = self.product_use_case.list_products()
+        except Exception:
+            self.filtered_products = []
         self.populate_groups()
-        self.apply_filter()
+        self._render_products(self.filtered_products)
 
     def populate_groups(self):
-        grupos = sorted({p.group_name for p in self.all_products if p.group_name})
-        self.filter_group["values"] = ["Todos"] + grupos
-        if self.filter_group.get() not in self.filter_group["values"]:
-            self.filter_group.set("Todos")
+        try:
+            grupos = sorted({p.group_name for p in self.filtered_products
+                             if getattr(p, "group_name", "")})
+            self.filter_group["values"] = ["Todos"] + grupos
+            if self.filter_group.get() not in self.filter_group["values"]:
+                self.filter_group.set("Todos")
+        except Exception:
+            pass
 
-    def apply_filter(self):
-        q = self.search_var.get().strip().lower()
+    def filter_products(self, event=None):
+        q = self.search_var.get().lower().strip()
+        if "|" in q:
+            q = q.split("|")[0].strip()
         grupo = self.filter_group.get() or "Todos"
         estado = self.filter_status.get() or "Todos"
 
-        expiring = {}
-        if estado in ("Por vencer", "Vencidos", "En oferta"):
-            for item in self.product_case.get_expiring_products():
-                expiring[item["product"].product_id] = item
+        try:
+            prods = self.product_use_case.list_products()
+        except Exception:
+            prods = []
 
-        hoy = datetime.now().date()
+        # Info de vencimiento
+        expiring = {}
+        try:
+            for item in self.product_use_case.get_expiring_products():
+                expiring[item["product"].product_id] = item
+        except Exception:
+            pass
+
+        low_stock = 5
+        try:
+            low_stock = int(self.db_manager.get_setting(
+                "low_stock_threshold", "5") or 5)
+        except Exception:
+            pass
+
         filtrados = []
-        for p in self.all_products:
-            # Búsqueda
+        for p in prods:
             if q:
-                texto = f"{p.name} {p.barcode} {p.group_name}".lower()
-                if q not in texto:
+                if q not in (p.name or "").lower() and \
+                        q not in str(p.barcode or "").lower():
                     continue
-            # Grupo
-            if grupo != "Todos" and p.group_name != grupo:
+            if grupo != "Todos" and (p.group_name or "") != grupo:
                 continue
-            # Estado
-            if estado == "Activos" and p.paused:
+            paused = getattr(p, "paused", 0)
+            if estado == "Activos" and paused:
                 continue
-            if estado == "Pausados" and not p.paused:
+            if estado == "Pausados" and not paused:
                 continue
             if estado in ("Por vencer", "Vencidos", "En oferta"):
                 info = expiring.get(p.product_id)
                 if not info:
                     continue
-                if estado == "Por vencer" and info["status"] not in ("warn1", "warn2"):
+                st = info["status"]
+                if estado == "Por vencer" and st not in ("warn1", "warn2"):
                     continue
-                if estado == "Vencidos" and info["status"] != "expired":
+                if estado == "Vencidos" and st != "expired":
                     continue
-                if estado == "En oferta" and info["status"] != "offer":
+                if estado == "En oferta" and st != "offer":
                     continue
-
             filtrados.append(p)
-
         self.filtered_products = filtrados
-        self.render_table()
-        self.lbl_count.config(text=f"{len(filtrados)} de {len(self.all_products)} productos")
+        self._render_products(filtrados)
+        try:
+            self.lbl_count.configure(
+                text=f"{len(filtrados)} de {len(prods)} productos")
+        except Exception:
+            pass
 
-    def render_table(self):
-        self.tree.delete(*self.tree.get_children())
+    def _on_search_key(self, event=None):
+        self.filter_products()
 
-        # Cache de estado de vencimiento
-        expiring = {item["product"].product_id: item
-                    for item in self.product_case.get_expiring_products()}
-        hoy = datetime.now().date()
+    def _on_search_select(self, value):
+        self.filter_products()
 
-        for p in self.filtered_products:
+    def _clear_search(self):
+        self.search_var.set("")
+        self.load_products()
+        self.scan_entry.focus_set()
+
+    def sort_by(self, col):
+        if self.sort_col == col:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_col = col
+            self.sort_reverse = False
+        self._update_headings()
+        self._render_products(self.filtered_products)
+
+    def _update_headings(self):
+        for key, label, w, anchor in self.columns:
+            if self.sort_col == key:
+                arrow = " ▼" if self.sort_reverse else " ▲"
+                self.tree.heading(key, text=label + arrow)
+            else:
+                self.tree.heading(key, text=label + "  ⇅")
+
+    def _render_products(self, products):
+        for it in self.tree.get_children():
+            self.tree.delete(it)
+
+        # Expiring info
+        expiring = {}
+        try:
+            for item in self.product_use_case.get_expiring_products():
+                expiring[item["product"].product_id] = item
+        except Exception:
+            pass
+
+        low_stock = 5
+        try:
+            low_stock = int(self.db_manager.get_setting(
+                "low_stock_threshold", "5") or 5)
+        except Exception:
+            pass
+
+        if self.sort_col:
+            keys = {
+                "ID": lambda p: p.product_id,
+                "Name": lambda p: (p.name or "").lower(),
+                "Barcode": lambda p: (p.barcode or ""),
+                "Group": lambda p: (getattr(p, "group_name", "") or "").lower(),
+                "Price": lambda p: p.price,
+                "Rounded": lambda p: (getattr(p, "rounded_price", 0) or p.price),
+                "Stock": lambda p: p.stock,
+                "Unit": lambda p: (p.unit or ""),
+                "Expiry": lambda p: (getattr(p, "expiry_date", "") or ""),
+                "Status": lambda p: 1 if getattr(p, "paused", 0) else 0,
+            }
+            products = sorted(products,
+                              key=keys.get(self.sort_col, lambda p: p.product_id),
+                              reverse=self.sort_reverse)
+
+        for p in products:
+            self._insert_product_row(p, expiring, low_stock)
+
+    def _insert_product_row(self, p, expiring, low_stock):
+        precio = f"${p.price:,.0f}".replace(",", ".")
+        rounded = getattr(p, "rounded_price", 0) or p.price
+        rounded_txt = f"${rounded:,.0f}".replace(",", ".")
+        exp = getattr(p, "expiry_date", "") or ""
+        paused = getattr(p, "paused", 0)
+
+        status_text = ""
+        tag = ()
+        if paused:
+            status_text = "⏸️ Pausado"
+            tag = ("paused",)
+        else:
             info = expiring.get(p.product_id)
-            status_text = ""
-            tag = ()
-
-            if p.paused:
-                status_text = "⏸️ Pausado"
-                tag = ("paused",)
-            elif info:
-                s = info["status"]
+            if info:
+                st = info["status"]
                 d = info["days_left"]
-                if s == "expired":
+                if st == "expired":
                     status_text = f"⚠️ Vencido ({abs(d)}d)"
                     tag = ("expired",)
-                elif s == "offer":
+                elif st == "offer":
                     status_text = f"🏷️ Oferta ({d}d)"
                     tag = ("offer",)
-                elif s == "warn2":
+                elif st == "warn2":
                     status_text = f"⏰ {d}d"
                     tag = ("warn2",)
-                elif s == "warn1":
+                elif st == "warn1":
                     status_text = f"⏳ {d}d"
                     tag = ("warn1",)
                 else:
@@ -259,1068 +437,902 @@ class InventoryView(tk.Toplevel):
             else:
                 status_text = "OK"
 
-            unidad = p.unit or "unidad"
-            self.tree.insert("", "end", iid=str(p.product_id),
-                             values=(
-                                 p.product_id,
-                                 p.name,
-                                 p.barcode or "",
-                                 p.group_name or "",
-                                 f"${p.price:,.0f}",
-                                 f"${(p.rounded_price or p.price):,.0f}",
-                                 f"${(p.cost or 0):,.0f}",
-                                 f"{p.margin_percent or 0:.0f}%",
-                                 p.stock,
-                                 unidad,
-                                 p.expiry_date or "",
-                                 status_text,
-                             ),
-                             tags=tag)
+        # Stock bajo
+        try:
+            if (p.stock or 0) <= low_stock and not paused:
+                tag = tag + ("low_stock",)
+        except Exception:
+            pass
 
-        self.update_sel_count()
+        self.tree.insert("", "end", iid=str(p.product_id), values=(
+            p.product_id, p.name, p.barcode or "",
+            getattr(p, "group_name", "") or "",
+            precio, rounded_txt, f"{p.stock:g}",
+            p.unit or "unidad", exp, status_text),
+            tags=tag)
 
-    def update_sel_count(self):
-        n = len(self.tree.selection())
-        self.lbl_sel.config(text=f"{n} seleccionados")
-
-    def sort_by(self, col):
-        if self._sort_column == col:
-            self._sort_reverse = not self._sort_reverse
-        else:
-            self._sort_column = col
-            self._sort_reverse = False
-
-        def key_func(p):
-            val = {
-                "id": p.product_id,
-                "name": (p.name or "").lower(),
-                "barcode": (p.barcode or "").lower(),
-                "group": (p.group_name or "").lower(),
-                "price": p.price or 0,
-                "rounded": p.rounded_price or 0,
-                "cost": p.cost or 0,
-                "margin": p.margin_percent or 0,
-                "stock": p.stock or 0,
-                "unit": (p.unit or "").lower(),
-                "expiry": p.expiry_date or "",
-                "status": 1 if p.paused else 0,
-            }.get(col, "")
-            return val
-
-        self.filtered_products.sort(key=key_func, reverse=self._sort_reverse)
-        self.render_table()
+    def _get_product_labels(self):
+        vals = []
+        try:
+            for p in self.product_use_case.list_products():
+                txt = f"{p.name}  |  {p.barcode}" if p.barcode else p.name
+                vals.append(txt)
+        except Exception:
+            pass
+        return vals
 
     # ============================================================
-    # AGREGAR / EDITAR / ELIMINAR
+    # CONTEXTO / SELECCIÓN
     # ============================================================
-    def open_add_dialog(self):
-        ProductFormDialog(self, self.product_case, product=None,
-                          on_save=self.refresh)
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        self.tree.selection_set(item)
+        self.tree.focus(item)
+        style = ttk.Style()
+        menu = tk.Menu(self.winfo_toplevel(), tearoff=0,
+                       bg=style.colors.bg, fg=style.colors.fg,
+                       activebackground=style.colors.selectbg,
+                       activeforeground=style.colors.selectfg,
+                       bd=1, relief="solid", font=get_menu_font())
+        menu.add_command(label="👁️  Ver detalle",
+                         command=lambda: self.view_product_popup(None))
+        menu.add_command(label="✏️  Editar",
+                         command=lambda: self._edit_item(item))
+        menu.add_command(label="⏸️  Pausar/Reanudar",
+                         command=self._toggle_paused)
+        menu.add_command(label="📦  Agrupar",
+                         command=self._group_selected)
+        menu.add_separator()
+        menu.add_command(label="💰  Historial de precios",
+                         command=self.open_price_history_global)
+        menu.add_separator()
+        menu.add_command(label="🗑️  Eliminar",
+                         command=lambda: self._confirm_delete(item))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
-    def open_edit_dialog(self):
+    def _edit_selected(self):
         sel = self.tree.selection()
         if len(sel) != 1:
-            messagebox.showinfo("Editar", "Selecciona un solo producto.")
+            MD.show_info("Selecciona un solo producto.", "Editar", parent=self)
             return
-        pid = int(sel[0])
-        prod = self.product_case.get_product(pid)
-        if not prod:
-            return
-        ProductFormDialog(self, self.product_case, product=prod,
-                          on_save=self.refresh)
+        self._edit_item(sel[0])
 
-    def delete_selected(self):
+    def _edit_item(self, item):
+        vals = self.tree.item(item, 'values')
+        pid = int(vals[0])
+        p = self.product_use_case.get_product(pid)
+        if not p:
+            return
+        self.open_product_form(
+            "Editar Producto", pid,
+            p.name, p.barcode, p.price, p.stock,
+            p.unit_type, p.unit, product=p)
+
+    def _delete_selected(self):
         sel = self.tree.selection()
         if not sel:
             return
-        if not messagebox.askyesno("Eliminar",
-                                   f"¿Eliminar {len(sel)} producto(s)?\n"
-                                   "Se borrará también su historial de precios."):
+        if MD.yesno(f"¿Eliminar {len(sel)} producto(s)?\n"
+                    "Se borrará también su historial de precios.",
+                    "Confirmar", parent=self) != "Yes":
+            return
+        if MD.yesno("🚨 ÚLTIMA ADVERTENCIA\n\n¿Realmente eliminar?",
+                    "Confirmación final", parent=self) != "Yes":
             return
         for sid in sel:
-            self.product_case.delete_product(int(sid))
-        self.refresh()
+            try:
+                self.product_use_case.delete_product(int(sid))
+            except Exception:
+                pass
+        self.load_products()
+        self.scan_entry.focus_set()
 
-    def toggle_paused(self):
+    def _confirm_delete(self, item):
+        vals = self.tree.item(item, 'values')
+        pid = int(vals[0])
+        name = vals[1]
+        if MD.yesno(f"⚠️ ¿Eliminar '{name}'?", "Confirmar",
+                    parent=self) != "Yes":
+            return
+        self.product_use_case.delete_product(pid)
+        self.load_products()
+        MD.show_info(f"'{name}' eliminado.", "Listo", parent=self)
+        self.scan_entry.focus_set()
+
+    def _toggle_paused(self):
         sel = self.tree.selection()
         if not sel:
             return
-        # Si al menos uno está activo → pausar; si todos pausados → activar
         alguno_activo = False
         for sid in sel:
-            p = self.product_case.get_product(int(sid))
-            if p and not p.paused:
+            p = self.product_use_case.get_product(int(sid))
+            if p and not getattr(p, "paused", 0):
                 alguno_activo = True
                 break
-        nuevo_estado = 1 if alguno_activo else 0
-        self.product_case.set_paused_bulk([int(s) for s in sel], nuevo_estado)
-        self.refresh()
+        nuevo = 1 if alguno_activo else 0
+        try:
+            self.product_use_case.set_paused_bulk([int(s) for s in sel], nuevo)
+        except Exception:
+            pass
+        self.load_products()
 
-    def group_selected(self):
+    def _group_selected(self):
         sel = self.tree.selection()
         if not sel:
             return
         nombre = simpledialog.askstring(
             "Agrupar", "Nombre del grupo (vacío para quitar):",
-            initialvalue=self.product_case.get_product(int(sel[0])).group_name or "")
+            initialvalue="", parent=self)
         if nombre is None:
             return
-        self.product_case.set_group_name([int(s) for s in sel], nombre.strip())
-        self.refresh()
-
-    # ============================================================
-    # IDEA 5: ETIQUETAS PDF
-    # ============================================================
-    def toggle_label_selection(self):
-        sel = self.tree.selection()
-        if not sel:
-            return
-        for sid in sel:
-            pid = int(sid)
-            if pid in self._label_selection:
-                self._label_selection.remove(pid)
-            else:
-                self._label_selection.add(pid)
-        messagebox.showinfo("Etiquetas",
-                            f"{len(self._label_selection)} producto(s) marcados para etiquetas.\n"
-                            "Presiona '🖨️ Etiquetas PDF' para generarlas.")
-
-    def print_labels(self):
-        from presentation.views.widgets import generate_labels_pdf
-
-        if self._label_selection:
-            productos = self.product_case.get_products_for_labels(
-                list(self._label_selection))
-        else:
-            resp = messagebox.askyesno(
-                "Etiquetas",
-                "No hay productos seleccionados.\n¿Generar etiquetas para TODOS los activos?")
-            if not resp:
-                return
-            productos = self.product_case.get_products_for_labels()
-
-        if not productos:
-            messagebox.showwarning("Etiquetas", "No hay productos para etiquetar.")
-            return
-
-        # Pedir cantidad de copias de cada etiqueta
-        copias = simpledialog.askinteger(
-            "Copias", "¿Cuántas copias por producto?", initialvalue=1, minvalue=1, maxvalue=50)
-        if not copias:
-            copias = 1
-
-        ruta = filedialog.asksaveasfilename(
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf")],
-            initialfile=f"etiquetas_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
-        if not ruta:
-            return
-
         try:
-            generate_labels_pdf(productos, ruta, copies=copias)
-            messagebox.showinfo("Etiquetas", f"PDF generado:\n{ruta}")
-            # Limpiar selección
-            self._label_selection.clear()
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo generar el PDF:\n{e}")
-
-    # ============================================================
-    # IDEA 11: GRÁFICOS
-    # ============================================================
-    def open_charts(self):
-        if not self.sale_case:
-            messagebox.showwarning("Gráficos", "SaleCase no disponible.")
-            return
-        from presentation.views.widgets import ChartsWindow
-        ChartsWindow(self, self.sale_case)
-
-    # ============================================================
-    # IDEA 16: ALERTAS DE VENCIMIENTO
-    # ============================================================
-    def open_expiry_alerts(self):
-        ExpiryAlertsWindow(self, self.product_case, on_change=self.refresh)
-
-    # ============================================================
-    # IDEA 28: HISTORIAL DE PRECIOS GLOBAL
-    # ============================================================
-    def open_price_history_global(self):
-        PriceHistoryWindow(self, self.product_case)
+            self.product_use_case.set_group_name(
+                [int(s) for s in sel], nombre.strip())
+        except Exception:
+            pass
+        self.load_products()
 
     # ============================================================
     # DETALLE
     # ============================================================
-    def open_detail_dialog(self):
-        sel = self.tree.selection()
-        if len(sel) != 1:
-            messagebox.showinfo("Detalle", "Selecciona un producto.")
-            return
-        pid = int(sel[0])
-        prod = self.product_case.get_product(pid)
-        if not prod:
-            return
-        ProductDetailDialog(self, self.product_case, prod,
-                            sale_case=self.sale_case, on_change=self.refresh)
-
-
-# ================================================================
-# DIALOGO DE PRODUCTO (FORMULARIO)
-# ================================================================
-class ProductFormDialog(tk.Toplevel):
-    def __init__(self, master, product_case, product=None, on_save=None):
-        super().__init__(master)
-        self.product_case = product_case
-        self.product = product
-        self.on_save = on_save
-
-        self.title("Editar producto" if product else "Agregar producto")
-        self.geometry("560x720")
-        self.resizable(False, True)
-        self.transient(master)
-        self.grab_set()
-
-        self._build()
-
-        if product:
-            self._load(product)
-        else:
-            self._try_load_draft()
-
-    def _build(self):
-        cont = tk.Frame(self, padx=15, pady=15)
-        cont.pack(fill="both", expand=True)
-
-        def row(label, widget_builder, hint=None):
-            f = tk.Frame(cont)
-            f.pack(fill="x", pady=4)
-            tk.Label(f, text=label, width=18, anchor="w",
-                     font=("Segoe UI", 9, "bold")).pack(side="left")
-            widget_builder(f)
-            if hint:
-                tk.Label(cont, text=hint, fg="#666",
-                         font=("Segoe UI", 8, "italic")).pack(anchor="w", padx=(140, 0))
-
-        # Nombre
-        self.var_name = tk.StringVar()
-        row("Nombre*", lambda f: tk.Entry(f, textvariable=self.var_name,
-                                          font=("Segoe UI", 10), width=30).pack(side="left"))
-
-        # Código de barras
-        self.var_barcode = tk.StringVar()
-        row("Código de barras", lambda f: tk.Entry(f, textvariable=self.var_barcode,
-                                                    font=("Segoe UI", 10), width=30).pack(side="left"))
-
-        # Grupo
-        self.var_group = tk.StringVar()
-        row("Grupo", lambda f: tk.Entry(f, textvariable=self.var_group,
-                                        font=("Segoe UI", 10), width=30).pack(side="left"))
-
-        # ============ MODO PAQUETE (idea 25) ============
-        self.var_is_package = tk.IntVar(value=0)
-        pkg_frame = tk.LabelFrame(cont, text="📦 Modo Paquete / Caja",
-                                  font=("Segoe UI", 9, "bold"), padx=8, pady=6)
-        pkg_frame.pack(fill="x", pady=8)
-
-        tk.Checkbutton(pkg_frame, text="Viene en paquete/caja",
-                       variable=self.var_is_package,
-                       command=self._toggle_package,
-                       font=("Segoe UI", 9)).pack(anchor="w")
-
-        pkg_body = tk.Frame(pkg_frame)
-        pkg_body.pack(fill="x", pady=(4, 0))
-        self.pkg_body = pkg_body
-
-        def pkg_row(label, var, width=12):
-            f = tk.Frame(pkg_body)
-            f.pack(fill="x", pady=2)
-            tk.Label(f, text=label, width=22, anchor="w",
-                     font=("Segoe UI", 9)).pack(side="left")
-            tk.Entry(f, textvariable=var, width=width,
-                     font=("Segoe UI", 9)).pack(side="left")
-
-        self.var_pkg_cost = tk.StringVar(value="0")
-        self.var_pkg_units = tk.StringVar(value="0")
-        self.var_pkg_qty = tk.StringVar(value="1")
-        self.var_cost_unit = tk.StringVar(value="0")
-        self.var_stock_total = tk.StringVar(value="0")
-
-        pkg_row("Costo del paquete:", self.var_pkg_cost)
-        pkg_row("Unidades por paquete:", self.var_pkg_units)
-        pkg_row("Cantidad de paquetes:", self.var_pkg_qty)
-
-        tk.Frame(pkg_body, height=1, bg="#ccc").pack(fill="x", pady=4)
-
-        f_costo = tk.Frame(pkg_body); f_costo.pack(fill="x", pady=2)
-        tk.Label(f_costo, text="Costo unitario:", width=22, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        tk.Label(f_costo, textvariable=self.var_cost_unit,
-                 font=("Segoe UI", 10, "bold"), fg="#00695c").pack(side="left")
-
-        f_stock = tk.Frame(pkg_body); f_stock.pack(fill="x", pady=2)
-        tk.Label(f_stock, text="Stock total:", width=22, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        tk.Label(f_stock, textvariable=self.var_stock_total,
-                 font=("Segoe UI", 10, "bold"), fg="#1565c0").pack(side="left")
-
-        # Trazabilidad de cálculos
-        for v in (self.var_pkg_cost, self.var_pkg_units, self.var_pkg_qty,
-                  self.var_margin if hasattr(self, "var_margin") else self.var_pkg_cost):
-            try:
-                v.trace_add("write", lambda *a: self._recalc_package())
-            except Exception:
-                pass
-
-        # Sugerencia inteligente (idea 27)
-        self.sugerencia_frame = tk.Frame(cont, bg="#fff8e1",
-                                         highlightthickness=1,
-                                         highlightbackground="#ffc107")
-        self.sugerencia_label = tk.Label(
-            self.sugerencia_frame, text="", bg="#fff8e1",
-            font=("Segoe UI", 9), justify="left", wraplength=460)
-        self.sugerencia_label.pack(side="left", padx=8, pady=6)
-        self.btn_sugerencia = tk.Button(
-            self.sugerencia_frame, text="Usar sugerencia",
-            command=self._apply_suggestion, bg="#ffc107", relief="flat",
-            font=("Segoe UI", 8, "bold"))
-        self.btn_sugerencia.pack(side="right", padx=8, pady=6)
-        self._sugerencia_data = None
-
-        self.var_name.trace_add("write", lambda *a: self._check_suggestion())
-        # No empaquetar todavía; se muestra si hay sugerencia
-
-        # ============ COSTO Y MARGEN ============
-        margin_frame = tk.Frame(cont)
-        margin_frame.pack(fill="x", pady=4)
-        tk.Label(margin_frame, text="Costo real:", width=18, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_cost = tk.StringVar(value="0")
-        tk.Entry(margin_frame, textvariable=self.var_cost, width=15,
-                 font=("Segoe UI", 9)).pack(side="left")
-        tk.Label(margin_frame, text="  % Ganancia:", width=12, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_margin = tk.StringVar(value="20")
-        tk.Entry(margin_frame, textvariable=self.var_margin, width=8,
-                 font=("Segoe UI", 9)).pack(side="left")
-
-        self.var_cost.trace_add("write", lambda *a: self._recalc_price())
-        self.var_margin.trace_add("write", lambda *a: self._recalc_price())
-
-        # ============ PRECIO ============
-        price_frame = tk.Frame(cont)
-        price_frame.pack(fill="x", pady=4)
-        tk.Label(price_frame, text="Precio venta:", width=18, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_price = tk.StringVar(value="0")
-        tk.Entry(price_frame, textvariable=self.var_price, width=15,
-                 font=("Segoe UI", 9)).pack(side="left")
-        tk.Button(price_frame, text="↻ Recalcular", command=self._recalc_price,
-                  bg="#2196F3", fg="white", relief="flat",
-                  font=("Segoe UI", 8)).pack(side="left", padx=6)
-
-        # ============ REDONDEO (idea 26) ============
-        red_frame = tk.LabelFrame(cont, text="🎯 Redondeo de precio",
-                                  font=("Segoe UI", 9, "bold"), padx=8, pady=6)
-        red_frame.pack(fill="x", pady=8)
-
-        self.var_round_enabled = tk.IntVar(value=0)
-        tk.Checkbutton(red_frame, text="Redondear precio final",
-                       variable=self.var_round_enabled,
-                       command=self._toggle_round,
-                       font=("Segoe UI", 9)).pack(anchor="w")
-
-        self.round_body = tk.Frame(red_frame)
-        self.round_body.pack(fill="x", pady=(4, 0))
-
-        f_round = tk.Frame(self.round_body)
-        f_round.pack(fill="x", pady=2)
-        tk.Label(f_round, text="Redondear al:", width=18, anchor="w",
-                 font=("Segoe UI", 9)).pack(side="left")
-
-        self.var_round_to = tk.StringVar(value="100")
-        self.cmb_round = ttk.Combobox(
-            f_round, textvariable=self.var_round_to, width=10, state="readonly",
-            values=["10", "50", "100", "500", "1000"])
-        self.cmb_round.pack(side="left")
-        self.cmb_round.bind("<<ComboboxSelected>>", lambda e: self._recalc_price())
-
-        # Precio redondeado resultante
-        f_result = tk.Frame(self.round_body)
-        f_result.pack(fill="x", pady=4)
-        tk.Label(f_result, text="Precio redondeado:", width=18, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_rounded = tk.StringVar(value="0")
-        tk.Entry(f_result, textvariable=self.var_rounded, width=15,
-                 font=("Segoe UI", 9)).pack(side="left")
-        tk.Button(f_result, text="Calcular", command=self._recalc_rounded,
-                  bg="#FF9800", fg="white", relief="flat",
-                  font=("Segoe UI", 8)).pack(side="left", padx=6)
-
-        # ============ STOCK Y UNIDAD ============
-        stock_frame = tk.Frame(cont)
-        stock_frame.pack(fill="x", pady=4)
-        tk.Label(stock_frame, text="Stock:", width=18, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_stock = tk.StringVar(value="0")
-        self.entry_stock = tk.Entry(stock_frame, textvariable=self.var_stock, width=15,
-                                     font=("Segoe UI", 9))
-        self.entry_stock.pack(side="left")
-
-        tk.Label(stock_frame, text="  Unidad:", width=10, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_unit = tk.StringVar(value="unidad")
-        ttk.Combobox(stock_frame, textvariable=self.var_unit, width=10,
-                     values=["unidad", "kg", "g", "lt", "ml", "caja", "paquete"])\
-            .pack(side="left")
-
-        # ============ VENCIMIENTO (idea 16) ============
-        exp_frame = tk.Frame(cont)
-        exp_frame.pack(fill="x", pady=4)
-        tk.Label(exp_frame, text="Fecha vencimiento:", width=18, anchor="w",
-                 font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_expiry = tk.StringVar(value="")
-        tk.Entry(exp_frame, textvariable=self.var_expiry, width=15,
-                 font=("Segoe UI", 9)).pack(side="left")
-        tk.Label(exp_frame, text="  (YYYY-MM-DD, vacío = sin vencimiento)",
-                 fg="#666", font=("Segoe UI", 8, "italic")).pack(side="left")
-
-        # ============ PAUSADO (idea 4) ============
-        self.var_paused = tk.IntVar(value=0)
-        tk.Checkbutton(cont, text="⏸️ Producto pausado (no aparece en PAGOS)",
-                       variable=self.var_paused,
-                       font=("Segoe UI", 9)).pack(anchor="w", pady=6)
-
-        # ============ BOTONES ============
-        btn_frame = tk.Frame(cont)
-        btn_frame.pack(fill="x", pady=(15, 0))
-        tk.Button(btn_frame, text="💾 Guardar", command=self.save,
-                  bg="#4CAF50", fg="white", font=("Segoe UI", 10, "bold"),
-                  padx=20, pady=8, relief="flat").pack(side="right", padx=5)
-        tk.Button(btn_frame, text="❌ Cancelar", command=self.destroy,
-                  bg="#f44336", fg="white", font=("Segoe UI", 10, "bold"),
-                  padx=20, pady=8, relief="flat").pack(side="right", padx=5)
-
-        self._toggle_package()
-        self._toggle_round()
-
-    # ============================================================
-    # UTILIDADES DE FORMULARIO
-    # ============================================================
-    def _toggle_package(self):
-        activo = self.var_is_package.get() == 1
-        for child in self.pkg_body.winfo_children():
-            self._set_state_recursive(child, "normal" if activo else "disabled")
-        self.entry_stock.config(state="disabled" if activo else "normal")
-        if activo:
-            self._recalc_package()
-
-    def _set_state_recursive(self, widget, state):
-        try:
-            widget.configure(state=state)
-        except Exception:
-            pass
-        for child in widget.winfo_children():
-            self._set_state_recursive(child, state)
-
-    def _toggle_round(self):
-        activo = self.var_round_enabled.get() == 1
-        for child in self.round_body.winfo_children():
-            self._set_state_recursive(child, "normal" if activo else "disabled")
-        if activo:
-            self._recalc_price()
-
-    def _recalc_package(self):
-        try:
-            pkg_cost = float(self.var_pkg_cost.get() or 0)
-            pkg_units = float(self.var_pkg_units.get() or 0)
-            pkg_qty = float(self.var_pkg_qty.get() or 1)
-            if pkg_units <= 0:
-                self.var_cost_unit.set("$0")
-                self.var_stock_total.set("0")
-                return
-            unit_cost = pkg_cost / pkg_units
-            total_stock = int(pkg_units * pkg_qty)
-            self.var_cost_unit.set(f"${unit_cost:,.2f}")
-            self.var_stock_total.set(str(total_stock))
-            # Actualizar costo y precio sugerido
-            self.var_cost.set(f"{unit_cost:.2f}")
-        except Exception:
-            pass
-
-    def _recalc_price(self):
-        try:
-            costo = float(self.var_cost.get() or 0)
-            margen = float(self.var_margin.get() or 0)
-            precio = costo * (1 + margen / 100.0)
-            self.var_price.set(f"{precio:.2f}")
-            if self.var_round_enabled.get() == 1:
-                self._recalc_rounded()
-        except Exception:
-            pass
-
-    def _recalc_rounded(self):
-        try:
-            precio = float(self.var_price.get() or 0)
-            red_to = float(self.var_round_to.get() or 100)
-            if red_to <= 0:
-                self.var_rounded.set(f"{precio:.2f}")
-                return
-            redondeado = round(precio / red_to) * red_to
-            self.var_rounded.set(f"{redondeado:.2f}")
-        except Exception:
-            pass
-
-    # ============================================================
-    # SUGERENCIA INTELIGENTE (idea 27)
-    # ============================================================
-    def _check_suggestion(self):
-        if self.product:  # no sugerir al editar
-            return
-        nombre = self.var_name.get().strip()
-        if len(nombre) < 3:
-            self.sugerencia_frame.pack_forget()
-            self._sugerencia_data = None
-            return
-        data = self.product_case.find_last_package_for_name(nombre)
-        if not data:
-            self.sugerencia_frame.pack_forget()
-            self._sugerencia_data = None
-            return
-        self._sugerencia_data = data
-        txt = (f"💡 La última vez compraste «{data['name']}» a "
-               f"${data['package_cost']:,.0f} por paquete de "
-               f"{data['package_units']} unidades. ¿Quieres usar esos datos?")
-        self.sugerencia_label.config(text=txt)
-        self.sugerencia_frame.pack(fill="x", pady=6, before=self.sugerencia_frame.master.winfo_children()[-1])
-
-    def _apply_suggestion(self):
-        if not self._sugerencia_data:
-            return
-        d = self._sugerencia_data
-        self.var_is_package.set(1)
-        self.var_pkg_cost.set(str(d["package_cost"]))
-        self.var_pkg_units.set(str(d["package_units"]))
-        self.var_pkg_qty.set("1")
-        self._toggle_package()
-        self._recalc_package()
-        self.sugerencia_frame.pack_forget()
-
-    # ============================================================
-    # CARGA Y GUARDADO
-    # ============================================================
-    def _load(self, p):
-        self.var_name.set(p.name or "")
-        self.var_barcode.set(p.barcode or "")
-        self.var_group.set(p.group_name or "")
-        self.var_cost.set(f"{p.cost or 0:.2f}")
-        self.var_margin.set(f"{p.margin_percent or 0:.2f}")
-        self.var_price.set(f"{p.price or 0:.2f}")
-        self.var_rounded.set(f"{p.rounded_price or p.price or 0:.2f}")
-        self.var_round_enabled.set(1 if p.round_enabled else 0)
-        self.var_round_to.set(str(p.round_to or 100))
-        self.var_stock.set(str(p.stock or 0))
-        self.var_unit.set(p.unit or "unidad")
-        self.var_paused.set(1 if p.paused else 0)
-        self.var_expiry.set(p.expiry_date or "")
-        self.var_is_package.set(1 if p.is_package else 0)
-        self.var_pkg_cost.set(f"{p.package_cost or 0:.2f}")
-        self.var_pkg_units.set(str(p.package_units or 0))
-        self._toggle_package()
-        self._toggle_round()
-
-    def _try_load_draft(self):
-        try:
-            data, when = self.product_case.load_product_draft()
-            if not data:
-                return
-            if not messagebox.askyesno(
-                    "Borrador",
-                    f"Hay un borrador guardado el {when}.\n¿Deseas recuperarlo?"):
-                return
-            self.var_name.set(data.get("name", ""))
-            self.var_barcode.set(data.get("barcode", ""))
-            self.var_group.set(data.get("group", ""))
-            self.var_cost.set(str(data.get("cost", "0")))
-            self.var_margin.set(str(data.get("margin", "20")))
-            self.var_price.set(str(data.get("price", "0")))
-            self.var_rounded.set(str(data.get("rounded", "0")))
-            self.var_round_enabled.set(int(data.get("round_enabled", 0)))
-            self.var_round_to.set(str(data.get("round_to", "100")))
-            self.var_stock.set(str(data.get("stock", "0")))
-            self.var_unit.set(data.get("unit", "unidad"))
-            self.var_expiry.set(data.get("expiry", ""))
-            self.var_is_package.set(int(data.get("is_package", 0)))
-            self.var_pkg_cost.set(str(data.get("pkg_cost", "0")))
-            self.var_pkg_units.set(str(data.get("pkg_units", "0")))
-            self._toggle_package()
-            self._toggle_round()
-        except Exception:
-            pass
-
-    def _save_draft(self):
-        try:
-            data = {
-                "name": self.var_name.get(),
-                "barcode": self.var_barcode.get(),
-                "group": self.var_group.get(),
-                "cost": self.var_cost.get(),
-                "margin": self.var_margin.get(),
-                "price": self.var_price.get(),
-                "rounded": self.var_rounded.get(),
-                "round_enabled": self.var_round_enabled.get(),
-                "round_to": self.var_round_to.get(),
-                "stock": self.var_stock.get(),
-                "unit": self.var_unit.get(),
-                "expiry": self.var_expiry.get(),
-                "is_package": self.var_is_package.get(),
-                "pkg_cost": self.var_pkg_cost.get(),
-                "pkg_units": self.var_pkg_units.get(),
-            }
-            self.product_case.save_product_draft(data)
-        except Exception:
-            pass
-
-    def save(self):
-        nombre = self.var_name.get().strip()
-        if not nombre:
-            messagebox.showwarning("Falta", "El nombre es obligatorio.")
-            return
-        try:
-            precio = float(self.var_price.get() or 0)
-            costo = float(self.var_cost.get() or 0)
-            margen = float(self.var_margin.get() or 0)
-            rounded = float(self.var_rounded.get() or precio)
-            round_enabled = self.var_round_enabled.get()
-            round_to = int(float(self.var_round_to.get() or 100))
-            pkg_cost = float(self.var_pkg_cost.get() or 0)
-            pkg_units = int(float(self.var_pkg_units.get() or 0))
-            is_package = self.var_is_package.get()
-            if is_package:
-                stock = int(float(self.var_pkg_qty.get() or 1) * pkg_units)
-            else:
-                stock = int(float(self.var_stock.get() or 0))
-        except ValueError:
-            messagebox.showerror("Error", "Revisa los valores numéricos.")
-            return
-
-        # Validar fecha
-        expiry = self.var_expiry.get().strip()
-        if expiry:
-            try:
-                datetime.strptime(expiry, "%Y-%m-%d")
-            except ValueError:
-                messagebox.showerror("Error", "Fecha de vencimiento inválida. Usa YYYY-MM-DD.")
-                return
-
-        if self.product:
-            self.product_case.update_product(
-                self.product.product_id, nombre, self.var_barcode.get().strip(),
-                precio, stock,
-                unit_type=self.product.unit_type, unit=self.var_unit.get(),
-                group_name=self.var_group.get().strip(),
-                cost=costo, margin_percent=margen,
-                rounded_price=rounded,
-                round_enabled=round_enabled, round_to=round_to,
-                package_cost=pkg_cost, package_units=pkg_units,
-                is_package=is_package,
-                paused=self.var_paused.get(),
-                expiry_date=expiry,
-                register_history=True,
-            )
-        else:
-            self.product_case.add_product(
-                nombre, self.var_barcode.get().strip(), precio, stock,
-                unit_type="unidad", unit=self.var_unit.get(),
-                group_name=self.var_group.get().strip(),
-                cost=costo, margin_percent=margen,
-                rounded_price=rounded,
-                round_enabled=round_enabled, round_to=round_to,
-                package_cost=pkg_cost, package_units=pkg_units,
-                is_package=is_package,
-                paused=self.var_paused.get(),
-                expiry_date=expiry,
-            )
-        self.product_case.clear_product_draft()
-
-        if self.on_save:
-            self.on_save()
-        self.destroy()
-
-
-# ================================================================
-# VENTANA DE DETALLE DEL PRODUCTO
-# ================================================================
-class ProductDetailDialog(tk.Toplevel):
-    def __init__(self, master, product_case, product, sale_case=None, on_change=None):
-        super().__init__(master)
-        self.product_case = product_case
-        self.product = product
-        self.sale_case = sale_case
-        self.on_change = on_change
-
-        self.title(f"Detalle: {product.name}")
-        self.geometry("640x600")
-        self.transient(master)
-        self.grab_set()
-
-        cont = tk.Frame(self, padx=15, pady=15)
-        cont.pack(fill="both", expand=True)
-
-        # Info
-        info = [
-            ("ID", product.product_id),
-            ("Nombre", product.name),
-            ("Código", product.barcode or "—"),
-            ("Grupo", product.group_name or "—"),
-            ("Precio real", f"${product.price:,.2f}"),
-            ("Precio redondeado", f"${(product.rounded_price or product.price):,.2f}"),
-            ("Costo", f"${(product.cost or 0):,.2f}"),
-            ("Margen", f"{product.margin_percent or 0:.2f}%"),
-            ("Stock", product.stock),
-            ("Unidad", product.unit or "unidad"),
-            ("Vencimiento", product.expiry_date or "—"),
-            ("Pausado", "Sí" if product.paused else "No"),
-        ]
-        if product.is_package:
-            info.append(("Costo paquete", f"${(product.package_cost or 0):,.2f}"))
-            info.append(("Unidades paquete", product.package_units))
-        info.append(("Creado", product.created_at or "—"))
-        info.append(("Actualizado", product.updated_at or "—"))
-
-        for i, (k, v) in enumerate(info):
-            tk.Label(cont, text=f"{k}:", font=("Segoe UI", 9, "bold"),
-                     anchor="w", width=18).grid(row=i, column=0, sticky="w", pady=2)
-            tk.Label(cont, text=str(v), font=("Segoe UI", 9),
-                     anchor="w").grid(row=i, column=1, sticky="w", pady=2)
-
-        # Aviso de devoluciones (idea 10)
-        if self.sale_case:
-            veces = self.sale_case.get_product_return_count(
-                product.product_id, product.name)
-            if veces > 0:
-                tk.Label(cont,
-                         text=f"⚠️ Este producto se ha devuelto {veces} vez/veces",
-                         fg="#c62828", font=("Segoe UI", 9, "bold"))\
-                    .grid(row=len(info), column=0, columnspan=2,
-                          sticky="w", pady=(10, 0))
-
-        # Botones
-        btns = tk.Frame(cont)
-        btns.grid(row=len(info) + 3, column=0, columnspan=2, sticky="ew", pady=(20, 0))
-
-        tk.Button(btns, text="📈 Historial de precios",
-                  command=self._show_price_history,
-                  bg="#795548", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10, pady=6)\
-            .pack(side="left", padx=4)
-        tk.Button(btns, text="✏️ Editar", command=self._edit,
-                  bg="#2196F3", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10, pady=6)\
-            .pack(side="left", padx=4)
-        tk.Button(btns, text="Cerrar", command=self.destroy,
-                  bg="#9E9E9E", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10, pady=6)\
-            .pack(side="right", padx=4)
-
-    def _show_price_history(self):
-        PriceHistoryWindow(self, self.product_case,
-                           product_id=self.product.product_id)
-
-    def _edit(self):
-        self.destroy()
-        ProductFormDialog(self.master, self.product_case,
-                          product=self.product, on_save=self.on_change)
-
-
-# ================================================================
-# VENTANA DE HISTORIAL DE PRECIOS (idea 28)
-# ================================================================
-class PriceHistoryWindow(tk.Toplevel):
-    def __init__(self, master, product_case, product_id=None):
-        super().__init__(master)
-        self.product_case = product_case
-        self.product_id = product_id
-
-        self.title("Historial de precios")
-        self.geometry("900x600")
-        self.transient(master)
-
-        # Filtros
-        top = tk.Frame(self, padx=10, pady=10)
-        top.pack(fill="x")
-
-        tk.Label(top, text="Desde:", font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_from = tk.StringVar()
-        tk.Entry(top, textvariable=self.var_from, width=12).pack(side="left", padx=4)
-
-        tk.Label(top, text="Hasta:", font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_to = tk.StringVar()
-        tk.Entry(top, textvariable=self.var_to, width=12).pack(side="left", padx=4)
-
-        tk.Button(top, text="🔍 Filtrar", command=self.load,
-                  bg="#2196F3", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10).pack(side="left", padx=8)
-
-        tk.Button(top, text="📄 Exportar TXT", command=lambda: self.export("txt"),
-                  bg="#607D8B", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10).pack(side="right", padx=4)
-        tk.Button(top, text="📊 Exportar Excel", command=lambda: self.export("xlsx"),
-                  bg="#4CAF50", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10).pack(side="right", padx=4)
-        tk.Button(top, text="📕 Exportar PDF", command=lambda: self.export("pdf"),
-                  bg="#f44336", fg="white", relief="flat",
-                  font=("Segoe UI", 9, "bold"), padx=10).pack(side="right", padx=4)
-
-        # Tabla
-        cols = ("date", "product", "barcode", "old", "new", "old_r", "new_r")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        for c, t, w in [
-            ("date", "Fecha", 140), ("product", "Producto", 220),
-            ("barcode", "Código", 120), ("old", "Precio ant.", 100),
-            ("new", "Precio nuevo", 100), ("old_r", "Redond. ant.", 100),
-            ("new_r", "Redond. nuevo", 100),
-        ]:
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor="center")
-        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.data = []
-        self.load()
-
-    def load(self):
-        self.tree.delete(*self.tree.get_children())
-        d_from = self.var_from.get().strip() or None
-        d_to = self.var_to.get().strip() or None
-
-        if self.product_id:
-            self.data = self.product_case.get_price_history(self.product_id)
-        else:
-            self.data = self.product_case.get_all_price_history(d_from, d_to)
-
-        for r in self.data:
-            self.tree.insert("", "end", values=(
-                r["date"],
-                r.get("product_name", "—") if not self.product_id else "—",
-                r.get("product_barcode", "—") if not self.product_id else "—",
-                f"${r['old_price']:,.2f}",
-                f"${r['new_price']:,.2f}",
-                f"${r.get('old_rounded_price', 0):,.2f}",
-                f"${r.get('new_rounded_price', 0):,.2f}",
-            ))
-
-    def export(self, fmt):
-        if not self.data:
-            messagebox.showinfo("Exportar", "No hay datos.")
-            return
-        ext_map = {"txt": ".txt", "xlsx": ".xlsx", "pdf": ".pdf"}
-        ruta = filedialog.asksaveasfilename(
-            defaultextension=ext_map[fmt],
-            filetypes=[(fmt.upper(), f"*{ext_map[fmt]}")],
-            initialfile=f"historial_precios_{datetime.now().strftime('%Y%m%d_%H%M')}{ext_map[fmt]}")
-        if not ruta:
-            return
-        try:
-            if fmt == "txt":
-                self._export_txt(ruta)
-            elif fmt == "xlsx":
-                self._export_xlsx(ruta)
-            elif fmt == "pdf":
-                self._export_pdf(ruta)
-            messagebox.showinfo("Exportar", f"Archivo generado:\n{ruta}")
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo exportar:\n{e}")
-
-    def _export_txt(self, ruta):
-        with open(ruta, "w", encoding="utf-8") as f:
-            f.write("HISTORIAL DE PRECIOS\n")
-            f.write("=" * 90 + "\n")
-            f.write(f"{'Fecha':<20}{'Producto':<30}{'Ant.':>12}{'Nuevo':>12}{'Red.Ant':>12}{'Red.Nuevo':>12}\n")
-            f.write("-" * 90 + "\n")
-            for r in self.data:
-                f.write(f"{r['date']:<20}{r.get('product_name','')[:28]:<30}"
-                        f"{r['old_price']:>12,.0f}{r['new_price']:>12,.0f}"
-                        f"{r.get('old_rounded_price',0):>12,.0f}{r.get('new_rounded_price',0):>12,.0f}\n")
-
-    def _export_xlsx(self, ruta):
-        try:
-            from openpyxl import Workbook
-        except ImportError:
-            raise Exception("Instala openpyxl: pip install openpyxl")
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Historial"
-        ws.append(["Fecha", "Producto", "Código", "Precio ant.", "Precio nuevo",
-                   "Redondeado ant.", "Redondeado nuevo"])
-        for r in self.data:
-            ws.append([r["date"], r.get("product_name", ""), r.get("product_barcode", ""),
-                       r["old_price"], r["new_price"],
-                       r.get("old_rounded_price", 0), r.get("new_rounded_price", 0)])
-        wb.save(ruta)
-
-    def _export_pdf(self, ruta):
-        try:
-            from reportlab.lib.pagesizes import letter
-            from reportlab.lib import colors
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-            from reportlab.lib.styles import getSampleStyleSheet
-        except ImportError:
-            raise Exception("Instala reportlab: pip install reportlab")
-
-        doc = SimpleDocTemplate(ruta, pagesize=letter)
-        styles = getSampleStyleSheet()
-        elements = [Paragraph("Historial de precios", styles["Title"])]
-
-        data = [["Fecha", "Producto", "Ant.", "Nuevo", "Red. ant.", "Red. nuevo"]]
-        for r in self.data:
-            data.append([
-                r["date"], r.get("product_name", "")[:30],
-                f"${r['old_price']:,.0f}", f"${r['new_price']:,.0f}",
-                f"${r.get('old_rounded_price', 0):,.0f}",
-                f"${r.get('new_rounded_price', 0):,.0f}",
-            ])
-
-        t = Table(data, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4CAF50")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-        ]))
-        elements.append(t)
-        doc.build(elements)
-
-
-# ================================================================
-# VENTANA DE ALERTAS DE VENCIMIENTO (idea 16)
-# ================================================================
-class ExpiryAlertsWindow(tk.Toplevel):
-    def __init__(self, master, product_case, on_change=None):
-        super().__init__(master)
-        self.product_case = product_case
-        self.on_change = on_change
-
-        self.title("Alertas de vencimiento")
-        self.geometry("800x600")
-        self.transient(master)
-
-        # Configuración
-        cfg = self.product_case.get_expiry_settings()
-
-        conf = tk.LabelFrame(self, text="⚙️ Configuración de alertas",
-                             font=("Segoe UI", 9, "bold"), padx=10, pady=8)
-        conf.pack(fill="x", padx=10, pady=10)
-
-        f1 = tk.Frame(conf); f1.pack(fill="x", pady=2)
-        tk.Label(f1, text="Aviso 1 (días):", width=18, anchor="w").pack(side="left")
-        self.var_d1 = tk.StringVar(value=str(cfg["warn_days_1"]))
-        tk.Entry(f1, textvariable=self.var_d1, width=6).pack(side="left")
-        tk.Label(f1, text="  Aviso 2 (días):").pack(side="left")
-        self.var_d2 = tk.StringVar(value=str(cfg["warn_days_2"]))
-        tk.Entry(f1, textvariable=self.var_d2, width=6).pack(side="left")
-
-        f2 = tk.Frame(conf); f2.pack(fill="x", pady=2)
-        tk.Label(f2, text="Oferta cuando falten (días):", width=24, anchor="w").pack(side="left")
-        self.var_do = tk.StringVar(value=str(cfg["offer_days"]))
-        tk.Entry(f2, textvariable=self.var_do, width=6).pack(side="left")
-        tk.Label(f2, text="  Descuento (%):").pack(side="left")
-        self.var_disc = tk.StringVar(value=str(cfg["offer_discount"]))
-        tk.Entry(f2, textvariable=self.var_disc, width=6).pack(side="left")
-
-        tk.Button(conf, text="💾 Guardar configuración", command=self.save_cfg,
-                  bg="#4CAF50", fg="white", relief="flat", padx=10, pady=4,
-                  font=("Segoe UI", 9, "bold")).pack(anchor="e", pady=(6, 0))
-
-        # Filtro rápido
-        ff = tk.Frame(self)
-        ff.pack(fill="x", padx=10)
-        tk.Label(ff, text="Mostrar:", font=("Segoe UI", 9, "bold")).pack(side="left")
-        self.var_filter = tk.StringVar(value="Todos")
-        ttk.Combobox(ff, textvariable=self.var_filter, state="readonly",
-                     values=["Todos", "Vencidos", "En oferta", "Aviso 7d", "Aviso 15d"],
-                     width=15).pack(side="left", padx=6)
-        self.var_filter.trace_add("write", lambda *a: self.load())
-        tk.Button(ff, text="🔄 Refrescar", command=self.load,
-                  bg="#607D8B", fg="white", relief="flat", padx=10)\
-            .pack(side="right")
-
-        # Tabla
-        cols = ("status", "name", "stock", "expiry", "days", "action")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings")
-        for c, t, w in [("status", "Estado", 100), ("name", "Producto", 220),
-                        ("stock", "Stock", 70), ("expiry", "Vence", 100),
-                        ("days", "Días", 70), ("action", "Acción", 200)]:
-            self.tree.heading(c, text=t)
-            self.tree.column(c, width=w, anchor="center")
-        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.tree.bind("<Double-1>", self._double_click)
-
-        tk.Button(self, text="🏷️ Aplicar oferta al seleccionado",
-                  command=self.apply_offer, bg="#FF9800", fg="white",
-                  relief="flat", padx=12, pady=6,
-                  font=("Segoe UI", 9, "bold")).pack(pady=(0, 10))
-
-        self.load()
-
-    def save_cfg(self):
-        try:
-            self.product_case.set_expiry_settings(
-                int(self.var_d1.get()), int(self.var_d2.get()),
-                int(self.var_do.get()), float(self.var_disc.get()))
-            messagebox.showinfo("OK", "Configuración guardada.")
-            self.load()
-        except ValueError:
-            messagebox.showerror("Error", "Valores inválidos.")
-
-    def load(self):
-        self.tree.delete(*self.tree.get_children())
-        data = self.product_case.get_expiring_products()
-        filtro = self.var_filter.get()
-
-        for item in data:
-            p = item["product"]
-            s = item["status"]
-            d = item["days_left"]
-
-            if filtro == "Vencidos" and s != "expired":
-                continue
-            if filtro == "En oferta" and s != "offer":
-                continue
-            if filtro == "Aviso 7d" and s != "warn2":
-                continue
-            if filtro == "Aviso 15d" and s != "warn1":
-                continue
-
-            if s == "expired":
-                estado = f"⚠️ VENCIDO"
-                accion = "Retirar / revisar"
-            elif s == "offer":
-                estado = "🏷️ En oferta"
-                accion = "Ya se aplicó descuento"
-            elif s == "warn2":
-                estado = "⏰ Aviso 7d"
-                accion = "Próximo a vencer"
-            else:
-                estado = "⏳ Aviso 15d"
-                accion = "Monitorear"
-
-            self.tree.insert("", "end", iid=str(p.product_id), values=(
-                estado, p.name, p.stock, p.expiry_date, d, accion))
-
-    def apply_offer(self):
+    def view_product_popup(self, event=None):
         sel = self.tree.selection()
         if not sel:
             return
-        if not messagebox.askyesno("Oferta",
-                                   f"¿Aplicar descuento a {len(sel)} producto(s)?"):
+        pid = int(sel[0])
+        p = self.product_use_case.get_product(pid)
+        if not p:
             return
-        for sid in sel:
-            ok, msg = self.product_case.apply_offer_discount(int(sid))
-        self.load()
-        if self.on_change:
-            self.on_change()
 
-    def _double_click(self, event):
-        sel = self.tree.selection()
-        if sel:
-            self.apply_offer()
+        popup = Toplevel(self)
+        popup.title("Detalle del Producto")
+        popup.geometry("480x620")
+        popup.transient(self.winfo_toplevel())
+        popup.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
+
+        ttk.Label(popup, text="📋 DETALLE DEL PRODUCTO",
+                  font=("Arial", 13, "bold"),
+                  bootstyle="inverse-dark").pack(pady=12)
+
+        info = ttk.Frame(popup, bootstyle="dark")
+        info.pack(fill="both", expand=True, padx=25, pady=15)
+
+        campos = [
+            ("ID", p.product_id),
+            ("Nombre", p.name),
+            ("Código", p.barcode or "—"),
+            ("Grupo", getattr(p, "group_name", "") or "—"),
+            ("Precio real", f"${p.price:,.0f}".replace(",", ".")),
+            ("Precio redondeado",
+             f"${(getattr(p, 'rounded_price', 0) or p.price):,.0f}".replace(",", ".")),
+            ("Costo", f"${(getattr(p, 'cost', 0) or 0):,.0f}".replace(",", ".")),
+            ("% Ganancia",
+             f"{getattr(p, 'margin_percent', 20):.0f}%"),
+            ("Stock", f"{p.stock:g}"),
+            ("Unidad", p.unit or "unidad"),
+            ("Vence", getattr(p, "expiry_date", "") or "—"),
+            ("Pausado", "Sí" if getattr(p, "paused", 0) else "No"),
+        ]
+        if getattr(p, "is_package", 0):
+            campos.append(("Costo paquete",
+                           f"${(getattr(p, 'package_cost', 0) or 0):,.0f}".replace(",", ".")))
+            campos.append(("Unidades paquete",
+                           getattr(p, "package_units", 0)))
+
+        for k, v in campos:
+            f = ttk.Frame(info, bootstyle="dark")
+            f.pack(fill="x", pady=2)
+            ttk.Label(f, text=f"{k}:", font=("Arial", 10, "bold"),
+                      width=18, anchor="w",
+                      bootstyle="inverse-dark").pack(side="left")
+            ttk.Label(f, text=str(v), font=("Arial", 10),
+                      bootstyle="inverse-dark").pack(side="left")
+
+        # Aviso de devoluciones
+        try:
+            veces = self.product_use_case._row_to_product  # dummy
+        except Exception:
+            veces = 0
+        # Obtener devoluciones desde sale_use_case si está disponible
+        try:
+            from presentation.views.widgets import MD  # noqa
+            sale_case = getattr(self, "_sale_case", None)
+            if sale_case:
+                veces = sale_case.get_product_return_count(
+                    p.product_id, p.name)
+                if veces > 0:
+                    ttk.Label(info,
+                              text=f"⚠️ Este producto se ha devuelto {veces} vez/veces",
+                              font=("Arial", 10, "bold"),
+                              bootstyle="danger").pack(pady=(10, 0))
+        except Exception:
+            pass
+
+        bf = ttk.Frame(popup, bootstyle="dark")
+        bf.pack(side="bottom", pady=12)
+
+        ttk.Button(bf, text="💰 Historial de precios",
+                   command=lambda: [popup.destroy(),
+                                    self.open_price_history_for(pid)],
+                   bootstyle="info").pack(side="left", padx=5)
+        ttk.Button(bf, text="✏️ Editar",
+                   command=lambda: [popup.destroy(),
+                                    self._edit_item(sel[0])],
+                   style="DarkGreen.TButton").pack(side="left", padx=5)
+        ttk.Button(bf, text="Cerrar", command=popup.destroy,
+                   bootstyle="secondary").pack(side="left", padx=5)
+
+        show_popup_smooth(popup)
+        try:
+            popup.grab_set()
+        except Exception:
+            pass
+
+    # ============================================================
+    # FORMULARIO DE PRODUCTO
+    # ============================================================
+    def add_product_popup(self, barcode_prefill="", auto_select=False):
+        self.open_product_form("Agregar Producto", None, "", barcode_prefill,
+                               0, 0, "unidad", "unidad", auto_select)
+
+    def open_product_form(self, title, product_id, name, barcode, price, stock,
+                          unit_type, unit, auto_select=False,
+                          from_draft=False, product=None):
+        popup = Toplevel(self)
+        popup.title(title)
+        popup.geometry("560x820")
+        popup.transient(self.winfo_toplevel())
+        popup.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
+
+        # Scroll wrapper
+        container = tk.Frame(popup, bg=bg)
+        container.pack(fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(container, orient="vertical",
+                                  style="DarkRed.Vertical.TScrollbar")
+        scrollbar.pack(side="right", fill="y")
+        canvas = tk.Canvas(container, bg=bg, highlightthickness=0)
+        canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(canvas, bg=bg)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _on_inner_conf(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_canvas_conf(e):
+            canvas.itemconfigure(inner_id, width=e.width)
+        inner.bind("<Configure>", _on_inner_conf)
+        canvas.bind("<Configure>", _on_canvas_conf)
+        scrollbar.config(command=canvas.yview)
+
+        def _on_mousewheel(event):
+            try:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+        canvas.bind("<MouseWheel>", _on_mousewheel)
+        inner.bind("<MouseWheel>", _on_mousewheel)
+
+        # ---- Campos ----
+        ttk.Label(inner, text="Código de Barras / QR:",
+                  bootstyle="inverse-dark").pack(pady=(15, 3))
+        barcode_entry = ttk.Entry(inner, width=35)
+        barcode_entry.pack(pady=3)
+        if barcode:
+            barcode_entry.insert(0, barcode)
+
+        ttk.Label(inner, text="Nombre del Producto:",
+                  bootstyle="inverse-dark").pack(pady=(8, 3))
+        name_entry = ttk.Entry(inner, width=35)
+        name_entry.pack(pady=3)
+        if name:
+            name_entry.insert(0, name)
+
+        # ---- Modo paquete ----
+        pkg_frame = ttk.LabelFrame(inner, text="📦 Modo Paquete / Caja",
+                                    bootstyle="dark")
+        pkg_frame.pack(fill="x", padx=20, pady=10)
+        pkg_var = tk.IntVar(value=1 if product and getattr(product, "is_package", 0) else 0)
+        ttk.Checkbutton(pkg_frame, text="Viene en paquete/caja",
+                        variable=pkg_var,
+                        bootstyle="info-round-toggle",
+                        command=lambda: toggle_pkg()).pack(anchor="w", padx=8, pady=6)
+
+        pkg_body = tk.Frame(pkg_frame, bg=bg)
+        pkg_body.pack(fill="x", padx=8, pady=4)
+
+        pkg_cost_var = tk.StringVar(value=str(getattr(product, "package_cost", 0) if product else 0))
+        pkg_units_var = tk.StringVar(value=str(getattr(product, "package_units", 0) if product else 0))
+        pkg_qty_var = tk.StringVar(value="1")
+
+        def pkg_row(label, var):
+            f = tk.Frame(pkg_body, bg=bg)
+            f.pack(fill="x", pady=2)
+            tk.Label(f, text=label, width=22, anchor="w",
+                     bg=bg, fg=fg, font=("Arial", 10)).pack(side="left")
+            ttk.Entry(f, textvariable=var, width=12).pack(side="left")
+
+        pkg_row("Costo del paquete:", pkg_cost_var)
+        pkg_row("Unidades por paquete:", pkg_units_var)
+        pkg_row("Cantidad de paquetes:", pkg_qty_var)
+
+        # Costo unitario calculado
+        tk.Label(pkg_body, text="Costo unitario:", bg=bg, fg=fg,
+                 font=("Arial", 10, "bold")).pack(anchor="w", pady=(6, 0))
+        cost_unit_lbl = tk.Label(pkg_body, text="$0", bg=bg, fg="#7dd87d",
+                                 font=("Arial", 11, "bold"))
+        cost_unit_lbl.pack(anchor="w")
+
+        tk.Label(pkg_body, text="Stock total:", bg=bg, fg=fg,
+                 font=("Arial", 10, "bold")).pack(anchor="w", pady=(4, 0))
+        stock_total_lbl = tk.Label(pkg_body, text="0", bg=bg, fg="#7dd87d",
+                                    font=("Arial", 11, "bold"))
+        stock_total_lbl.pack(anchor="w")
+
+        def recalc_pkg():
+            try:
+                pc = float(pkg_cost_var.get() or 0)
+                pu = float(pkg_units_var.get() or 0)
+                pq = float(pkg_qty_var.get() or 1)
+                if pu > 0:
+                    unit_cost = pc / pu
+                    cost_unit_lbl.configure(text=f"${unit_cost:,.0f}".replace(",", "."))
+                    stock_total_lbl.configure(text=f"{int(pu * pq)}")
+                    cost_var.set(f"{unit_cost:.0f}")
+            except Exception:
+                pass
+
+        for v in (pkg_cost_var, pkg_units_var, pkg_qty_var):
+            v.trace_add("write", lambda *a: recalc_pkg())
+
+        # ---- Tipo de venta ----
+        ttk.Label(inner, text="Tipo de venta:",
+                  bootstyle="inverse-dark").pack(pady=(10, 3))
+        type_var = tk.StringVar(value=unit_type)
+        type_frame = ttk.Frame(inner, bootstyle="dark")
+        type_frame.pack()
+        for val, txt in [("unidad", "📦 Unidad"), ("peso", "⚖️ Peso"),
+                         ("volumen", "💧 Volumen")]:
+            ttk.Radiobutton(type_frame, text=txt, variable=type_var,
+                            value=val, bootstyle="info").pack(side="left", padx=5)
+
+        ttk.Label(inner, text="Unidad de medida:",
+                  bootstyle="inverse-dark").pack(pady=(10, 3))
+        unit_var = tk.StringVar(value=unit)
+        unit_combo = ttk.Combobox(inner, textvariable=unit_var,
+                                   state="readonly", width=15)
+        unit_combo.pack(pady=3)
+
+        def refresh_units(*args):
+            t = type_var.get()
+            if t == "unidad":
+                ops = ["unidad"]
+            elif t == "peso":
+                ops = ["kg", "gr", "mg"]
+            else:
+                ops = ["Lt", "ml"]
+            unit_combo.configure(values=ops)
+            if unit_var.get() not in ops:
+                unit_var.set(ops[0])
+
+        type_var.trace_add("write", refresh_units)
+        refresh_units()
+
+        # ---- Costo y margen ----
+        f_cm = ttk.Frame(inner, bootstyle="dark")
+        f_cm.pack(pady=8, fill="x", padx=20)
+        ttk.Label(f_cm, text="Costo unitario:",
+                  bootstyle="inverse-dark").pack(side="left")
+        cost_var = tk.StringVar(value=str(int(getattr(product, "cost", 0) or 0) if product else 0))
+        ttk.Entry(f_cm, textvariable=cost_var, width=12).pack(side="left", padx=6)
+        ttk.Label(f_cm, text="  % Ganancia:",
+                  bootstyle="inverse-dark").pack(side="left")
+        margin_var = tk.StringVar(value=str(int(getattr(product, "margin_percent", 20) or 20) if product else 20))
+        ttk.Entry(f_cm, textvariable=margin_var, width=8).pack(side="left", padx=6)
+
+        # ---- Precio ----
+        f_price = ttk.Frame(inner, bootstyle="dark")
+        f_price.pack(pady=6, fill="x", padx=20)
+        ttk.Label(f_price, text="Precio venta:",
+                  bootstyle="inverse-dark").pack(side="left")
+        price_var = tk.StringVar(value=str(int(price) if price else 0))
+        ttk.Entry(f_price, textvariable=price_var, width=15).pack(side="left", padx=6)
+
+        def recalcular_precio():
+            try:
+                c = float(cost_var.get() or 0)
+                m = float(margin_var.get() or 0)
+                p = c * (1 + m / 100.0)
+                price_var.set(f"{p:.0f}")
+                if round_var.get():
+                    recalcular_redondeo()
+            except Exception:
+                pass
+
+        ttk.Button(f_price, text="↻ Recalcular",
+                   command=recalcular_precio,
+                   bootstyle="info").pack(side="left", padx=6)
+
+        # ---- Redondeo ----
+        round_frame = ttk.LabelFrame(inner, text="🎯 Redondeo de precio",
+                                      bootstyle="dark")
+        round_frame.pack(fill="x", padx=20, pady=8)
+        round_var = tk.IntVar(value=1 if product and getattr(product, "round_enabled", 0) else 0)
+        ttk.Checkbutton(round_frame, text="Redondear precio final",
+                        variable=round_var,
+                        bootstyle="info-round-toggle",
+                        command=lambda: recalcular_redondeo()
+                        ).pack(anchor="w", padx=8, pady=4)
+
+        f_round = tk.Frame(round_frame, bg=bg)
+        f_round.pack(fill="x", padx=8, pady=4)
+        tk.Label(f_round, text="Redondear al:", bg=bg, fg=fg,
+                 font=("Arial", 10)).pack(side="left")
+        round_to_var = tk.StringVar(value=str(getattr(product, "round_to", 100) if product else 100))
+        ttk.Combobox(f_round, textvariable=round_to_var, state="readonly",
+                     values=["10", "50", "100", "500", "1000"],
+                     width=8).pack(side="left", padx=6)
+
+        tk.Label(round_frame, text="Precio redondeado:", bg=bg, fg=fg,
+                 font=("Arial", 10, "bold")).pack(anchor="w", padx=8)
+        rounded_var = tk.StringVar(value=str(getattr(product, "rounded_price", 0) if product else 0))
+        ttk.Entry(round_frame, textvariable=rounded_var,
+                  width=15).pack(anchor="w", padx=8, pady=4)
+
+        def recalcular_redondeo():
+            if not round_var.get():
+                return
+            try:
+                p = float(price_var.get() or 0)
+                rto = float(round_to_var.get() or 100)
+                if rto <= 0:
+                    return
+                redondeado = round(p / rto) * rto
+                rounded_var.set(f"{redondeado:.0f}")
+            except Exception:
+                pass
+
+        def toggle_round():
+            recalcular_redondeo()
+        round_to_var.trace_add("write", lambda *a: recalcular_redondeo())
+        price_var.trace_add("write", lambda *a: recalcular_redondeo())
+
+        # ---- Stock ----
+        f_stock = ttk.Frame(inner, bootstyle="dark")
+        f_stock.pack(pady=6, fill="x", padx=20)
+        ttk.Label(f_stock, text="Stock:",
+                  bootstyle="inverse-dark").pack(side="left")
+        stock_var = tk.StringVar(value=str(int(stock) if stock else 0))
+        stock_entry = ttk.Entry(f_stock, textvariable=stock_var, width=12)
+        stock_entry.pack(side="left", padx=6)
+
+        def toggle_pkg():
+            if pkg_var.get():
+                for ch in pkg_body.winfo_children():
+                    _set_state(ch, "normal")
+                stock_entry.configure(state="disabled")
+                recalc_pkg()
+            else:
+                for ch in pkg_body.winfo_children():
+                    _set_state(ch, "disabled")
+                stock_entry.configure(state="normal")
+
+        def _set_state(widget, state):
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+            for child in widget.winfo_children():
+                _set_state(child, state)
+
+        toggle_pkg()
+
+        # ---- Vencimiento ----
+        f_exp = ttk.Frame(inner, bootstyle="dark")
+        f_exp.pack(pady=6, fill="x", padx=20)
+        ttk.Label(f_exp, text="Vence (YYYY-MM-DD):",
+                  bootstyle="inverse-dark").pack(side="left")
+        expiry_var = tk.StringVar(value=getattr(product, "expiry_date", "") if product else "")
+        ttk.Entry(f_exp, textvariable=expiry_var, width=15).pack(side="left", padx=6)
+
+        # ---- Pausado ----
+        paused_var = tk.IntVar(value=1 if product and getattr(product, "paused", 0) else 0)
+        ttk.Checkbutton(inner,
+                        text="⏸️ Producto pausado (no aparece en PAGOS)",
+                        variable=paused_var,
+                        bootstyle="warning-round-toggle").pack(pady=10)
+
+        # ---- Sugerencia inteligente ----
+        sugerencia_frame = tk.Frame(inner, bg="#3a3a10")
+        sugerencia_lbl = tk.Label(sugerencia_frame, text="", bg="#3a3a10",
+                                  fg="#ffd166", font=("Arial", 9),
+                                  justify="left", wraplength=460)
+        sugerencia_lbl.pack(side="left", padx=8, pady=6)
+        sugerencia_data = {"data": None}
+
+        def aplicar_sugerencia():
+            d = sugerencia_data["data"]
+            if not d:
+                return
+            pkg_var.set(1)
+            pkg_cost_var.set(str(d["package_cost"]))
+            pkg_units_var.set(str(d["package_units"]))
+            pkg_qty_var.set("1")
+            toggle_pkg()
+            recalc_pkg()
+            sugerencia_frame.pack_forget()
+
+        ttk.Button(sugerencia_frame, text="Usar sugerencia",
+                   command=aplicar_sugerencia,
+                   bootstyle="warning").pack(side="right", padx=8, pady=6)
+
+        def check_sugerencia(*args):
+            if product_id:  # no sugerir al editar
+                return
+            n = name_entry.get().strip()
+            if len(n) < 3:
+                sugerencia_frame.pack_forget()
+                return
+            try:
+                data = self.product_use_case.find_last_package_for_name(n)
+            except Exception:
+                data = None
+            if not data:
+                sugerencia_frame.pack_forget()
+                return
+            sugerencia_data["data"] = data
+            txt = (f"💡 La última vez compraste «{data['name']}» a "
+                   f"${data['package_cost']:,.0f} por paquete de "
+                   f"{data['package_units']} unidades. ¿Quieres usar esos datos?")
+            sugerencia_lbl.configure(text=txt)
+            sugerencia_frame.pack(fill="x", padx=20, pady=6)
+
+        name_entry.bind("<KeyRelease>", check_sugerencia, add="+")
+
+        # ---- Guardar ----
+        def guardar():
+            n = name_entry.get().strip()
+            if not n:
+                MD.show_error("El nombre es obligatorio.", "Error", parent=popup)
+                return
+            try:
+                pl = price_var.get().replace("$", "").replace(".", "").replace(",", ".").strip()
+                p_val = float(pl) if pl else 0.0
+                rto = int(float(round_to_var.get() or 100))
+                rp_val = float(rounded_var.get() or p_val)
+                r_enabled = 1 if round_var.get() else 0
+                c_val = float(cost_var.get() or 0)
+                m_val = float(margin_var.get() or 0)
+                is_pkg = 1 if pkg_var.get() else 0
+                pkg_c = float(pkg_cost_var.get() or 0)
+                pkg_u = int(float(pkg_units_var.get() or 0))
+                if is_pkg:
+                    s_val = int(float(pkg_qty_var.get() or 1) * pkg_u)
+                else:
+                    s_val = float(stock_var.get().replace(",", ".") or 0)
+            except ValueError:
+                MD.show_error("Revisa los valores numéricos.", "Error",
+                              parent=popup)
+                return
+            expiry = expiry_var.get().strip()
+            if expiry:
+                try:
+                    datetime.strptime(expiry, "%Y-%m-%d")
+                except ValueError:
+                    MD.show_error("Fecha inválida. Usa YYYY-MM-DD.",
+                                  "Error", parent=popup)
+                    return
+
+            try:
+                if product_id:
+                    self.product_use_case.update_product(
+                        product_id, n, barcode_entry.get().strip(),
+                        p_val, s_val,
+                        unit_type=type_var.get(), unit=unit_var.get(),
+                        group_name="", cost=c_val, margin_percent=m_val,
+                        rounded_price=rp_val,
+                        round_enabled=r_enabled, round_to=rto,
+                        package_cost=pkg_c, package_units=pkg_u,
+                        is_package=is_pkg,
+                        paused=paused_var.get(),
+                        expiry_date=expiry)
+                else:
+                    self.product_use_case.add_product(
+                        n, barcode_entry.get().strip(),
+                        p_val, s_val,
+                        unit_type=type_var.get(), unit=unit_var.get(),
+                        group_name="", cost=c_val, margin_percent=m_val,
+                        rounded_price=rp_val,
+                        round_enabled=r_enabled, round_to=rto,
+                        package_cost=pkg_c, package_units=pkg_u,
+                        is_package=is_pkg,
+                        paused=paused_var.get(),
+                        expiry_date=expiry)
+                self.product_use_case.clear_product_draft()
+            except Exception as e:
+                MD.show_error(f"Error al guardar: {e}", "Error", parent=popup)
+                return
+
+            self.load_products()
+            popup.destroy()
+            self.scan_entry.focus_set()
+            if auto_select and barcode_entry.get().strip():
+                b = barcode_entry.get().strip()
+                for it in self.tree.get_children():
+                    if str(self.tree.item(it, 'values')[2]).strip() == b:
+                        self.tree.selection_set(it)
+                        self.tree.focus(it)
+                        self.tree.see(it)
+                        break
+
+        bf = ttk.Frame(inner, bootstyle="dark")
+        bf.pack(pady=15)
+        ttk.Button(bf, text="💾 Guardar", command=guardar,
+                   style="DarkGreen.TButton").pack(side="left", padx=6)
+        ttk.Button(bf, text="❌ Cancelar",
+                   command=popup.destroy).pack(side="left", padx=6)
+
+        show_popup_smooth(popup)
+        try:
+            popup.grab_set()
+        except Exception:
+            pass
+
+        if barcode:
+            name_entry.focus_set()
+        else:
+            barcode_entry.focus_set()
+
+    # ============================================================
+    # SCAN
+    # ============================================================
+    def lookup_barcode(self, event=None):
+        codigo = self.scan_var.get().strip()
+        if not codigo:
+            return
+        enc = None
+        for p in self.product_use_case.list_products():
+            if str(p.barcode).strip() == codigo:
+                enc = p
+                break
+        if enc:
+            self.search_var.set("")
+            self.load_products()
+            for it in self.tree.get_children():
+                if str(self.tree.item(it, 'values')[2]).strip() == codigo:
+                    self.tree.selection_set(it)
+                    self.tree.focus(it)
+                    self.tree.see(it)
+                    break
+            r = MD.yesno(
+                f"✅ Producto encontrado:\n\n"
+                f"Nombre: {enc.name}\n"
+                f"Precio: ${enc.price:,.0f}\n"
+                f"Stock: {enc.stock:g} {enc.unit}\n\n"
+                f"¿Deseas EDITARLO?".replace(",", "."),
+                "Producto Encontrado", parent=self)
+            if r == "Yes":
+                for it in self.tree.get_children():
+                    if str(self.tree.item(it, 'values')[2]).strip() == codigo:
+                        self._edit_item(it)
+                        break
+        else:
+            r = MD.yesno(f"⚠️ '{codigo}' NO está registrado.\n\n¿Agregarlo?",
+                         "No encontrado", parent=self)
+            if r == "Yes":
+                self.add_product_popup(barcode_prefill=codigo, auto_select=True)
+        self.scan_var.set("")
+        self.scan_entry.focus_set()
+
+    # ============================================================
+    # ACCIONES DE IDEAS
+    # ============================================================
+    def print_labels(self):
+        from presentation.views.widgets import generate_labels_pdf
+        from tkinter import filedialog
+        if self._label_selection:
+            productos = self.product_use_case.get_products_for_labels(
+                list(self._label_selection))
+        else:
+            r = MD.yesno("No hay productos marcados.\n¿Generar etiquetas para TODOS los activos?",
+                         "Etiquetas", parent=self)
+            if r != "Yes":
+                return
+            productos = self.product_use_case.get_products_for_labels()
+        if not productos:
+            MD.show_warning("No hay productos para etiquetar.", "Etiquetas",
+                            parent=self)
+            return
+        copias = simpledialog.askinteger(
+            "Copias", "¿Cuántas copias por producto?",
+            initialvalue=1, minvalue=1, maxvalue=50, parent=self)
+        if not copias:
+            copias = 1
+        ruta = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+            initialfile=f"etiquetas_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            parent=self)
+        if not ruta:
+            return
+        try:
+            generate_labels_pdf(productos, ruta, copies=copias)
+            MD.show_info(f"PDF generado:\n{ruta}", "Etiquetas", parent=self)
+            self._label_selection.clear()
+        except Exception as e:
+            MD.show_error(f"No se pudo generar el PDF:\n{e}", "Error", parent=self)
+
+    def open_charts(self):
+        from presentation.views.widgets import ChartsWindow
+        sale_case = getattr(self, "_sale_case", None)
+        if not sale_case:
+            MD.show_warning("No disponible desde aquí.", "Gráficos", parent=self)
+            return
+        ChartsWindow(self, sale_case)
+
+    def open_returns_window(self):
+        from presentation.views.widgets import ReturnsWindow
+        sale_case = getattr(self, "_sale_case", None)
+        if not sale_case:
+            MD.show_warning("No disponible desde aquí.", "Devoluciones",
+                            parent=self)
+            return
+        ReturnsWindow(self, sale_case,
+                      on_done=lambda: self.load_products())
+
+    def open_expiry_alerts(self):
+        # Reutilizamos un diálogo simple
+        cfg = self.product_use_case.get_expiry_settings()
+        pop = Toplevel(self)
+        pop.title("📅 Alertas de vencimiento")
+        pop.geometry("460x400")
+        pop.transient(self.winfo_toplevel())
+        pop.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
+
+        ttk.Label(pop, text="📅 Alertas de vencimiento",
+                  font=("Arial", 14, "bold"),
+                  bootstyle="inverse-dark").pack(pady=12)
+        ttk.Label(pop, text="Configura los días de aviso antes del vencimiento.",
+                  bootstyle="inverse-dark").pack(pady=4)
+
+        def row_field(label, value):
+            f = tk.Frame(pop, bg=bg)
+            f.pack(fill="x", padx=20, pady=6)
+            tk.Label(f, text=label, bg=bg, fg=fg,
+                     width=28, anchor="w", font=("Arial", 10)).pack(side="left")
+            v = tk.StringVar(value=str(value))
+            ttk.Entry(f, textvariable=v, width=10,
+                      justify="center").pack(side="left")
+            return v
+
+        v1 = row_field("🟠 Alerta temprana (días):", cfg["warn_days_1"])
+        v2 = row_field("🟡 Alerta cercana (días):", cfg["warn_days_2"])
+        v3 = row_field("💡 Zona de oferta (días):", cfg["offer_days"])
+        v4 = row_field("🏷️ Descuento de oferta (%):", cfg["offer_discount"])
+
+        def guardar():
+            try:
+                w1 = int(float(v1.get() or 15))
+                w2 = int(float(v2.get() or 7))
+                od = int(float(v3.get() or 2))
+                disc = float(v4.get() or 20)
+            except ValueError:
+                MD.show_error("Valores inválidos.", "Error", parent=pop)
+                return
+            if not (w1 >= w2 >= od):
+                MD.show_error("Los días deben cumplir: temprana ≥ cercana ≥ oferta.",
+                              "Orden inválido", parent=pop)
+                return
+            self.product_use_case.set_expiry_settings(w1, w2, od, disc)
+            MD.show_info("✅ Alertas configuradas.", "Listo", parent=pop)
+            pop.destroy()
+            self.load_products()
+
+        bf = ttk.Frame(pop, bootstyle="dark")
+        bf.pack(pady=14)
+        ttk.Button(bf, text="💾 Guardar", command=guardar,
+                   bootstyle="success").pack(side="left", padx=5)
+        ttk.Button(bf, text="Ver productos con alerta",
+                   command=lambda: [pop.destroy(),
+                                    self.filter_status.set("Por vencer"),
+                                    self.filter_products()],
+                   bootstyle="info").pack(side="left", padx=5)
+        ttk.Button(bf, text="Cerrar", command=pop.destroy,
+                   bootstyle="secondary").pack(side="left", padx=5)
+
+        show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+        except Exception:
+            pass
+
+    def open_price_history_global(self):
+        self._open_price_history_window(product_id=None)
+
+    def open_price_history_for(self, product_id):
+        self._open_price_history_window(product_id=product_id)
+
+    def _open_price_history_window(self, product_id=None):
+        pop = Toplevel(self)
+        pop.title("💰 Historial de precios")
+        pop.geometry("900x560")
+        pop.transient(self.winfo_toplevel())
+        pop.withdraw()
+        bg = ttk.Style().colors.bg
+        fg = ttk.Style().colors.fg
+
+        ttk.Label(pop, text="💰 Historial de precios",
+                  font=("Arial", 14, "bold"),
+                  bootstyle="inverse-dark").pack(pady=10)
+
+        if product_id:
+            data = self.product_use_case.get_price_history(product_id)
+        else:
+            data = self.product_use_case.get_all_price_history()
+
+        frame, tree = make_scrolled_treeview(
+            pop,
+            columns=("Fecha", "Producto", "Antes", "Ahora", "AntesRed", "AhoraRed"),
+            headings=[
+                ("Fecha", "Fecha", 150, "center"),
+                ("Producto", "Producto", 220, "w"),
+                ("Antes", "Precio ant.", 100, "e"),
+                ("Ahora", "Precio nuevo", 100, "e"),
+                ("AntesRed", "Redond. ant.", 100, "e"),
+                ("AhoraRed", "Redond. nuevo", 110, "e"),
+            ],
+            bootstyle="dark")
+        frame.pack(fill="both", expand=True, padx=10, pady=8)
+
+        for r in data:
+            tree.insert("", "end", values=(
+                r["date"],
+                r.get("product_name", "-"),
+                f"${r['old_price']:,.0f}".replace(",", "."),
+                f"${r['new_price']:,.0f}".replace(",", "."),
+                f"${r.get('old_rounded_price', 0):,.0f}".replace(",", "."),
+                f"${r.get('new_rounded_price', 0):,.0f}".replace(",", ".")))
+
+        def exportar():
+            from tkinter import filedialog
+            ruta = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Texto", "*.txt")],
+                initialfile=f"historial_precios_{datetime.now().strftime('%Y%m%d')}.txt",
+                parent=pop)
+            if not ruta:
+                return
+            try:
+                with open(ruta, "w", encoding="utf-8") as f:
+                    f.write("HISTORIAL DE PRECIOS\n" + "=" * 90 + "\n\n")
+                    for r in data:
+                        f.write(f"[{r['date']}] {r.get('product_name','-')}\n"
+                                f"   Real: ${r['old_price']:,.0f} → ${r['new_price']:,.0f}\n"
+                                f"   Redondeado: ${r.get('old_rounded_price',0):,.0f} → "
+                                f"${r.get('new_rounded_price',0):,.0f}\n\n")
+                MD.show_info(f"Exportado:\n{ruta}", "Listo", parent=pop)
+            except Exception as e:
+                MD.show_error(f"Error: {e}", "Error", parent=pop)
+
+        bf = ttk.Frame(pop, bootstyle="dark")
+        bf.pack(pady=8)
+        ttk.Button(bf, text="📄 Exportar TXT", command=exportar,
+                   bootstyle="info").pack(side="left", padx=5)
+        ttk.Button(bf, text="Cerrar", command=pop.destroy,
+                   bootstyle="secondary").pack(side="left", padx=5)
+
+        show_popup_smooth(pop)
+        try:
+            pop.grab_set()
+        except Exception:
+            pass
