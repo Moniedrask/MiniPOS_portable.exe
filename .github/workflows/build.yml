@@ -1,35 +1,107 @@
-name: Compilar EXE para Windows
+name: Build MiniPOS Portable
 
 on:
   push:
-    branches: [ "main", "master" ]
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
+    name: Build Windows (.exe)
     runs-on: windows-latest
 
     steps:
-    - name: Descargar el código
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Configurar Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Instalar dependencias
-      run: |
-        python -m pip install --upgrade pip
-        pip install ttkbootstrap openpyxl pyinstaller pystray Pillow reportlab
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Compilar con PyInstaller
-      run: |
-        cd MiniPOS_portable
-        pyinstaller --noconsole --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
+      - name: Build EXE
+        working-directory: ./MiniPOS_portable
+        run: |
+          pyinstaller --noconsole --onefile --paths=src ^
+            --name="miniPOS_portable-v2.5" main.py
 
-    - name: Subir el archivo EXE
-      uses: actions/upload-artifact@v4
-      with:
-        name: miniPOS_portable-v2.5
-        path: MiniPOS_portable/dist/miniPOS_portable-v2.5.exe
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniPOS_portable-windows
+          path: MiniPOS_portable/dist/miniPOS_portable-v2.5.exe
+
+  build-linux:
+    name: Build Linux (binary)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps (tkinter)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Linux binary
+        working-directory: ./MiniPOS_portable
+        run: |
+          pyinstaller --onefile --paths=src \
+            --name="miniPOS_portable-v2.5" main.py
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniPOS_portable-linux
+          path: MiniPOS_portable/dist/miniPOS_portable-v2.5
+
+  release:
+    name: Create Release
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: miniPOS_portable-windows
+          path: ./release/windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: miniPOS_portable-linux
+          path: ./release/linux
+
+      - name: Rename Linux artifact
+        run: |
+          mv ./release/linux/miniPOS_portable-v2.5 \
+             ./release/linux/miniPOS_portable-v2.5-linux
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./release/windows/miniPOS_portable-v2.5.exe
+            ./release/linux/miniPOS_portable-v2.5-linux
+          generate_release_notes: true
