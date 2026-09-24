@@ -10,21 +10,47 @@ class DBManager:
             if getattr(sys, 'frozen', False):
                 base = os.path.dirname(sys.executable)
             else:
-                base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+                base = os.path.abspath(os.path.join(
+                    os.path.dirname(__file__), '..', '..', '..'))
             db_path = os.path.join(base, 'data', 'ventas.db')
 
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.db_path = db_path
+        self.conn = None
         self._init_db()
 
     # ============================================================
     # CONEXIÓN
     # ============================================================
     def get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        """Conexión persistente (compatible con código viejo que la usa)."""
+        if self.conn is None:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row
+            try:
+                self.conn.execute("PRAGMA foreign_keys = ON")
+                self.conn.execute("PRAGMA journal_mode=WAL")
+                self.conn.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
+        return self.conn
+
+    def close_connection(self):
+        """Cierra la conexión (para exportar/importar BD)."""
+        if self.conn is not None:
+            try:
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = None
+
+    # Alias de compatibilidad
+    def close(self):
+        self.close_connection()
 
     # ============================================================
     # INICIALIZACIÓN
@@ -38,13 +64,13 @@ class DBManager:
             CREATE TABLE IF NOT EXISTS products (
                 product_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                barcode TEXT,
+                barcode TEXT DEFAULT '',
                 price REAL NOT NULL DEFAULT 0,
-                stock INTEGER NOT NULL DEFAULT 0,
+                stock REAL NOT NULL DEFAULT 0,
                 unit_type TEXT DEFAULT 'unidad',
                 unit TEXT DEFAULT 'unidad',
-                created_at TEXT,
-                updated_at TEXT,
+                created_at TEXT DEFAULT '',
+                updated_at TEXT DEFAULT '',
                 group_name TEXT DEFAULT '',
                 cost REAL DEFAULT 0,
                 margin_percent REAL DEFAULT 20,
@@ -85,7 +111,7 @@ class DBManager:
                 sale_id INTEGER NOT NULL,
                 product_id INTEGER,
                 product_name TEXT,
-                barcode TEXT,
+                barcode TEXT DEFAULT '',
                 quantity REAL NOT NULL DEFAULT 0,
                 unit TEXT DEFAULT 'unidad',
                 unit_price REAL NOT NULL DEFAULT 0,
@@ -95,7 +121,7 @@ class DBManager:
             )
         ''')
 
-        # ---------- PAGOS MIXTOS ----------
+        # ---------- PAGOS MIXTOS (idea 3) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS sale_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,7 +132,7 @@ class DBManager:
             )
         ''')
 
-        # ---------- HISTORIAL DE PRECIOS ----------
+        # ---------- HISTORIAL DE PRECIOS (idea 28) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS price_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,10 +146,10 @@ class DBManager:
             )
         ''')
 
-        # ---------- CAJA (BASE DE CAJA) ----------
+        # ---------- SESIONES DE CAJA (idea 2) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS cash_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 open_date TEXT NOT NULL,
                 close_date TEXT,
                 initial_amount REAL DEFAULT 0,
@@ -132,6 +158,19 @@ class DBManager:
                 difference REAL DEFAULT 0,
                 notes TEXT DEFAULT '',
                 is_open INTEGER DEFAULT 1
+            )
+        ''')
+
+        # ---------- MOVIMIENTOS DE CAJA (idea 2, Fase 6) ----------
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS cash_movements (
+                movement_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                date TEXT NOT NULL,
+                type TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                notes TEXT DEFAULT '',
+                FOREIGN KEY (session_id) REFERENCES cash_sessions(session_id) ON DELETE SET NULL
             )
         ''')
 
@@ -165,24 +204,24 @@ class DBManager:
         cur.execute('''
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
-                value TEXT
+                value TEXT DEFAULT ''
             )
         ''')
 
         # ---------- BORRADORES ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS product_draft (
-                id INTEGER PRIMARY KEY,
-                data TEXT,
-                updated_at TEXT
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
         ''')
 
         cur.execute('''
             CREATE TABLE IF NOT EXISTS cart_draft (
-                id INTEGER PRIMARY KEY,
-                data TEXT,
-                updated_at TEXT
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                data TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             )
         ''')
 
@@ -196,60 +235,68 @@ class DBManager:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_products_paused ON products(paused)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_products_expiry ON products(expiry_date)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cash_movements_session ON cash_movements(session_id)")
 
         conn.commit()
-        conn.close()
 
-        # Migraciones suaves (por si la BD ya existía sin estas columnas)
+        # Migraciones suaves
         self._safe_migrations()
 
     # ============================================================
-    # MIGRACIONES SUAVES
+    # MIGRACIONES SUAVES (para no perder datos existentes)
     # ============================================================
     def _safe_migrations(self):
         conn = self.get_connection()
         cur = conn.cursor()
 
-        def add_column_if_missing(table, column, ddl):
+        def add_col_if_missing(table, col, ddl):
             try:
                 cur.execute(f"PRAGMA table_info({table})")
                 cols = [r["name"] for r in cur.fetchall()]
-                if column not in cols:
-                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                if col not in cols:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
                     conn.commit()
             except Exception:
                 pass
 
         # Productos
-        add_column_if_missing("products", "group_name", "TEXT DEFAULT ''")
-        add_column_if_missing("products", "cost", "REAL DEFAULT 0")
-        add_column_if_missing("products", "margin_percent", "REAL DEFAULT 20")
-        add_column_if_missing("products", "rounded_price", "REAL DEFAULT 0")
-        add_column_if_missing("products", "round_enabled", "INTEGER DEFAULT 0")
-        add_column_if_missing("products", "round_to", "INTEGER DEFAULT 100")
-        add_column_if_missing("products", "package_cost", "REAL DEFAULT 0")
-        add_column_if_missing("products", "package_units", "INTEGER DEFAULT 0")
-        add_column_if_missing("products", "is_package", "INTEGER DEFAULT 0")
-        add_column_if_missing("products", "paused", "INTEGER DEFAULT 0")
-        add_column_if_missing("products", "expiry_date", "TEXT DEFAULT ''")
-        add_column_if_missing("products", "unit_type", "TEXT DEFAULT 'unidad'")
-        add_column_if_missing("products", "unit", "TEXT DEFAULT 'unidad'")
+        for col, ddl in [
+            ("barcode", "TEXT DEFAULT ''"),
+            ("unit_type", "TEXT DEFAULT 'unidad'"),
+            ("unit", "TEXT DEFAULT 'unidad'"),
+            ("created_at", "TEXT DEFAULT ''"),
+            ("updated_at", "TEXT DEFAULT ''"),
+            ("group_name", "TEXT DEFAULT ''"),
+            ("cost", "REAL DEFAULT 0"),
+            ("margin_percent", "REAL DEFAULT 20"),
+            ("rounded_price", "REAL DEFAULT 0"),
+            ("round_enabled", "INTEGER DEFAULT 0"),
+            ("round_to", "INTEGER DEFAULT 100"),
+            ("package_cost", "REAL DEFAULT 0"),
+            ("package_units", "INTEGER DEFAULT 0"),
+            ("is_package", "INTEGER DEFAULT 0"),
+            ("paused", "INTEGER DEFAULT 0"),
+            ("expiry_date", "TEXT DEFAULT ''"),
+        ]:
+            add_col_if_missing("products", col, ddl)
 
         # Ventas
-        add_column_if_missing("sales", "subtotal", "REAL DEFAULT 0")
-        add_column_if_missing("sales", "discount", "REAL DEFAULT 0")
-        add_column_if_missing("sales", "customer_name", "TEXT DEFAULT ''")
-        add_column_if_missing("sales", "is_credit", "INTEGER DEFAULT 0")
-        add_column_if_missing("sales", "is_paid", "INTEGER DEFAULT 1")
-        add_column_if_missing("sales", "amount_paid", "REAL DEFAULT 0")
-        add_column_if_missing("sales", "display_offset", "INTEGER DEFAULT 0")
-        add_column_if_missing("sales", "is_returned", "INTEGER DEFAULT 0")
+        for col, ddl in [
+            ("subtotal", "REAL DEFAULT 0"),
+            ("discount", "REAL DEFAULT 0"),
+            ("customer_name", "TEXT DEFAULT ''"),
+            ("is_credit", "INTEGER DEFAULT 0"),
+            ("is_paid", "INTEGER DEFAULT 1"),
+            ("amount_paid", "REAL DEFAULT 0"),
+            ("display_offset", "INTEGER DEFAULT 0"),
+            ("is_returned", "INTEGER DEFAULT 0"),
+        ]:
+            add_col_if_missing("sales", col, ddl)
 
         # Items
-        add_column_if_missing("sale_items", "returned_qty", "REAL DEFAULT 0")
-        add_column_if_missing("sale_items", "unit", "TEXT DEFAULT 'unidad'")
-
-        conn.close()
+        add_col_if_missing("sale_items", "returned_qty", "REAL DEFAULT 0")
+        add_col_if_missing("sale_items", "unit", "TEXT DEFAULT 'unidad'")
+        add_col_if_missing("sale_items", "barcode", "TEXT DEFAULT ''")
 
     # ============================================================
     # CONFIGURACIÓN (settings)
@@ -271,8 +318,7 @@ class DBManager:
             cur = conn.cursor()
             cur.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                (key, str(value))
-            )
+                (key, str(value)))
             conn.commit()
         except Exception:
             pass
@@ -299,16 +345,18 @@ class DBManager:
     # ============================================================
     def backup_to(self, dest_path):
         try:
+            self.close_connection()
             src = sqlite3.connect(self.db_path)
             dst = sqlite3.connect(dest_path)
             with dst:
                 src.backup(dst)
             dst.close()
             src.close()
+            self.get_connection()
             return True, "Backup realizado"
         except Exception as e:
+            try:
+                self.get_connection()
+            except Exception:
+                pass
             return False, str(e)
-
-    def close(self):
-        # No hay conexión persistente, nada que cerrar
-        pass
