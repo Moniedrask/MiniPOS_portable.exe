@@ -2615,7 +2615,8 @@ class MainView(tk.Tk):
             win.focus_force()
         except Exception:
             pass
-            # ============================================================
+            
+# ============================================================
 # FIADOS — versión completa con checkboxes y hotkeys
 # ============================================================
 def show_credit_sales(self):
