@@ -141,7 +141,6 @@ class ProductCase:
     # IDEA 4: PRODUCTOS PAUSADOS
     # ============================================================
     def set_paused(self, product_id, paused):
-        """Pausa o reactiva un producto sin borrarlo."""
         conn = self.db.get_connection()
         cur = conn.cursor()
         cur.execute("UPDATE products SET paused = ? WHERE product_id = ?",
@@ -163,7 +162,6 @@ class ProductCase:
     # ============================================================
     def register_price_change(self, product_id, old_price, new_price,
                               old_rounded=0.0, new_rounded=0.0):
-        """Guarda un cambio de precio en el historial."""
         try:
             conn = self.db.get_connection()
             cur = conn.cursor()
@@ -177,7 +175,6 @@ class ProductCase:
             pass
 
     def get_price_history(self, product_id):
-        """Devuelve lista de dicts con el historial de precios de un producto."""
         cur = self.db.get_connection().cursor()
         cur.execute(
             "SELECT * FROM price_history WHERE product_id = ? ORDER BY date DESC",
@@ -198,9 +195,6 @@ class ProductCase:
         return result
 
     def get_all_price_history(self, start_date=None, end_date=None):
-        """Devuelve todo el historial con el nombre del producto.
-        Opcional: filtrar por rango de fechas.
-        """
         cur = self.db.get_connection().cursor()
         sql = '''
             SELECT ph.*, p.name AS product_name, p.barcode AS product_barcode
@@ -240,10 +234,6 @@ class ProductCase:
     # IDEA 25 + 27: SUGERENCIA INTELIGENTE DE PAQUETE
     # ============================================================
     def find_last_package_for_name(self, name):
-        """
-        Busca el último producto con nombre similar que tenga datos de paquete.
-        Devuelve dict {package_cost, package_units, name} o None.
-        """
         if not name or not str(name).strip():
             return None
         name_lower = str(name).strip().lower()
@@ -281,7 +271,6 @@ class ProductCase:
     # IDEA 16: VENCIMIENTO DE PRODUCTOS
     # ============================================================
     def get_expiry_settings(self):
-        """Lee configuración de alertas de vencimiento desde settings."""
         return {
             "warn_days_1": int(self.db.get_setting("expiry_warn_days_1", "15") or 15),
             "warn_days_2": int(self.db.get_setting("expiry_warn_days_2", "7") or 7),
@@ -296,7 +285,6 @@ class ProductCase:
         self.db.set_setting("expiry_offer_discount", str(float(offer_discount)))
 
     def get_products_with_expiry(self):
-        """Devuelve todos los productos con fecha de vencimiento válida."""
         cur = self.db.get_connection().cursor()
         cur.execute("""
             SELECT * FROM products
@@ -307,13 +295,6 @@ class ProductCase:
         return [self._row_to_product(r) for r in rows]
 
     def get_expiring_products(self, days=None):
-        """
-        Devuelve productos que vencen dentro de `days` (o el máximo
-        configurado si days=None). Cada item incluye:
-        - product
-        - days_left (int, puede ser negativo si ya venció)
-        - status: 'expired' | 'offer' | 'warn1' | 'warn2' | 'ok'
-        """
         cfg = self.get_expiry_settings()
         if days is None:
             days = max(cfg["warn_days_1"], cfg["warn_days_2"], cfg["offer_days"])
@@ -347,14 +328,9 @@ class ProductCase:
         return resultado
 
     def get_expiring_count(self):
-        """Cantidad de productos con alguna alerta (para badges)."""
         return len([x for x in self.get_expiring_products() if x["status"] != "ok"])
 
     def apply_offer_discount(self, product_id, discount_percent=None):
-        """
-        Aplica un descuento al precio redondeado de un producto (idea 16 → oferta).
-        Guarda como cambio de precio en el historial.
-        """
         cfg = self.get_expiry_settings()
         if discount_percent is None:
             discount_percent = cfg["offer_discount"]
@@ -383,13 +359,9 @@ class ProductCase:
         return True, f"Descuento del {discount_percent}% aplicado"
 
     # ============================================================
-    # IDEA 5: ETIQUETAS (necesita datos del producto)
+    # IDEA 5: ETIQUETAS
     # ============================================================
     def get_products_for_labels(self, product_ids=None):
-        """
-        Devuelve los productos que se van a imprimir en etiquetas.
-        Si product_ids es None, devuelve todos los activos.
-        """
         if product_ids:
             return [p for p in (self.get_product(pid) for pid in product_ids) if p]
         return self.list_active_products()
