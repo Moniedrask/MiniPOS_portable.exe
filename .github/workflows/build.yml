@@ -27,9 +27,7 @@ jobs:
 
       - name: Build EXE
         working-directory: ./MiniPOS_portable
-        run: |
-          pyinstaller --noconsole --onefile --paths=src ^
-            --name="miniPOS_portable-v2.5" main.py
+        run: pyinstaller --noconsole --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -62,9 +60,7 @@ jobs:
 
       - name: Build Linux binary
         working-directory: ./MiniPOS_portable
-        run: |
-          pyinstaller --onefile --paths=src \
-            --name="miniPOS_portable-v2.5" main.py
+        run: pyinstaller --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
