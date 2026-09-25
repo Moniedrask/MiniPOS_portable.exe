@@ -26,7 +26,7 @@ jobs:
 
       - name: Build EXE
         working-directory: ./MiniPOS_portable
-        run: pyinstaller --noconsole --onefile --paths=src --icon="miniPOS_portable.ico" --name="miniPOS_portable-v2.5" main.py
+        run: pyinstaller --noconsole --onefile --paths=src --icon="miniPOS_portable.ico" --collect-all ttkbootstrap --collect-all PIL --hidden-import=pystray._win32 --name="miniPOS_portable-v2.5" main.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -53,7 +53,7 @@ jobs:
 
       - name: Build EXE for Windows 7
         working-directory: ./MiniPOS_portable
-        run: pyinstaller --noconsole --onefile --paths=src --icon="miniPOS_portable.ico" --name="miniPOS_portable-v2.5-win7" main.py
+        run: pyinstaller --noconsole --onefile --paths=src --icon="miniPOS_portable.ico" --collect-all ttkbootstrap --collect-all PIL --hidden-import=pystray._win32 --name="miniPOS_portable-v2.5-win7" main.py
 
       - name: Upload Windows 7 artifact
         uses: actions/upload-artifact@v4
@@ -85,7 +85,7 @@ jobs:
 
       - name: Build with PyInstaller
         working-directory: ./MiniPOS_portable
-        run: pyinstaller --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
+        run: pyinstaller --onefile --paths=src --collect-all ttkbootstrap --collect-all PIL --name="miniPOS_portable-v2.5" main.py
 
       - name: Download linuxdeploy
         working-directory: ./MiniPOS_portable
@@ -98,20 +98,24 @@ jobs:
       - name: Build AppImage
         working-directory: ./MiniPOS_portable
         run: |
+          # Crear estructura AppDir con tamaño 512x512 para el icono
           mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/icons/hicolor/512x512/apps
           mkdir -p AppDir/usr/share/applications
           cp dist/miniPOS_portable-v2.5 AppDir/usr/bin/
 
-          cp miniPOS_portable.png AppDir/usr/share/icons/hicolor/256x256/apps/miniPOS_portable.png
+          # Copiar icono 512x512 a la ruta correcta
+          cp miniPOS_portable.png AppDir/usr/share/icons/hicolor/512x512/apps/miniPOS_portable.png
           cp miniPOS_portable.png AppDir/miniPOS_portable.png
 
+          # AppRun
           cat > AppDir/AppRun << 'EOF'
           #!/bin/bash
           exec "$APPDIR/usr/bin/miniPOS_portable-v2.5" "$@"
           EOF
           chmod +x AppDir/AppRun
 
+          # Desktop file
           cat > AppDir/usr/share/applications/miniPOS_portable.desktop << 'EOF'
           [Desktop Entry]
           Type=Application
@@ -123,6 +127,7 @@ jobs:
           EOF
           cp AppDir/usr/share/applications/miniPOS_portable.desktop AppDir/miniPOS_portable.desktop
 
+          # Generar AppImage
           ./linuxdeploy-extracted/AppRun --appdir AppDir --output appimage
 
       - name: Rename AppImage
@@ -130,7 +135,6 @@ jobs:
         run: |
           echo "=== Archivos AppImage generados ==="
           ls -la *.AppImage
-          # Renombrar cualquier AppImage generado a un nombre fijo
           for f in *.AppImage; do
             if [ -f "$f" ]; then
               mv "$f" miniPOS_portable-v2.5-x86_64.AppImage
