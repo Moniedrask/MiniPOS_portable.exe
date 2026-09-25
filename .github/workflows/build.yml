@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build Windows (.exe)
+    name: Build Windows (.exe) - Moderno
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -33,6 +33,33 @@ jobs:
         with:
           name: miniPOS_portable-windows
           path: MiniPOS_portable/dist/miniPOS_portable-v2.5.exe
+
+  build-windows7:
+    name: Build Windows 7 SP1 (.exe) - Compatible
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-win7.txt
+
+      - name: Build EXE for Windows 7
+        working-directory: ./MiniPOS_portable
+        run: pyinstaller --noconsole --onefile --paths=src --icon="miniPOS_portable.ico" --name="miniPOS_portable-v2.5-win7" main.py
+
+      - name: Upload Windows 7 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: miniPOS_portable-windows7
+          path: MiniPOS_portable/dist/miniPOS_portable-v2.5-win7.exe
 
   build-linux-appimage:
     name: Build Linux (AppImage)
@@ -65,31 +92,26 @@ jobs:
         run: |
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
-          # Extraer para evitar problemas con FUSE en CI
           ./linuxdeploy-x86_64.AppImage --appimage-extract
           mv squashfs-root linuxdeploy-extracted
 
       - name: Build AppImage
         working-directory: ./MiniPOS_portable
         run: |
-          # Crear estructura AppDir
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           mkdir -p AppDir/usr/share/applications
           cp dist/miniPOS_portable-v2.5 AppDir/usr/bin/
 
-          # Copiar el icono
           cp miniPOS_portable.png AppDir/usr/share/icons/hicolor/256x256/apps/miniPOS_portable.png
           cp miniPOS_portable.png AppDir/miniPOS_portable.png
 
-          # Crear AppRun
           cat > AppDir/AppRun << 'EOF'
           #!/bin/bash
           exec "$APPDIR/usr/bin/miniPOS_portable-v2.5" "$@"
           EOF
           chmod +x AppDir/AppRun
 
-          # Crear .desktop CON icono
           cat > AppDir/usr/share/applications/miniPOS_portable.desktop << 'EOF'
           [Desktop Entry]
           Type=Application
@@ -99,17 +121,13 @@ jobs:
           Categories=Utility;Office;
           Terminal=false
           EOF
-
-          # Copia del .desktop en AppDir raíz (algunos linuxdeploy lo requieren ahí)
           cp AppDir/usr/share/applications/miniPOS_portable.desktop AppDir/miniPOS_portable.desktop
 
-          # Generar el AppImage
           ./linuxdeploy-extracted/AppRun --appdir AppDir --output appimage
 
       - name: Rename AppImage
         working-directory: ./MiniPOS_portable
-        run: |
-          mv *.AppImage miniPOS_portable-v2.5-x86_64.AppImage || true
+        run: mv *.AppImage miniPOS_portable-v2.5-x86_64.AppImage || true
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -119,7 +137,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-windows, build-linux-appimage]
+    needs: [build-windows, build-windows7, build-linux-appimage]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -130,6 +148,12 @@ jobs:
         with:
           name: miniPOS_portable-windows
           path: ./release/windows
+
+      - name: Download Windows 7 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: miniPOS_portable-windows7
+          path: ./release/windows7
 
       - name: Download Linux AppImage
         uses: actions/download-artifact@v4
@@ -142,5 +166,6 @@ jobs:
         with:
           files: |
             ./release/windows/miniPOS_portable-v2.5.exe
+            ./release/windows7/miniPOS_portable-v2.5-win7.exe
             ./release/linux/miniPOS_portable-v2.5-x86_64.AppImage
           generate_release_notes: true
