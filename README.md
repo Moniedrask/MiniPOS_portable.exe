@@ -83,7 +83,7 @@ Ve a la sección **[Releases](../../releases)** y descarga el archivo para tu si
 |---|---|---|
 | 🪟 Windows moderno | `miniPOS_portable-v2.5.exe` | Windows 10, 11 |
 | 🪟 Windows 7 SP1 | `miniPOS_portable-v2.5-win7.exe` | Windows 7 SP1, 8, 8.1, 10, 11 |
-| 🐧 Linux | `miniPOS_portable-v2.5-x86_64.AppImage` | Ubuntu 20.04+, Debian 11+, Fedora 35+, Linux Mint 20+, etc. |
+| 🐧 Linux | `miniPOS_portable-v2.5-x86_64.AppImage` | Ubuntu 22.04+, Debian 12+, Fedora 35+, Linux Mint 21+, etc. |
 
 ### 🪟 Instalación en Windows
 
