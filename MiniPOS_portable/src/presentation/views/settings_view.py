@@ -17,12 +17,11 @@ import shutil
 import platform
 import tkinter as tk
 import ttkbootstrap as ttk
-from tkinter import filedialog, font as tkfont
+from tkinter import filedialog
 from datetime import datetime
 
 from presentation.views.widgets import (
-    MD, show_popup_smooth, apply_titlebar_theme,
-    get_business_info, save_business_info
+    MD, show_popup_smooth, get_business_info, save_business_info
 )
 
 
