@@ -10,7 +10,6 @@ jobs:
   build-windows:
     name: Build Windows (.exe)
     runs-on: windows-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +26,7 @@ jobs:
 
       - name: Build EXE
         working-directory: ./MiniPOS_portable
-        run: pyinstaller --noconsole --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
+        run: pyinstaller --noconsole --onefile --paths=src --icon="miniPOS_portable.ico" --name="miniPOS_portable-v2.5" main.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -35,10 +34,9 @@ jobs:
           name: miniPOS_portable-windows
           path: MiniPOS_portable/dist/miniPOS_portable-v2.5.exe
 
-  build-linux:
-    name: Build Linux (binary)
-    runs-on: ubuntu-latest
-
+  build-linux-appimage:
+    name: Build Linux (AppImage)
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,34 +46,84 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install system deps (tkinter)
+      - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk
+          sudo apt-get install -y python3-tk wget file
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build Linux binary
+      - name: Build with PyInstaller
         working-directory: ./MiniPOS_portable
         run: pyinstaller --onefile --paths=src --name="miniPOS_portable-v2.5" main.py
+
+      - name: Download linuxdeploy
+        working-directory: ./MiniPOS_portable
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          # Extraer para evitar problemas con FUSE en CI
+          ./linuxdeploy-x86_64.AppImage --appimage-extract
+          mv squashfs-root linuxdeploy-extracted
+
+      - name: Build AppImage
+        working-directory: ./MiniPOS_portable
+        run: |
+          # Crear estructura AppDir
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/applications
+          cp dist/miniPOS_portable-v2.5 AppDir/usr/bin/
+
+          # Copiar el icono
+          cp miniPOS_portable.png AppDir/usr/share/icons/hicolor/256x256/apps/miniPOS_portable.png
+          cp miniPOS_portable.png AppDir/miniPOS_portable.png
+
+          # Crear AppRun
+          cat > AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          exec "$APPDIR/usr/bin/miniPOS_portable-v2.5" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+
+          # Crear .desktop CON icono
+          cat > AppDir/usr/share/applications/miniPOS_portable.desktop << 'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=MiniPOS Portable
+          Exec=miniPOS_portable-v2.5
+          Icon=miniPOS_portable
+          Categories=Utility;Office;
+          Terminal=false
+          EOF
+
+          # Copia del .desktop en AppDir raíz (algunos linuxdeploy lo requieren ahí)
+          cp AppDir/usr/share/applications/miniPOS_portable.desktop AppDir/miniPOS_portable.desktop
+
+          # Generar el AppImage
+          ./linuxdeploy-extracted/AppRun --appdir AppDir --output appimage
+
+      - name: Rename AppImage
+        working-directory: ./MiniPOS_portable
+        run: |
+          mv *.AppImage miniPOS_portable-v2.5-x86_64.AppImage || true
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: miniPOS_portable-linux
-          path: MiniPOS_portable/dist/miniPOS_portable-v2.5
+          name: miniPOS_portable-linux-appimage
+          path: MiniPOS_portable/miniPOS_portable-v2.5-x86_64.AppImage
 
   release:
     name: Create Release
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux-appimage]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
-
     steps:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
@@ -83,21 +131,16 @@ jobs:
           name: miniPOS_portable-windows
           path: ./release/windows
 
-      - name: Download Linux artifact
+      - name: Download Linux AppImage
         uses: actions/download-artifact@v4
         with:
-          name: miniPOS_portable-linux
+          name: miniPOS_portable-linux-appimage
           path: ./release/linux
-
-      - name: Rename Linux artifact
-        run: |
-          mv ./release/linux/miniPOS_portable-v2.5 \
-             ./release/linux/miniPOS_portable-v2.5-linux
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ./release/windows/miniPOS_portable-v2.5.exe
-            ./release/linux/miniPOS_portable-v2.5-linux
+            ./release/linux/miniPOS_portable-v2.5-x86_64.AppImage
           generate_release_notes: true
