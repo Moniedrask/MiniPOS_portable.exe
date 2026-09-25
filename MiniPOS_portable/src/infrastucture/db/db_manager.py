@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import sys
+from datetime import datetime
 
 
 class DBManager:
@@ -59,7 +60,9 @@ class DBManager:
         conn = self.get_connection()
         cur = conn.cursor()
 
-        # ---------- PRODUCTOS ----------
+        # ---------------------------------------------------------
+        # PASO 1: Crear tablas si no existen (con TODAS las columnas)
+        # ---------------------------------------------------------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 product_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,7 +88,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- VENTAS ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS sales (
                 sale_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +106,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- ITEMS DE VENTA ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS sale_items (
                 item_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,7 +122,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- PAGOS MIXTOS (idea 3) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS sale_payments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +132,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- HISTORIAL DE PRECIOS (idea 28) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS price_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,7 +145,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- SESIONES DE CAJA (idea 2) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS cash_sessions (
                 session_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,7 +159,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- MOVIMIENTOS DE CAJA (idea 2, Fase 6) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS cash_movements (
                 movement_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +171,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- DEVOLUCIONES (idea 10) ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS returns (
                 return_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,7 +196,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- CONFIGURACIÓN ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -208,7 +203,6 @@ class DBManager:
             )
         ''')
 
-        # ---------- BORRADORES ----------
         cur.execute('''
             CREATE TABLE IF NOT EXISTS product_draft (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -225,22 +219,36 @@ class DBManager:
             )
         ''')
 
-        # ---------- ÍNDICES ----------
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(date)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_name)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_products_paused ON products(paused)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_products_expiry ON products(expiry_date)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id)")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_cash_movements_session ON cash_movements(session_id)")
-
         conn.commit()
 
-        # Migraciones suaves
+        # ---------------------------------------------------------
+        # PASO 2: MIGRACIONES — agregar columnas que falten
+        #           (SE EJECUTA ANTES DE LOS ÍNDICES)
+        # ---------------------------------------------------------
         self._safe_migrations()
+
+        # ---------------------------------------------------------
+        # PASO 3: Índices (ya con todas las columnas garantizadas)
+        # ---------------------------------------------------------
+        index_queries = [
+            "CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(date)",
+            "CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_name)",
+            "CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id)",
+            "CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id)",
+            "CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)",
+            "CREATE INDEX IF NOT EXISTS idx_products_paused ON products(paused)",
+            "CREATE INDEX IF NOT EXISTS idx_products_expiry ON products(expiry_date)",
+            "CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id)",
+            "CREATE INDEX IF NOT EXISTS idx_cash_movements_session ON cash_movements(session_id)",
+        ]
+        for q in index_queries:
+            try:
+                cur.execute(q)
+            except Exception:
+                pass
+
+        conn.commit()
 
     # ============================================================
     # MIGRACIONES SUAVES (para no perder datos existentes)
@@ -249,17 +257,23 @@ class DBManager:
         conn = self.get_connection()
         cur = conn.cursor()
 
-        def add_col_if_missing(table, col, ddl):
+        def columnas_de(tabla):
             try:
-                cur.execute(f"PRAGMA table_info({table})")
-                cols = [r["name"] for r in cur.fetchall()]
+                cur.execute(f"PRAGMA table_info({tabla})")
+                return [r["name"] for r in cur.fetchall()]
+            except Exception:
+                return []
+
+        def add_col(tabla, col, ddl):
+            try:
+                cols = columnas_de(tabla)
                 if col not in cols:
-                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+                    cur.execute(f"ALTER TABLE {tabla} ADD COLUMN {col} {ddl}")
                     conn.commit()
             except Exception:
                 pass
 
-        # Productos
+        # ---------- PRODUCTOS ----------
         for col, ddl in [
             ("barcode", "TEXT DEFAULT ''"),
             ("unit_type", "TEXT DEFAULT 'unidad'"),
@@ -278,9 +292,31 @@ class DBManager:
             ("paused", "INTEGER DEFAULT 0"),
             ("expiry_date", "TEXT DEFAULT ''"),
         ]:
-            add_col_if_missing("products", col, ddl)
+            add_col("products", col, ddl)
 
-        # Ventas
+        # Rellenar rounded_price con el precio si quedó en 0
+        try:
+            cur.execute(
+                "UPDATE products SET rounded_price = price "
+                "WHERE rounded_price IS NULL OR rounded_price = 0")
+            conn.commit()
+        except Exception:
+            pass
+
+        # Rellenar created_at / updated_at si están vacíos
+        try:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur.execute(
+                "UPDATE products SET created_at = ? "
+                "WHERE created_at IS NULL OR created_at = ''", (now,))
+            cur.execute(
+                "UPDATE products SET updated_at = ? "
+                "WHERE updated_at IS NULL OR updated_at = ''", (now,))
+            conn.commit()
+        except Exception:
+            pass
+
+        # ---------- VENTAS ----------
         for col, ddl in [
             ("subtotal", "REAL DEFAULT 0"),
             ("discount", "REAL DEFAULT 0"),
@@ -291,12 +327,28 @@ class DBManager:
             ("display_offset", "INTEGER DEFAULT 0"),
             ("is_returned", "INTEGER DEFAULT 0"),
         ]:
-            add_col_if_missing("sales", col, ddl)
+            add_col("sales", col, ddl)
 
-        # Items
-        add_col_if_missing("sale_items", "returned_qty", "REAL DEFAULT 0")
-        add_col_if_missing("sale_items", "unit", "TEXT DEFAULT 'unidad'")
-        add_col_if_missing("sale_items", "barcode", "TEXT DEFAULT ''")
+        # Rellenar subtotal / amount_paid para ventas viejas
+        try:
+            cur.execute("UPDATE sales SET subtotal = total "
+                        "WHERE subtotal IS NULL OR subtotal = 0")
+            cur.execute("UPDATE sales SET amount_paid = total "
+                        "WHERE is_paid = 1 AND "
+                        "(amount_paid IS NULL OR amount_paid = 0)")
+            conn.commit()
+        except Exception:
+            pass
+
+        # ---------- ITEMS ----------
+        for col, ddl in [
+            ("returned_qty", "REAL DEFAULT 0"),
+            ("unit", "TEXT DEFAULT 'unidad'"),
+            ("barcode", "TEXT DEFAULT ''"),
+        ]:
+            add_col("sale_items", col, ddl)
+
+        conn.commit()
 
     # ============================================================
     # CONFIGURACIÓN (settings)
