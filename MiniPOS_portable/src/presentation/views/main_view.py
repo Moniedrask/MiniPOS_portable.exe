@@ -94,6 +94,7 @@ class MainView(tk.Tk):
         self.tray_queue = queue.Queue()
         self._reset_check_timer = None
         self._backup_check_timer = None
+        self._auto_export_timer = None
 
         # === Fase 2: auto-reset al iniciar ===
         self._do_auto_reset(silent=True)
@@ -119,6 +120,7 @@ class MainView(tk.Tk):
         self.after(200, self._poll_tray_queue)
         self.after(3000, self._schedule_daily_reset_check)
         self.after(4000, self._schedule_backup_check)
+        self.after(5000, self._schedule_auto_export_check)
 
         self.bind('<F2>', lambda e: self.inventory_view.add_product_popup()
                   if self.current_page == "inventario" else None)
@@ -239,6 +241,109 @@ class MainView(tk.Tk):
             pass
 
     # ============================================================
+    # AUTO-EXPORT (NUEVO)
+    # ============================================================
+    def _schedule_auto_export_check(self):
+        self._check_auto_export_timer()
+
+    def _check_auto_export_timer(self):
+        try:
+            self._do_auto_export(trigger="timer")
+        except Exception:
+            pass
+        try:
+            self._auto_export_timer = self.after(60000, self._check_auto_export_timer)
+        except Exception:
+            pass
+
+    def _do_auto_export(self, trigger="manual"):
+        """Realiza la copia de la BD si está activado el auto-export."""
+        try:
+            enabled = self.db_manager.get_setting("auto_export_enabled", "0") == "1"
+            if not enabled:
+                return
+            folder = self.db_manager.get_setting("auto_export_folder", "") or ""
+            if not folder:
+                return
+            if not os.path.isdir(folder):
+                return
+            freq = self.db_manager.get_setting(
+                "auto_export_frequency", "each_sale") or "each_sale"
+
+            should_export = False
+            if trigger == "manual":
+                should_export = True
+            elif trigger == "close":
+                should_export = freq in ("on_close", "each_sale", "hourly", "daily")
+            elif trigger == "timer":
+                if freq == "each_sale":
+                    try:
+                        mtime = os.path.getmtime(self.db_path)
+                        last = float(self.db_manager.get_setting(
+                            "auto_export_last_mtime", "0") or "0")
+                        if mtime > last:
+                            should_export = True
+                    except Exception:
+                        pass
+                elif freq == "hourly":
+                    last_str = self.db_manager.get_setting(
+                        "auto_export_last_time", "") or ""
+                    if not last_str:
+                        should_export = True
+                    else:
+                        try:
+                            last_time = datetime.strptime(
+                                last_str, "%Y-%m-%d %H:%M:%S")
+                            if (datetime.now() - last_time).total_seconds() >= 3600:
+                                should_export = True
+                        except Exception:
+                            should_export = True
+                elif freq == "daily":
+                    last_date = self.db_manager.get_setting(
+                        "auto_export_last_date", "") or ""
+                    hoy = datetime.now().strftime("%Y-%m-%d")
+                    if last_date != hoy:
+                        should_export = True
+
+            if not should_export:
+                return
+
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            destino = os.path.join(folder, f"ventas_{timestamp}.db")
+            self.db_manager.close_connection()
+            shutil.copy2(self.db_path, destino)
+            self.db_manager.get_connection()
+
+            self.db_manager.set_setting(
+                "auto_export_last_time",
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            self.db_manager.set_setting(
+                "auto_export_last_date",
+                datetime.now().strftime("%Y-%m-%d"))
+            try:
+                self.db_manager.set_setting(
+                    "auto_export_last_mtime",
+                    str(os.path.getmtime(self.db_path)))
+            except Exception:
+                pass
+
+            try:
+                archivos = sorted(
+                    [os.path.join(folder, f) for f in os.listdir(folder)
+                     if f.startswith("ventas_") and f.endswith(".db")],
+                    key=lambda x: os.path.getmtime(x),
+                    reverse=True)
+                for viejo in archivos[30:]:
+                    try:
+                        os.remove(viejo)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # ============================================================
     # TÍTULO
     # ============================================================
     def _update_window_title(self):
@@ -307,6 +412,16 @@ class MainView(tk.Tk):
         try:
             if self._backup_check_timer:
                 self.after_cancel(self._backup_check_timer)
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_auto_export_timer", None):
+                self.after_cancel(self._auto_export_timer)
+        except Exception:
+            pass
+        # Auto-exportar antes de cerrar si está configurado
+        try:
+            self._do_auto_export(trigger="close")
         except Exception:
             pass
         try:
@@ -835,7 +950,6 @@ class MainView(tk.Tk):
                 self.db_manager.set_setting("expiry_days_warning", str(w))
                 self.db_manager.set_setting("expiry_days_soon", str(s))
                 self.db_manager.set_setting("expiry_days_offer", str(o))
-                # También guardar en las keys nuevas que usa product_use_case
                 try:
                     self.db_manager.set_setting("expiry_warn_days_1", str(w))
                     self.db_manager.set_setting("expiry_warn_days_2", str(s))
@@ -1437,9 +1551,6 @@ class MainView(tk.Tk):
 
         # ==================== MENÚ OPCIONES ====================
         def build_opciones(menu):
-            menu.add_command(label="⚙️ Ajustes...",
-                             command=self.open_settings_view)
-            menu.add_separator()
             menu.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
             menu.add_command(label="🏪 Datos del negocio",
                              command=self._open_business_popup)
@@ -1492,7 +1603,7 @@ class MainView(tk.Tk):
                 command=self._toggle_close_to_tray)
 
             self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
-            menu.add_checkbutton(label="🚀 Iniciar con Windows",
+            menu.add_checkbutton(label="🚀 Ejecutar con el SO",
                                  variable=self.autostart_var,
                                  command=self.toggle_autostart)
             menu.add_separator()
@@ -1518,6 +1629,9 @@ class MainView(tk.Tk):
                              command=self.export_db)
             menu.add_command(label="📥 Importar Base de Datos",
                              command=self.import_db)
+            menu.add_separator()
+            menu.add_command(label="⚙️ Ajustes...",
+                             command=self.open_settings_view)
 
         # ==================== MENÚ VENTAS ====================
         def build_ventas(menu):
@@ -1582,7 +1696,6 @@ class MainView(tk.Tk):
             self.container, self.product_use_case,
             self.db_manager, lambda: self.current_theme,
             on_business_click=None)
-        # Compartir sale_case con inventory_view (para devoluciones y gráficos)
         self.inventory_view._sale_case = self.sale_use_case
 
         self.current_page = None
@@ -1665,9 +1778,6 @@ class MainView(tk.Tk):
         except Exception:
             pass
 
-    # ============================================================
-    # TOGGLE AUTO-RESET
-    # ============================================================
     def _toggle_auto_reset(self):
         val = self.auto_reset_var.get()
         self.sale_use_case.enable_auto_reset(val)
@@ -1691,9 +1801,6 @@ class MainView(tk.Tk):
             MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
                          "Modo normal", parent=self)
 
-    # ============================================================
-    # RESET CONTADOR CON CONTRASEÑA
-    # ============================================================
     def reset_sales_counter(self):
         r1 = MD.yesno(
             "🔄 ¿Reiniciar el contador de ventas?\n\n"
@@ -1717,9 +1824,6 @@ class MainView(tk.Tk):
         except Exception as e:
             MD.show_error(f"Error al reiniciar: {e}", "Error", parent=self)
 
-    # ============================================================
-    # NAVEGACIÓN
-    # ============================================================
     def show_page(self, page):
         for w in (self.payment_view, self.inventory_view):
             w.pack_forget()
@@ -2118,7 +2222,6 @@ class MainView(tk.Tk):
             tk.Label(parent, text="📊 RESUMEN DE VENTAS (agrupado por cliente)",
                      font=("Arial", 18, "bold"), bg=bg, fg=fg).pack(pady=(12, 6))
 
-            # ---- CARDS dinámicas ----
             cards = tk.Frame(parent, bg=bg)
             cards.pack(pady=5)
             cards_labels = {}
@@ -2146,7 +2249,6 @@ class MainView(tk.Tk):
                 lt.pack()
                 cards_labels[titulo] = (lc, lt)
 
-            # ---- FILTROS ----
             filt_frame = tk.Frame(parent, bg=bg)
             filt_frame.pack(pady=5)
             filtro_var = tk.StringVar(value="all")
@@ -2179,7 +2281,6 @@ class MainView(tk.Tk):
             refs["hasta_var"] = hasta_var
             refs["rango_frame"] = rango_frame
 
-            # ---- TREEVIEW ----
             tree_frame = ttk.Frame(parent, bootstyle="dark")
             tree_frame.pack(fill="both", expand=True, padx=15, pady=8)
 
