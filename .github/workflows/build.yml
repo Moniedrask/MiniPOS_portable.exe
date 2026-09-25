@@ -118,7 +118,7 @@ jobs:
           Name=MiniPOS Portable
           Exec=miniPOS_portable-v2.5
           Icon=miniPOS_portable
-          Categories=Utility;Office;
+          Categories=Utility;
           Terminal=false
           EOF
           cp AppDir/usr/share/applications/miniPOS_portable.desktop AppDir/miniPOS_portable.desktop
@@ -127,7 +127,18 @@ jobs:
 
       - name: Rename AppImage
         working-directory: ./MiniPOS_portable
-        run: mv *.AppImage miniPOS_portable-v2.5-x86_64.AppImage || true
+        run: |
+          echo "=== Archivos AppImage generados ==="
+          ls -la *.AppImage
+          # Renombrar cualquier AppImage generado a un nombre fijo
+          for f in *.AppImage; do
+            if [ -f "$f" ]; then
+              mv "$f" miniPOS_portable-v2.5-x86_64.AppImage
+              echo "Renombrado: $f -> miniPOS_portable-v2.5-x86_64.AppImage"
+            fi
+          done
+          echo "=== Archivo final ==="
+          ls -la miniPOS_portable-v2.5-x86_64.AppImage
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
