@@ -60,9 +60,12 @@ Sin instalación, sin servidores, sin internet. Solo descarga el ejecutable, pon
 ### 🎨 Interfaz
 - Modo **Oscuro / Claro**
 - **Tamaño de fuente** ajustable (9 a 18)
-- **Ventana de Ajustes** unificada (Apariencia, Seguridad, Inicio, Ventas, Negocio, Ticket, Vencimiento, Cajero, Backup)
+- **Ventana de Ajustes** unificada con pestañas:
+  - Apariencia · Seguridad · Inicio · Ventas · Negocio
+  - Ticket · Vencimiento · Cajero · Backup
+  - **Auto-Export**
 - **Contraseña de inicio** + **contraseña de admin** para acciones sensibles
-- **Auto-inicio** con Windows y Linux
+- **Ejecutar con el Sistema Operativo (SO)** — Windows y Linux
 - Pantalla completa con `F11`
 - Popups centrados con modo oscuro forzado
 
@@ -71,6 +74,12 @@ Sin instalación, sin servidores, sin internet. Solo descarga el ejecutable, pon
 - Exportar / Importar base de datos completa
 - **Auto-guardado** del carrito y formularios a medio llenar
 - **Respaldo automático diario** (configurable)
+- **Exportación automática** de la base de datos a carpeta o USB:
+  - En cada venta
+  - Al cerrar la aplicación
+  - Cada hora
+  - Una vez al día
+  - Mantiene los últimos 30 archivos automáticamente
 - Reporte del día (TXT) y del mes (Excel)
 
 ---
@@ -83,14 +92,23 @@ Ve a la sección **[Releases](../../releases)** y descarga el archivo para tu si
 |---|---|---|
 | 🪟 Windows moderno | `miniPOS_portable-v2.5.exe` | Windows 10, 11 |
 | 🪟 Windows 7 SP1 | `miniPOS_portable-v2.5-win7.exe` | Windows 7 SP1, 8, 8.1, 10, 11 |
-| 🐧 Linux | `miniPOS_portable-v2.5-x86_64.AppImage` | Ubuntu 22.04+, Debian 12+, Fedora 35+, Linux Mint 21+, etc. |
+| 🐧 Linux | `miniPOS_portable-v2.5-x86_64.AppImage` | Ubuntu 20.04+, Debian 11+, Fedora 35+, Linux Mint 20+, etc. |
 
-### 🪟 Instalación en Windows
+### 🪟 Instalación en Windows (10 / 11)
 
-1. Descarga el `.exe` correspondiente a tu versión de Windows.
+1. Descarga `miniPOS_portable-v2.5.exe`.
 2. Crea una carpeta en tu PC o USB (ej. `C:\MiniPOS` o `D:\PuntoDeVenta`).
 3. Mueve el `.exe` a esa carpeta.
 4. Doble clic para ejecutar. La primera vez se creará la carpeta `data` con tu base de datos.
+
+### 🪟 Instalación en Windows 7 SP1
+
+1. Descarga `miniPOS_portable-v2.5-win7.exe` desde Releases.
+2. Ponlo en una carpeta o USB (ej. `C:\MiniPOS`).
+3. Doble clic para ejecutar.
+
+> **⚠️ Importante**: la versión estándar (`miniPOS_portable-v2.5.exe`) **NO funciona en Windows 7**.
+> Debes descargar específicamente el archivo `-win7.exe`.
 
 > **⚠️ Nota sobre Windows Defender:** Como el ejecutable no cuenta con firma digital de pago, Windows puede mostrar una advertencia azul la primera vez. Es un **falso positivo** normal en programas creados con PyInstaller. Solo haz clic en **"Más información"** → **"Ejecutar de todas formas"**.
 
@@ -136,23 +154,25 @@ Ve a la sección **[Releases](../../releases)** y descarga el archivo para tu si
 
 ## 🛠️ Stack Tecnológico
 
-- **Lenguaje:** Python 3.11 (Windows 10/11 y Linux) / Python 3.8 (Windows 7 SP1)
+- **Lenguaje:**
+  - Python 3.11 (Windows 10/11 + Linux)
+  - Python 3.8 (Windows 7 SP1)
 - **Interfaz:** Tkinter + ttkbootstrap
 - **Base de Datos:** SQLite 3 (local, sin servidores externos)
-- **Empaquetado:** PyInstaller (`--onefile`, portable)
-- **Compilación automática:** GitHub Actions
-- **Formato Linux:** AppImage (portable universal)
+- **Empaquetado:** PyInstaller + AppImage
+- **Compilación:** GitHub Actions
 
-**Dependencias (Python 3.11):**
+**Dependencias:**
 - `ttkbootstrap` — temas modernos para Tkinter
-- `reportlab` — generación de PDFs
+- `reportlab` — generación de PDFs (tickets, etiquetas, reportes)
 - `matplotlib` — gráficos
 - `openpyxl` — Excel
 - `Pillow` + `pystray` — bandeja del sistema
 - `pyinstaller` — compilación
 
-**Dependencias (Python 3.8 - Windows 7):**
-- Versiones compatibles con Python 3.8 (`requirements-win7.txt`)
+**Nota**: Las versiones de las librerías se ajustan según el Python usado:
+- `requirements.txt` → Python 3.11 (versiones modernas)
+- `requirements-win7.txt` → Python 3.8 (versiones compatibles con Windows 7)
 
 ---
 
@@ -202,7 +222,7 @@ MiniPOS_portable.exe/
 Si quieres compilar tú mismo el ejecutable desde el código fuente:
 
 ### Requisitos
-- Python 3.11 (o 3.8 para Windows 7)
+- Python 3.11 (o 3.8 para Windows 7 SP1)
 - pip
 
 ### Pasos
@@ -255,6 +275,8 @@ Si tienes problemas o preguntas, abre un **Issue** en este repositorio.
 
 - **Windows 7 SP1**: Los usuarios de Windows 7 SP1 deben descargar específicamente el archivo `-win7.exe`. Las versiones modernas (`.exe` normal) **no funcionan en Windows 7**.
 - **Linux**: El AppImage funciona en la mayoría de distribuciones modernas (Ubuntu 20.04+, Debian 11+, Fedora 35+, Linux Mint 20+, etc.). Para sistemas muy antiguos (Ubuntu 18.04 o anteriores), puede requerir dependencias extra.
+- **Base de datos**: si actualizas desde una versión antigua, la app migra automáticamente la base de datos existente agregando las columnas y tablas nuevas que falten, sin perder datos.
+- **macOS**: No está soportado por el momento.
 
 ---
 
