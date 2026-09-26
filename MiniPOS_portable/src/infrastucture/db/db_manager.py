@@ -68,6 +68,7 @@ class DBManager:
                 product_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 barcode TEXT DEFAULT '',
+                barcode2 TEXT DEFAULT '',
                 price REAL NOT NULL DEFAULT 0,
                 stock REAL NOT NULL DEFAULT 0,
                 unit_type TEXT DEFAULT 'unidad',
@@ -223,7 +224,6 @@ class DBManager:
 
         # ---------------------------------------------------------
         # PASO 2: MIGRACIONES — agregar columnas que falten
-        #           (SE EJECUTA ANTES DE LOS ÍNDICES)
         # ---------------------------------------------------------
         self._safe_migrations()
 
@@ -237,6 +237,7 @@ class DBManager:
             "CREATE INDEX IF NOT EXISTS idx_sale_payments_sale ON sale_payments(sale_id)",
             "CREATE INDEX IF NOT EXISTS idx_price_history_product ON price_history(product_id)",
             "CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)",
+            "CREATE INDEX IF NOT EXISTS idx_products_barcode2 ON products(barcode2)",
             "CREATE INDEX IF NOT EXISTS idx_products_paused ON products(paused)",
             "CREATE INDEX IF NOT EXISTS idx_products_expiry ON products(expiry_date)",
             "CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id)",
@@ -251,7 +252,7 @@ class DBManager:
         conn.commit()
 
     # ============================================================
-    # MIGRACIONES SUAVES (para no perder datos existentes)
+    # MIGRACIONES SUAVES
     # ============================================================
     def _safe_migrations(self):
         conn = self.get_connection()
@@ -276,6 +277,7 @@ class DBManager:
         # ---------- PRODUCTOS ----------
         for col, ddl in [
             ("barcode", "TEXT DEFAULT ''"),
+            ("barcode2", "TEXT DEFAULT ''"),
             ("unit_type", "TEXT DEFAULT 'unidad'"),
             ("unit", "TEXT DEFAULT 'unidad'"),
             ("created_at", "TEXT DEFAULT ''"),
