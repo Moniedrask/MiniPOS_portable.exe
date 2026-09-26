@@ -6,10 +6,13 @@ class Product:
                  group_name="", cost=0.0, margin_percent=20.0,
                  rounded_price=0.0, round_enabled=0, round_to=100,
                  package_cost=0.0, package_units=0, is_package=0,
-                 paused=0, expiry_date=""):
+                 paused=0, expiry_date="",
+                 # === NUEVO: doble código de barras ===
+                 barcode2=""):
         self.product_id = product_id
         self.name = name
         self.barcode = barcode
+        self.barcode2 = barcode2
         self.price = price
         self.stock = stock
         self.unit_type = unit_type  # "unidad" | "peso" | "volumen"
@@ -36,6 +39,19 @@ class Product:
         if self.round_enabled and self.rounded_price:
             return self.rounded_price
         return self.price
+
+    @property
+    def unit_price(self):
+        """Alias de effective_price para uso en PAGOS."""
+        return self.effective_price
+
+    def matches_barcode(self, code):
+        """Verifica si el código coincide con barcode o barcode2."""
+        code = str(code).strip()
+        if not code:
+            return False
+        return (str(self.barcode or "").strip() == code or
+                str(self.barcode2 or "").strip() == code)
 
     def __repr__(self):
         return f"<Product {self.product_id}: {self.name} ({self.unit}) ${self.price}>"
