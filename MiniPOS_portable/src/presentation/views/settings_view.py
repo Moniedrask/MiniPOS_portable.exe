@@ -8,8 +8,7 @@ Ventana unificada de Ajustes con pestañas:
 - Ticket: tamaño, copias, datos a mostrar
 - Vencimiento: días de alerta, descuento de oferta
 - Cajero: nombre del cajero
-- Backup: carpeta, respaldo automático
-- Auto-Export: exportar automáticamente a carpeta/USB
+- Exportar: carpeta/USB + respaldo automático + auto-export por evento
 """
 import os
 import sys
@@ -21,7 +20,8 @@ from tkinter import filedialog
 from datetime import datetime
 
 from presentation.views.widgets import (
-    MD, show_popup_smooth, get_business_info, save_business_info
+    MD, show_popup_smooth, get_business_info, save_business_info,
+    get_theme_colors,
 )
 
 
@@ -42,16 +42,11 @@ class SettingsView(tk.Toplevel):
         self.on_apply_theme = on_apply_theme
 
         self.title("⚙️ Ajustes - MiniPOS")
-        self.geometry("820x700")
-        self.minsize(700, 580)
+        self.geometry("860x760")
+        self.minsize(740, 620)
         self.transient(master)
 
-        try:
-            bg = ttk.Style().colors.bg
-            fg = ttk.Style().colors.fg
-        except Exception:
-            bg = "#1a1a1a"
-            fg = "#ffffff"
+        bg, fg, _, _ = get_theme_colors()
         self.configure(bg=bg)
 
         tk.Label(self, text="⚙️ AJUSTES", font=("Arial", 18, "bold"),
@@ -68,8 +63,9 @@ class SettingsView(tk.Toplevel):
         self._build_tab_ticket()
         self._build_tab_vencimiento()
         self._build_tab_cajero()
-        self._build_tab_backup()
-        self._build_tab_auto_export()
+        # Antes era "_build_tab_backup" y "_build_tab_auto_export".
+        # Ahora todo se unifica en una sola pestaña "Exportar".
+        self._build_tab_exportar()
 
         bf = tk.Frame(self, bg=bg)
         bf.pack(side="bottom", fill="x", pady=10)
@@ -90,8 +86,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="🎨 Apariencia")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="Tema de la aplicación:",
                  font=("Arial", 11, "bold"), bg=bg, fg=fg).pack(
@@ -144,8 +139,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="🔐 Seguridad")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="🔐 Contraseña de inicio",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 4))
@@ -197,8 +191,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="🚀 Inicio")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="🚀 Ejecución al iniciar el sistema",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 4))
@@ -301,8 +294,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="🔢 Ventas")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="🕛 Auto-reset diario del contador de ventas",
                  font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(
@@ -362,8 +354,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="🏪 Negocio")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         info = get_business_info(self.db)
 
@@ -438,8 +429,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="🖨️ Ticket")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="🖨️ Configuración del ticket PDF",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 8))
@@ -489,8 +479,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="📅 Vencimiento")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="📅 Alertas de vencimiento de productos",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 4))
@@ -559,8 +548,7 @@ class SettingsView(tk.Toplevel):
         tab = tk.Frame(self.notebook)
         self.notebook.add(tab, text="👤 Cajero")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
         tk.Label(tab, text="👤 Cajero actual",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 4))
@@ -581,113 +569,91 @@ class SettingsView(tk.Toplevel):
                    bootstyle="success").pack(pady=12)
 
     # ============================================================
-    # BACKUP
+    # EXPORTAR (antes "Backup" + "Auto-Export")
     # ============================================================
-    def _build_tab_backup(self):
+    def _build_tab_exportar(self):
         tab = tk.Frame(self.notebook)
-        self.notebook.add(tab, text="💾 Backup")
+        self.notebook.add(tab, text="📤 Exportar")
 
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        bg, fg, _, _ = get_theme_colors()
 
+        # ---------- Respaldo automático diario ----------
         tk.Label(tab, text="💾 Respaldo automático",
                  font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 4))
         tk.Label(tab,
-                 text="Copia de seguridad de la base de datos cada día.",
-                 font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8").pack(pady=(0, 10))
+                 text="Copia de seguridad de la base de datos cada día.\n"
+                      "Se verifica al iniciar la app y cada hora.",
+                 font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8",
+                 justify="center").pack(pady=(0, 6))
 
         self.var_auto_backup = tk.BooleanVar(
             value=(self.db.get_setting("auto_backup_enabled", "1") == "1"))
         ttk.Checkbutton(tab, text="✅ Activar respaldo automático diario",
                         variable=self.var_auto_backup,
                         bootstyle="success-round-toggle",
-                        command=self._toggle_auto_backup).pack(pady=8)
+                        command=self._toggle_auto_backup).pack(pady=4)
 
         tk.Label(tab, text="Carpeta de respaldos:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(
-                     anchor="w", padx=20, pady=(15, 4))
+                     anchor="w", padx=20, pady=(10, 3))
 
         self.var_backup_folder = tk.StringVar(
             value=self.db.get_setting("backup_folder", "") or "")
-        f = tk.Frame(tab, bg=bg)
-        f.pack(fill="x", padx=20, pady=4)
-        ttk.Entry(f, textvariable=self.var_backup_folder, width=55,
+        f1 = tk.Frame(tab, bg=bg)
+        f1.pack(fill="x", padx=20, pady=2)
+        ttk.Entry(f1, textvariable=self.var_backup_folder, width=55,
                   font=("Arial", 10)).pack(side="left", fill="x", expand=True)
 
-        def elegir():
+        def elegir_backup():
             folder = filedialog.askdirectory(parent=self)
             if folder:
                 self.var_backup_folder.set(folder)
 
-        ttk.Button(f, text="📁", command=elegir,
+        ttk.Button(f1, text="📁", command=elegir_backup,
                    bootstyle="info", width=3).pack(side="left", padx=4)
 
-        def guardar():
-            self.db.set_setting("auto_backup_enabled",
-                                "1" if self.var_auto_backup.get() else "0")
-            self.db.set_setting("backup_folder",
-                                self.var_backup_folder.get().strip())
-            MD.show_info("✅ Configuración de respaldo guardada.",
-                         "Listo", parent=self)
+        # ---------- Separador ----------
+        tk.Frame(tab, height=2, bg="#444444").pack(fill="x", padx=20, pady=12)
 
-        ttk.Button(tab, text="💾 Guardar", command=guardar,
-                   bootstyle="success").pack(pady=12, padx=20, anchor="w")
-
-    def _toggle_auto_backup(self):
-        val = self.var_auto_backup.get()
-        self.db.set_setting("auto_backup_enabled", "1" if val else "0")
-        if val:
-            MD.show_info("✅ Respaldo automático ACTIVADO.", "Backup", parent=self)
-        else:
-            MD.show_info("❌ Respaldo automático DESACTIVADO.", "Backup", parent=self)
-
-    # ============================================================
-    # AUTO-EXPORT (NUEVO)
-    # ============================================================
-    def _build_tab_auto_export(self):
-        tab = tk.Frame(self.notebook)
-        self.notebook.add(tab, text="📤 Auto-Export")
-
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
-
-        tk.Label(tab, text="📤 Exportación automática",
-                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(20, 4))
+        # ---------- Exportación automática a carpeta / USB ----------
+        tk.Label(tab, text="📤 Exportación automática a carpeta / USB",
+                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(0, 4))
         tk.Label(tab,
                  text="Copia la base de datos a una carpeta o USB\n"
                       "automáticamente según la frecuencia elegida.",
                  font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8",
-                 justify="center").pack(pady=(0, 10))
+                 justify="center").pack(pady=(0, 6))
 
         self.var_auto_export = tk.BooleanVar(
             value=(self.db.get_setting("auto_export_enabled", "0") == "1"))
         ttk.Checkbutton(tab, text="✅ Activar exportación automática",
                         variable=self.var_auto_export,
                         bootstyle="success-round-toggle",
-                        command=self._toggle_auto_export).pack(pady=8)
+                        command=self._toggle_auto_export).pack(pady=4)
 
         tk.Label(tab, text="Carpeta o USB de destino:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(
-                     anchor="w", padx=20, pady=(15, 4))
+                     anchor="w", padx=20, pady=(10, 3))
 
         self.var_export_folder = tk.StringVar(
             value=self.db.get_setting("auto_export_folder", "") or "")
-        f = tk.Frame(tab, bg=bg)
-        f.pack(fill="x", padx=20, pady=4)
-        ttk.Entry(f, textvariable=self.var_export_folder, width=55,
+        f2 = tk.Frame(tab, bg=bg)
+        f2.pack(fill="x", padx=20, pady=2)
+        ttk.Entry(f2, textvariable=self.var_export_folder, width=55,
                   font=("Arial", 10)).pack(side="left", fill="x", expand=True)
 
-        def elegir():
+        def elegir_export():
             folder = filedialog.askdirectory(parent=self)
             if folder:
                 self.var_export_folder.set(folder)
 
-        ttk.Button(f, text="📁", command=elegir,
+        ttk.Button(f2, text="📁", command=elegir_export,
                    bootstyle="info", width=3).pack(side="left", padx=4)
 
+        # Frecuencia
         tk.Label(tab, text="Frecuencia:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(
-                     anchor="w", padx=20, pady=(15, 4))
+                     anchor="w", padx=20, pady=(12, 4))
 
         self.var_export_freq = tk.StringVar(
             value=self.db.get_setting("auto_export_frequency", "each_sale")
@@ -704,8 +670,18 @@ class SettingsView(tk.Toplevel):
             ttk.Radiobutton(freq_frame, text=txt, variable=self.var_export_freq,
                             value=val, bootstyle="info").pack(anchor="w", pady=2)
 
+        # Checkbox: exportar solo al agregar producto nuevo
+        self.var_export_on_new_product = tk.BooleanVar(
+            value=(self.db.get_setting("auto_export_on_new_product", "1") == "1"))
+        ttk.Checkbutton(tab,
+                        text="🆕 Exportar también al agregar un producto nuevo",
+                        variable=self.var_export_on_new_product,
+                        bootstyle="info-round-toggle").pack(
+                            anchor="w", padx=20, pady=(10, 4))
+
+        # Info
         info = tk.Frame(tab, bg="#1e3a5c", padx=10, pady=8)
-        info.pack(fill="x", padx=20, pady=(15, 4))
+        info.pack(fill="x", padx=20, pady=(10, 4))
         tk.Label(info,
                  text="ℹ️ Se copia el archivo ventas.db completo a la carpeta\n"
                       "elegida con el nombre ventas_YYYY-MM-DD_HH-MM-SS.db.\n"
@@ -713,19 +689,29 @@ class SettingsView(tk.Toplevel):
                  font=("Arial", 9), bg="#1e3a5c", fg="#c8e6c9",
                  justify="left").pack(anchor="w")
 
-        def guardar():
+        def guardar_todo():
+            # Respaldo
+            self.db.set_setting("auto_backup_enabled",
+                                "1" if self.var_auto_backup.get() else "0")
+            self.db.set_setting("backup_folder",
+                                self.var_backup_folder.get().strip())
+            # Export
             self.db.set_setting("auto_export_enabled",
                                 "1" if self.var_auto_export.get() else "0")
             self.db.set_setting("auto_export_folder",
                                 self.var_export_folder.get().strip())
             self.db.set_setting("auto_export_frequency",
                                 self.var_export_freq.get())
+            self.db.set_setting("auto_export_on_new_product",
+                                "1" if self.var_export_on_new_product.get() else "0")
             MD.show_info("✅ Configuración de exportación guardada.",
                          "Listo", parent=self)
 
-        ttk.Button(tab, text="💾 Guardar", command=guardar,
-                   bootstyle="success").pack(pady=15, padx=20, anchor="w")
+        ttk.Button(tab, text="💾 Guardar configuración",
+                   command=guardar_todo,
+                   bootstyle="success").pack(pady=12, padx=20, anchor="w")
 
+        # Probar exportación
         def probar_ahora():
             folder = self.var_export_folder.get().strip()
             if not folder:
@@ -756,12 +742,22 @@ class SettingsView(tk.Toplevel):
                    command=probar_ahora,
                    bootstyle="info").pack(pady=5, padx=20, anchor="w")
 
+    def _toggle_auto_backup(self):
+        val = self.var_auto_backup.get()
+        self.db.set_setting("auto_backup_enabled", "1" if val else "0")
+        if val:
+            MD.show_info("✅ Respaldo automático ACTIVADO.", "Respaldo",
+                         parent=self)
+        else:
+            MD.show_info("❌ Respaldo automático DESACTIVADO.", "Respaldo",
+                         parent=self)
+
     def _toggle_auto_export(self):
         val = self.var_auto_export.get()
         self.db.set_setting("auto_export_enabled", "1" if val else "0")
         if val:
-            MD.show_info("✅ Exportación automática ACTIVADA.", "Auto-Export",
+            MD.show_info("✅ Exportación automática ACTIVADA.", "Exportar",
                          parent=self)
         else:
-            MD.show_info("❌ Exportación automática DESACTIVADA.", "Auto-Export",
+            MD.show_info("❌ Exportación automática DESACTIVADA.", "Exportar",
                          parent=self)
