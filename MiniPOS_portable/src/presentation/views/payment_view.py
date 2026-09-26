@@ -9,6 +9,7 @@ from presentation.views.widgets import (
     MD, show_popup_smooth, get_menu_font,
     AutoCompleteEntry, TreeviewTooltip, popup_is_open,
     make_scrolled_treeview, get_business_info,
+    get_theme_colors,
     generate_ticket_pdf,
 )
 
@@ -23,7 +24,7 @@ class PaymentView(ttk.Frame):
         self.get_theme = get_theme_func
         self.on_business_click = on_business_click
 
-        self.cart = []                    # lista de dicts
+        self.cart = []
         self.tooltip = None
         self._draft_loaded = False
         self.last_ticket_path = None
@@ -115,7 +116,7 @@ class PaymentView(ttk.Frame):
         self.scan_entry = ttk.Entry(top, textvariable=self.scan_var,
                                     width=22, font=("Arial", 14))
         self.scan_entry.pack(side="left", padx=5)
-        self.scan_entry.bind("<Return>", self.add_by_barcode)
+        self.scan_entry.bind("<Return>", self.on_barcode_scanned)
 
         ttk.Label(top, text="🔍 Buscar:", font=("Arial", 11),
                   bootstyle="inverse-dark").pack(side="left", padx=(15, 5))
@@ -124,20 +125,19 @@ class PaymentView(ttk.Frame):
         self.search_entry = AutoCompleteEntry(
             top,
             values_getter=self._get_product_labels,
-            on_select=self.add_by_search_value,
+            on_select=self.on_search_selected,
             width=25,
             font=("Arial", 11))
         self.search_entry.configure(textvariable=self.search_var)
         self.search_entry.pack(side="left", padx=5)
 
-        ttk.Button(top, text="Agregar", command=self.add_by_search,
+        ttk.Button(top, text="🔍 Ver producto",
+                   command=self.on_search_clicked,
                    style="DarkGreen.TButton").pack(side="left", padx=5)
 
-        # ---- Cuerpo: carrito + ventas recientes ----
         body = ttk.Frame(self, bootstyle="dark")
         body.pack(padx=10, pady=5, fill="both", expand=True)
 
-        # Carrito (izquierda)
         cart_frame = ttk.Frame(body, bootstyle="dark")
         cart_frame.pack(side="left", fill="both", expand=True)
 
@@ -157,10 +157,8 @@ class PaymentView(ttk.Frame):
         self.tree.bind("<Button-3>", self._cart_context_menu)
         self.tooltip = TreeviewTooltip(self.tree, font_size=11)
 
-        # Ventas recientes (derecha, panel)
         self._build_recent_panel(body)
 
-        # ---- Totales y botones ----
         bottom = ttk.Frame(self, bootstyle="dark")
         bottom.pack(fill="x", padx=10, pady=10)
 
@@ -188,7 +186,6 @@ class PaymentView(ttk.Frame):
         ttk.Button(bf, text="❌ Cancelar", command=self.clear_cart,
                    bootstyle="danger").pack(side="left", padx=5, ipady=15)
 
-        # Atajo F12
         try:
             self.winfo_toplevel().bind('<F12>', lambda e: self.pay(), add="+")
         except Exception:
@@ -296,7 +293,7 @@ class PaymentView(ttk.Frame):
                       on_done=self._load_recent_sales)
 
     # ============================================================
-    # BÚSQUEDA / AGREGAR
+    # BÚSQUEDA
     # ============================================================
     def _get_product_labels(self):
         vals = []
@@ -310,110 +307,198 @@ class PaymentView(ttk.Frame):
 
     def _find_by_barcode(self, codigo):
         try:
-            for p in self.product_use_case.list_active_products():
-                if str(p.barcode).strip() == codigo:
-                    return p
+            return self.product_use_case.find_by_barcode(codigo)
         except Exception:
-            pass
+            return None
+
+    def _find_by_name(self, query):
+        """Busca por nombre exacto o aproximado."""
+        q = query.strip().lower()
+        if not q:
+            return None
+        try:
+            products = self.product_use_case.list_active_products()
+        except Exception:
+            return None
+        # Coincidencia exacta por nombre
+        for p in products:
+            if (p.name or "").lower() == q:
+                return p
+        # Coincidencia por barcode
+        for p in products:
+            if p.matches_barcode(q):
+                return p
+        # Coincidencia parcial
+        for p in products:
+            if q in (p.name or "").lower():
+                return p
         return None
 
-    def add_by_search_value(self, value):
-        self.after(10, lambda: self._do_add_by_search(value))
+    # ============================================================
+    # SCANNER — Muestra detalle del producto
+    # ============================================================
+    def on_barcode_scanned(self, event=None):
+        codigo = self.scan_var.get().strip()
+        if not codigo:
+            return
+        self.scan_var.set("")
+        enc = self._find_by_barcode(codigo)
+        if not enc:
+            r = MD.yesno(
+                f"⚠️ El código '{codigo}' no está registrado.\n\n"
+                f"¿Deseas agregarlo al inventario?",
+                "No encontrado", parent=self)
+            if r == "Yes":
+                try:
+                    top = self.winfo_toplevel()
+                    if hasattr(top, "inventory_view"):
+                        top.show_page("inventario")
+                        top.inventory_view.add_product_popup(
+                            barcode_prefill=codigo, auto_select=True)
+                except Exception:
+                    pass
+            self.scan_entry.focus_set()
+            return
+        self._show_product_detail(enc)
 
-    def _do_add_by_search(self, value):
+    # ============================================================
+    # BÚSQUEDA — Muestra detalle del producto
+    # ============================================================
+    def on_search_selected(self, value):
+        """Se dispara al seleccionar del autocomplete."""
+        self.after(10, lambda: self._process_search(value))
+
+    def on_search_clicked(self, event=None):
+        """Se dispara al hacer clic en el botón Ver producto."""
+        raw = self.search_var.get().strip()
+        if not raw:
+            return
+        self._process_search(raw)
+
+    def _process_search(self, value):
         q = value.split("|")[0].strip() if "|" in value else value
-        q_lower = q.lower()
-        enc = None
-        try:
-            for p in self.product_use_case.list_active_products():
-                if str(p.barcode).strip() == q or p.name.lower() == q_lower:
-                    enc = p
-                    break
-            if not enc:
-                for p in self.product_use_case.list_active_products():
-                    if q_lower in p.name.lower():
-                        enc = p
-                        break
-        except Exception:
-            pass
+        enc = self._find_by_barcode(q)
+        if not enc:
+            enc = self._find_by_name(q)
         if not enc:
             MD.show_warning(f"⚠️ No se encontró '{q}'.", "No encontrado",
                             parent=self)
             return
         self.search_var.set("")
-        if enc.unit_type in ("peso", "volumen"):
-            self.ask_amount(enc)
-        else:
-            self.add_to_cart(enc, 1)
-        self.scan_entry.focus_set()
+        self._show_product_detail(enc)
 
-    def add_by_search(self, event=None):
-        raw = self.search_var.get().strip()
-        if not raw:
-            return
-        self._do_add_by_search(raw)
+    # ============================================================
+    # DETALLE DE PRODUCTO — Antes de agregar al carrito
+    # ============================================================
+    def _show_product_detail(self, product):
+        """Muestra una ventana con el detalle del producto y un botón para agregar al carrito."""
+        bg, fg, _, _ = get_theme_colors()
 
-    def add_by_barcode(self, event=None):
-        codigo = self.scan_var.get().strip()
-        if not codigo:
-            return
-        enc = self._find_by_barcode(codigo)
-        if not enc:
-            MD.show_warning(f"⚠️ '{codigo}' no registrado.",
-                            "No encontrado", parent=self)
-            self.scan_var.set("")
-            self.scan_entry.focus_set()
-            return
-        self.scan_var.set("")
-        self.scan_entry.focus_set()
-        if enc.unit_type in ("peso", "volumen"):
-            self.ask_amount(enc)
-        else:
-            self.add_to_cart(enc, 1)
-
-    def ask_amount(self, product):
         pop = Toplevel(self)
-        pop.title(f"Cantidad - {product.name}")
-        pop.geometry("400x320")
+        pop.title(f"Detalle - {product.name}")
+        pop.geometry("480x620")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        pop.configure(bg=bg)
 
-        tk.Label(pop, text=product.name, font=("Arial", 16, "bold"),
-                 bg=bg, fg=fg).pack(pady=12)
-        tk.Label(pop, text=f"Precio: ${product.price:,.0f}/{product.unit}".replace(",", "."),
-                 font=("Arial", 12), bg=bg, fg=fg).pack(pady=5)
-        tk.Label(pop, text=f"Ingrese la cantidad en {product.unit}:",
-                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=10)
-        v = tk.StringVar(value="1")
-        e = ttk.Entry(pop, textvariable=v, width=15, font=("Arial", 20),
-                      justify="center")
-        e.pack(pady=5)
+        # Título
+        tk.Label(pop, text="📋 DETALLE DEL PRODUCTO",
+                 font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(15, 6))
+        tk.Label(pop, text=product.name,
+                 font=("Arial", 16, "bold"), bg=bg, fg="#a8e6a8",
+                 wraplength=440, justify="center").pack(pady=(0, 10))
+
+        # Info
+        info = tk.Frame(pop, bg=bg)
+        info.pack(fill="x", padx=30, pady=6)
+
+        def row(label, value, value_color=None):
+            f = tk.Frame(info, bg=bg)
+            f.pack(fill="x", pady=3)
+            tk.Label(f, text=f"{label}:", font=("Arial", 10, "bold"),
+                     bg=bg, fg=fg, width=20, anchor="w").pack(side="left")
+            tk.Label(f, text=str(value), font=("Arial", 10),
+                     bg=bg, fg=value_color or fg).pack(side="left")
+
+        row("Código 1", product.barcode or "—")
+        barcode2 = getattr(product, "barcode2", "") or ""
+        if barcode2:
+            row("Código 2 (caja)", barcode2)
+        row("Cantidad disponible", f"{product.stock:g} {product.unit or 'unidad'}")
+
+        # Separador
+        tk.Frame(pop, height=2, bg="#444444").pack(fill="x", padx=30, pady=8)
+
+        # Precios GRANDES
+        tk.Label(pop, text="💰 PRECIOS", font=("Arial", 12, "bold"),
+                 bg=bg, fg=fg).pack(anchor="w", padx=30, pady=(0, 6))
+
+        # Precio unitario
+        precio_unit = getattr(product, "rounded_price", 0) or product.price
+        f_unit = tk.Frame(pop, bg=bg)
+        f_unit.pack(fill="x", padx=30, pady=4)
+        tk.Label(f_unit, text="Precio por unidad:",
+                 font=("Arial", 11, "bold"), bg=bg, fg=fg,
+                 width=20, anchor="w").pack(side="left")
+        tk.Label(f_unit, text=f"${precio_unit:,.0f}".replace(",", "."),
+                 font=("Arial", 22, "bold"), bg=bg, fg="#7dd87d").pack(side="left", padx=8)
+
+        # Precio del paquete (si aplica)
+        if getattr(product, "is_package", 0):
+            pkg_units = getattr(product, "package_units", 0) or 0
+            precio_paquete = precio_unit * pkg_units
+            f_pkg = tk.Frame(pop, bg=bg)
+            f_pkg.pack(fill="x", padx=30, pady=4)
+            tk.Label(f_pkg, text="Precio por paquete:",
+                     font=("Arial", 11, "bold"), bg=bg, fg=fg,
+                     width=20, anchor="w").pack(side="left")
+            tk.Label(f_pkg, text=f"${precio_paquete:,.0f}".replace(",", "."),
+                     font=("Arial", 22, "bold"), bg=bg, fg="#ffd166").pack(side="left", padx=8)
+            f_pkg2 = tk.Frame(pop, bg=bg)
+            f_pkg2.pack(fill="x", padx=30, pady=2)
+            tk.Label(f_pkg2, text="Unidades por paquete:",
+                     font=("Arial", 10), bg=bg, fg=fg,
+                     width=20, anchor="w").pack(side="left")
+            tk.Label(f_pkg2, text=f"{pkg_units}",
+                     font=("Arial", 10), bg=bg, fg=fg).pack(side="left")
+        else:
+            f_pkg = tk.Frame(pop, bg=bg)
+            f_pkg.pack(fill="x", padx=30, pady=4)
+            tk.Label(f_pkg, text="Precio por paquete:",
+                     font=("Arial", 11, "bold"), bg=bg, fg=fg,
+                     width=20, anchor="w").pack(side="left")
+            tk.Label(f_pkg, text="—",
+                     font=("Arial", 22, "bold"), bg=bg, fg=fg).pack(side="left", padx=8)
+
+        # Separador
+        tk.Frame(pop, height=2, bg="#444444").pack(fill="x", padx=30, pady=8)
+
+        # Tipo de venta
+        is_peso_vol = product.unit_type in ("peso", "volumen")
+        tk.Label(pop, text="Cantidad a agregar:",
+                 font=("Arial", 11, "bold"), bg=bg, fg=fg).pack(pady=(4, 4))
+        qty_var = tk.StringVar(value="1")
+        e = ttk.Entry(pop, textvariable=qty_var, width=15,
+                      font=("Arial", 16), justify="center")
+        e.pack(pady=4)
         e.select_range(0, tk.END)
         e.focus_set()
+        e.bind("<Return>", lambda ev: self._confirm_add(pop, product, qty_var))
 
-        def ok(ev=None):
-            try:
-                c = float(v.get().replace(",", "."))
-                if c <= 0:
-                    raise ValueError
-            except ValueError:
-                MD.show_error("Cantidad inválida", "Error", parent=pop)
-                return "break"
-            pop.destroy()
-            self.add_to_cart(product, c)
-            self.scan_entry.focus_set()
-            return "break"
+        tk.Label(pop, text=f"({product.unit or 'unidad'})",
+                 font=("Arial", 9, "italic"), bg=bg, fg="#888888").pack()
 
+        # Botones
         bf = tk.Frame(pop, bg=bg)
-        bf.pack(pady=15)
-        ttk.Button(bf, text="Agregar", command=ok,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="Cancelar",
+        bf.pack(side="bottom", pady=15)
+
+        ttk.Button(bf, text="➕ Agregar al carrito",
+                   command=lambda: self._confirm_add(pop, product, qty_var),
+                   style="DarkGreen.TButton").pack(side="left", padx=6)
+        ttk.Button(bf, text="❌ Cancelar",
                    command=lambda: [pop.destroy(), self.scan_entry.focus_set()]
-                   ).pack(side="left", padx=5)
-        e.bind("<Return>", ok)
+                   ).pack(side="left", padx=6)
+
         show_popup_smooth(pop)
         try:
             pop.grab_set()
@@ -421,6 +506,21 @@ class PaymentView(ttk.Frame):
         except Exception:
             pass
 
+    def _confirm_add(self, popup, product, qty_var):
+        try:
+            qty = float(qty_var.get().replace(",", ".") or 0)
+            if qty <= 0:
+                raise ValueError
+        except ValueError:
+            MD.show_error("Cantidad inválida.", "Error", parent=popup)
+            return
+        popup.destroy()
+        self.add_to_cart(product, qty)
+        self.scan_entry.focus_set()
+
+    # ============================================================
+    # CARRITO
+    # ============================================================
     def add_to_cart(self, product, cantidad):
         for it in self.cart:
             if it["product_id"] == product.product_id:
@@ -429,7 +529,6 @@ class PaymentView(ttk.Frame):
                 self.refresh_cart()
                 self._save_cart_draft()
                 return
-        # Precio efectivo (redondeado si aplica)
         precio = getattr(product, "effective_price", None)
         if precio is None:
             precio = (product.rounded_price
@@ -481,11 +580,11 @@ class PaymentView(ttk.Frame):
         vals = self.tree.item(row, 'values')
         pid = int(vals[0])
         name = vals[1]
-        style = ttk.Style()
+        bg, fg, sel_bg, sel_fg = get_theme_colors()
         m = tk.Menu(self, tearoff=0,
-                    bg=style.colors.bg, fg=style.colors.fg,
-                    activebackground=style.colors.selectbg,
-                    activeforeground=style.colors.selectfg,
+                    bg=bg, fg=fg,
+                    activebackground=sel_bg,
+                    activeforeground=sel_fg,
                     bd=1, relief="solid", font=get_menu_font())
         m.add_command(label="➖ Quitar 1",
                       command=lambda: self._remove_one(pid, name))
@@ -522,7 +621,7 @@ class PaymentView(ttk.Frame):
         self.scan_entry.focus_set()
 
     # ============================================================
-    # COBRAR (con pago mixto)
+    # COBRAR
     # ============================================================
     def pay(self):
         try:
@@ -539,13 +638,13 @@ class PaymentView(ttk.Frame):
             return
         total = sum(i["subtotal"] for i in self.cart)
 
+        bg, fg, _, _ = get_theme_colors()
         pop = Toplevel(self)
         pop.title("Confirmar Pago")
         pop.geometry("640x780")
         pop.transient(self.winfo_toplevel())
         pop.withdraw()
-        bg = ttk.Style().colors.bg
-        fg = ttk.Style().colors.fg
+        pop.configure(bg=bg)
 
         tk.Label(pop, text="💰 CONFIRMAR PAGO",
                  font=("Arial", 15, "bold"), bg=bg, fg=fg).pack(pady=(10, 3))
@@ -559,14 +658,12 @@ class PaymentView(ttk.Frame):
                  font=("Arial", 24, "bold"),
                  bg="#0a4d1f", fg="#a8e6a8").pack()
 
-        # ---- Cliente ----
         tk.Label(pop, text="Nombre del cliente (opcional):",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(3, 2))
         nombre_var = tk.StringVar()
         ttk.Entry(pop, textvariable=nombre_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
-        # ---- Método simple ----
         tk.Label(pop, text="Método de pago:",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
         metodo_var = tk.StringVar(value="Efectivo")
@@ -579,7 +676,6 @@ class PaymentView(ttk.Frame):
                             bootstyle="info").grid(row=r, column=c,
                                                     padx=6, pady=1, sticky="w")
 
-        # ---- Pago dividido ----
         mixed_frame = tk.Frame(pop, bg=bg)
         mixed_frame.pack(fill="x", pady=(8, 2), padx=20)
         mixed_var = tk.BooleanVar(value=False)
@@ -656,20 +752,17 @@ class PaymentView(ttk.Frame):
         ttk.Button(rows_frame, text="➕ Agregar método",
                    command=add_pay_row, bootstyle="secondary").pack(pady=4)
 
-        # ---- Aviso de deuda ----
         deuda_lbl = tk.Label(pop, text="", font=("Arial", 10, "bold"),
                              bg=bg, fg="#ffd166",
                              wraplength=580, justify="center")
         deuda_lbl.pack(pady=3, padx=10)
 
-        # ---- Notas ----
         tk.Label(pop, text="Notas (opcional):",
                  font=("Arial", 10), bg=bg, fg=fg).pack(pady=(4, 2))
         notas_var = tk.StringVar()
         ttk.Entry(pop, textvariable=notas_var, width=40,
                   font=("Arial", 11)).pack(pady=3, padx=20)
 
-        # ---- Contenedor inferior ----
         bottom_container = tk.Frame(pop, bg=bg)
         bottom_container.pack(side="bottom", fill="x", pady=8)
 
@@ -780,7 +873,6 @@ class PaymentView(ttk.Frame):
         abono_var.trace_add("write", refresh_ui)
         abono_monto_var.trace_add("write", refresh_ui)
 
-        # ---- Confirmar ----
         def confirmar():
             nombre = nombre_var.get().strip()
             metodo = metodo_var.get()
@@ -795,7 +887,6 @@ class PaymentView(ttk.Frame):
                 except ValueError:
                     monto_abono = 0.0
 
-            # Preparar payments si es dividido
             payments = None
             if mixed_var.get() and payment_rows:
                 payments = []
@@ -842,7 +933,6 @@ class PaymentView(ttk.Frame):
                     else:
                         msg += f"\n📌 Saldo pendiente: ${saldo:,.0f}".replace(",", ".")
 
-                # Guardar el sale_id para el ticket
                 self.last_sale_id = _sid
                 self.cart = []
                 self.refresh_cart()
@@ -851,7 +941,6 @@ class PaymentView(ttk.Frame):
 
                 MD.show_info(msg, "Venta Exitosa", parent=self)
 
-                # Generar ticket automáticamente si está activado
                 try:
                     copias = int(self.db_manager.get_setting("ticket_copies", "0") or 0)
                     if copias >= 1:
@@ -904,7 +993,6 @@ class PaymentView(ttk.Frame):
 
     def open_last_ticket(self):
         if not self.last_ticket_path or not os.path.exists(self.last_ticket_path):
-            # Intentar con la última venta
             try:
                 sales = self.sale_use_case.get_all_sales(limit=1)
                 if not sales:
