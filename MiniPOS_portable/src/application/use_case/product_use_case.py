@@ -27,6 +27,7 @@ class ProductCase:
             r["is_package"] if "is_package" in keys else 0,
             r["paused"] if "paused" in keys else 0,
             r["expiry_date"] if "expiry_date" in keys else "",
+            r["barcode2"] if "barcode2" in keys else "",
         )
 
     # ============================================================
@@ -37,20 +38,20 @@ class ProductCase:
                     group_name="", cost=0.0, margin_percent=20.0,
                     rounded_price=0.0, round_enabled=0, round_to=100,
                     package_cost=0.0, package_units=0, is_package=0,
-                    paused=0, expiry_date=""):
+                    paused=0, expiry_date="", barcode2=""):
         conn = self.db.get_connection()
         cur = conn.cursor()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not rounded_price or rounded_price <= 0:
             rounded_price = price
         cur.execute(
-            "INSERT INTO products (name, barcode, price, stock, unit_type, unit, "
-            "created_at, updated_at, group_name, cost, margin_percent, "
-            "rounded_price, round_enabled, round_to, package_cost, package_units, "
-            "is_package, paused, expiry_date) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (name, barcode, price, stock, unit_type, unit, now, now,
-             group_name, cost, margin_percent,
+            "INSERT INTO products (name, barcode, barcode2, price, stock, "
+            "unit_type, unit, created_at, updated_at, group_name, cost, "
+            "margin_percent, rounded_price, round_enabled, round_to, "
+            "package_cost, package_units, is_package, paused, expiry_date) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (name, barcode, barcode2, price, stock, unit_type, unit,
+             now, now, group_name, cost, margin_percent,
              rounded_price, round_enabled, round_to,
              package_cost, package_units, is_package, paused, expiry_date))
         conn.commit()
@@ -80,12 +81,28 @@ class ProductCase:
             return None
         return self._row_to_product(r)
 
+    def find_by_barcode(self, code):
+        """Busca por código de barras (barcode o barcode2)."""
+        if not code:
+            return None
+        code = str(code).strip()
+        cur = self.db.get_connection().cursor()
+        cur.execute(
+            "SELECT * FROM products WHERE "
+            "(barcode = ? OR barcode2 = ?) "
+            "AND (paused = 0 OR paused IS NULL) LIMIT 1",
+            (code, code))
+        r = cur.fetchone()
+        if not r:
+            return None
+        return self._row_to_product(r)
+
     def update_product(self, product_id, name, barcode, price, stock,
                        unit_type="unidad", unit="unidad",
                        group_name="", cost=0.0, margin_percent=20.0,
                        rounded_price=0.0, round_enabled=0, round_to=100,
                        package_cost=0.0, package_units=0, is_package=0,
-                       paused=0, expiry_date="",
+                       paused=0, expiry_date="", barcode2="",
                        register_history=True):
         conn = self.db.get_connection()
         cur = conn.cursor()
@@ -101,12 +118,12 @@ class ProductCase:
             rounded_price = price
 
         cur.execute(
-            "UPDATE products SET name=?, barcode=?, price=?, stock=?, unit_type=?, "
-            "unit=?, updated_at=?, group_name=?, cost=?, margin_percent=?, "
-            "rounded_price=?, round_enabled=?, round_to=?, package_cost=?, "
-            "package_units=?, is_package=?, paused=?, expiry_date=? "
-            "WHERE product_id=?",
-            (name, barcode, price, stock, unit_type, unit, now,
+            "UPDATE products SET name=?, barcode=?, barcode2=?, price=?, "
+            "stock=?, unit_type=?, unit=?, updated_at=?, group_name=?, "
+            "cost=?, margin_percent=?, rounded_price=?, round_enabled=?, "
+            "round_to=?, package_cost=?, package_units=?, is_package=?, "
+            "paused=?, expiry_date=? WHERE product_id=?",
+            (name, barcode, barcode2, price, stock, unit_type, unit, now,
              group_name, cost, margin_percent,
              rounded_price, round_enabled, round_to,
              package_cost, package_units, is_package, paused, expiry_date,
@@ -353,7 +370,7 @@ class ProductCase:
             round_enabled=p.round_enabled, round_to=p.round_to,
             package_cost=p.package_cost, package_units=p.package_units,
             is_package=p.is_package, paused=p.paused,
-            expiry_date=p.expiry_date,
+            expiry_date=p.expiry_date, barcode2=p.barcode2,
             register_history=True,
         )
         return True, f"Descuento del {discount_percent}% aplicado"
