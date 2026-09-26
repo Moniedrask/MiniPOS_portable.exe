@@ -48,7 +48,6 @@ class MainView(tk.Tk):
         except Exception:
             self.geometry("1400x900")
 
-        # === Tema (leído desde settings) ===
         db_init = None
         try:
             if getattr(sys, 'frozen', False):
@@ -74,7 +73,6 @@ class MainView(tk.Tk):
         self.is_fullscreen = False
         self._setup_dark_green_style()
 
-        # === Base de datos ===
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -88,7 +86,6 @@ class MainView(tk.Tk):
         self.product_use_case = ProductCase(self.db_manager)
         self.sale_use_case = SaleCase(self.db_manager)
 
-        # === Bandeja del sistema ===
         self.tray_icon = None
         self.tray_thread = None
         self.tray_queue = queue.Queue()
@@ -96,11 +93,8 @@ class MainView(tk.Tk):
         self._backup_check_timer = None
         self._auto_export_timer = None
 
-        # === Fase 2: auto-reset al iniciar ===
         self._do_auto_reset(silent=True)
-        # === Fase 4: auto-backup al iniciar ===
         self._do_auto_backup(silent=True)
-        # === Fase 6: abrir/verificar caja del día ===
         try:
             self.sale_use_case.get_or_create_today_cash_session()
         except Exception:
@@ -129,7 +123,7 @@ class MainView(tk.Tk):
             self, self.current_theme == 'darkly'))
 
     # ============================================================
-    # AUTO-RESET DIARIO (Fase 2)
+    # AUTO-RESET DIARIO
     # ============================================================
     def _do_auto_reset(self, silent=False):
         try:
@@ -167,7 +161,7 @@ class MainView(tk.Tk):
             pass
 
     # ============================================================
-    # RESPALDO AUTOMÁTICO (Fase 4)
+    # RESPALDO AUTOMÁTICO
     # ============================================================
     def _get_backup_folder(self):
         try:
@@ -241,7 +235,7 @@ class MainView(tk.Tk):
             pass
 
     # ============================================================
-    # AUTO-EXPORT (NUEVO)
+    # AUTO-EXPORT
     # ============================================================
     def _schedule_auto_export_check(self):
         self._check_auto_export_timer()
@@ -257,7 +251,14 @@ class MainView(tk.Tk):
             pass
 
     def _do_auto_export(self, trigger="manual"):
-        """Realiza la copia de la BD si está activado el auto-export."""
+        """
+        Realiza la copia de la BD si está activado el auto-export.
+
+        trigger:
+        - "manual": siempre exporta (llamado desde inventory_view al guardar producto nuevo)
+        - "close": exporta si freq es on_close/each_sale/hourly/daily
+        - "timer": exporta según freq (each_sale = si mtime cambió, hourly, daily)
+        """
         try:
             enabled = self.db_manager.get_setting("auto_export_enabled", "0") == "1"
             if not enabled:
@@ -267,43 +268,49 @@ class MainView(tk.Tk):
                 return
             if not os.path.isdir(folder):
                 return
-            freq = self.db_manager.get_setting(
-                "auto_export_frequency", "each_sale") or "each_sale"
 
-            should_export = False
+            # Verificar si el trigger es "manual" (producto nuevo) y está permitido
             if trigger == "manual":
+                allow_on_new = self.db_manager.get_setting(
+                    "auto_export_on_new_product", "1") == "1"
+                if not allow_on_new:
+                    return
                 should_export = True
-            elif trigger == "close":
-                should_export = freq in ("on_close", "each_sale", "hourly", "daily")
-            elif trigger == "timer":
-                if freq == "each_sale":
-                    try:
-                        mtime = os.path.getmtime(self.db_path)
-                        last = float(self.db_manager.get_setting(
-                            "auto_export_last_mtime", "0") or "0")
-                        if mtime > last:
-                            should_export = True
-                    except Exception:
-                        pass
-                elif freq == "hourly":
-                    last_str = self.db_manager.get_setting(
-                        "auto_export_last_time", "") or ""
-                    if not last_str:
-                        should_export = True
-                    else:
+            else:
+                freq = self.db_manager.get_setting(
+                    "auto_export_frequency", "each_sale") or "each_sale"
+                should_export = False
+                if trigger == "close":
+                    should_export = freq in ("on_close", "each_sale", "hourly", "daily")
+                elif trigger == "timer":
+                    if freq == "each_sale":
                         try:
-                            last_time = datetime.strptime(
-                                last_str, "%Y-%m-%d %H:%M:%S")
-                            if (datetime.now() - last_time).total_seconds() >= 3600:
+                            mtime = os.path.getmtime(self.db_path)
+                            last = float(self.db_manager.get_setting(
+                                "auto_export_last_mtime", "0") or "0")
+                            if mtime > last:
                                 should_export = True
                         except Exception:
+                            pass
+                    elif freq == "hourly":
+                        last_str = self.db_manager.get_setting(
+                            "auto_export_last_time", "") or ""
+                        if not last_str:
                             should_export = True
-                elif freq == "daily":
-                    last_date = self.db_manager.get_setting(
-                        "auto_export_last_date", "") or ""
-                    hoy = datetime.now().strftime("%Y-%m-%d")
-                    if last_date != hoy:
-                        should_export = True
+                        else:
+                            try:
+                                last_time = datetime.strptime(
+                                    last_str, "%Y-%m-%d %H:%M:%S")
+                                if (datetime.now() - last_time).total_seconds() >= 3600:
+                                    should_export = True
+                            except Exception:
+                                should_export = True
+                    elif freq == "daily":
+                        last_date = self.db_manager.get_setting(
+                            "auto_export_last_date", "") or ""
+                        hoy = datetime.now().strftime("%Y-%m-%d")
+                        if last_date != hoy:
+                            should_export = True
 
             if not should_export:
                 return
@@ -419,7 +426,6 @@ class MainView(tk.Tk):
                 self.after_cancel(self._auto_export_timer)
         except Exception:
             pass
-        # Auto-exportar antes de cerrar si está configurado
         try:
             self._do_auto_export(trigger="close")
         except Exception:
@@ -778,283 +784,348 @@ class MainView(tk.Tk):
             pass
 
     # ============================================================
-    # CONFIGURACIONES SIMPLES
+    # TAMAÑO DE FUENTE
     # ============================================================
-    def _configure_default_margin(self):
-        actual = self.db_manager.get_setting("default_margin", "20") or "20"
-        pop = tk.Toplevel(self)
-        pop.title("📈 Margen por defecto")
-        pop.geometry("400x260")
-        pop.transient(self)
-        pop.configure(bg=self.style.colors.bg)
-        pop.withdraw()
-        bg = self.style.colors.bg
-        fg = self.style.colors.fg
-        tk.Label(pop, text="📈 Margen de ganancia por defecto",
-                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(15, 4))
-        tk.Label(pop, text="Este % se usará por defecto al crear productos nuevos.",
-                 font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8").pack(pady=(0, 10))
-        tk.Label(pop, text="% Ganancia:", font=("Arial", 11), bg=bg, fg=fg).pack()
-        v = tk.StringVar(value=actual)
-        e = ttk.Entry(pop, textvariable=v, width=15, font=("Arial", 14),
-                      justify="center")
-        e.pack(pady=8)
-        e.select_range(0, tk.END)
-
-        def guardar(ev=None):
+    def _apply_font_size(self):
+        size = int(self.db_manager.get_setting("font_size", "11") or 11)
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
             try:
-                val = float(v.get().replace(",", ".").strip() or "0")
-                if val < 0:
-                    val = 0
-            except ValueError:
-                MD.show_error("Valor inválido", "Error", parent=pop)
-                return "break"
-            self.db_manager.set_setting("default_margin", str(val))
-            pop.destroy()
-            MD.show_info(f"✅ Margen por defecto: {val:g}%", "Listo", parent=self)
-            return "break"
-
-        ttk.Button(pop, text="Guardar", command=guardar,
-                   style="DarkGreen.TButton").pack(pady=12)
-        e.bind("<Return>", guardar)
-        show_popup_smooth(pop)
-        pop.after(80, lambda: e.focus_set() if pop.winfo_exists() else None)
-
-    def _configure_low_stock(self):
-        actual = self.db_manager.get_setting("low_stock_threshold", "5") or "5"
-        pop = tk.Toplevel(self)
-        pop.title("⚠️ Alerta de stock bajo")
-        pop.geometry("400x260")
-        pop.transient(self)
-        pop.configure(bg=self.style.colors.bg)
-        pop.withdraw()
-        bg = self.style.colors.bg
-        fg = self.style.colors.fg
-        tk.Label(pop, text="⚠️ Alerta de stock bajo",
-                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(15, 4))
-        tk.Label(pop,
-                 text="Los productos con stock ≤ este valor se marcarán en rojo.",
-                 font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8").pack(pady=(0, 10))
-        tk.Label(pop, text="Unidades mínimas:", font=("Arial", 11),
-                 bg=bg, fg=fg).pack()
-        v = tk.StringVar(value=actual)
-        e = ttk.Entry(pop, textvariable=v, width=15, font=("Arial", 14),
-                      justify="center")
-        e.pack(pady=8)
-        e.select_range(0, tk.END)
-
-        def guardar(ev=None):
-            try:
-                val = int(float(v.get().strip() or "0"))
-                if val < 0:
-                    val = 0
-            except ValueError:
-                MD.show_error("Valor inválido", "Error", parent=pop)
-                return "break"
-            self.db_manager.set_setting("low_stock_threshold", str(val))
-            pop.destroy()
-            try:
-                self.inventory_view.load_products()
+                tkfont.nametofont(name).configure(size=size)
             except Exception:
                 pass
-            MD.show_info(f"✅ Alerta configurada: stock ≤ {val}", "Listo",
-                         parent=self)
+        self.font_size = size
+        self._update_tree_rowheights(size)
+        self._setup_dark_green_style()
+        try:
+            self.style.configure("DarkGreen.TButton",
+                                 font=("Arial", size, "bold"))
+        except Exception:
+            pass
+
+    def _update_tree_rowheights(self, size):
+        row_height = size + 14
+        try:
+            self.style.configure("Treeview", rowheight=row_height,
+                                 font=("Arial", size))
+            self.style.configure("Treeview.Heading",
+                                 font=("Arial", size, "bold"))
+        except Exception:
+            pass
+
+    def _change_font_size(self, delta):
+        new = max(8, min(20, self.font_size + delta))
+        self.db_manager.set_setting("font_size", str(new))
+        self.font_size = new
+        self._apply_font_size()
+        try:
+            self.payment_view.refresh_cart()
+        except Exception:
+            pass
+        try:
+            self.inventory_view.load_products()
+        except Exception:
+            pass
+
+    # ============================================================
+    # UI
+    # ============================================================
+    def create_widgets(self):
+        top_bar = ttk.Frame(self, bootstyle="dark")
+        top_bar.pack(fill="x", side="top")
+
+        menubar_wrap = ttk.Frame(top_bar, bootstyle="dark")
+        menubar_wrap.pack(side="left", fill="y")
+        self.menubar = DarkMenuBar(menubar_wrap,
+                                    lambda: self.current_theme == 'darkly')
+        self.menubar.pack(side="left")
+
+        try:
+            bg = self.style.colors.bg
+        except Exception:
+            bg = "#1a1a1a"
+        right_wrap = tk.Frame(top_bar, bg=bg)
+        right_wrap.pack(side="right", padx=(0, 15))
+        self.business_header = make_inline_business_header(
+            right_wrap, self.db_manager, bg=bg)
+        self.business_header["frame"].pack(side="right", pady=6)
+
+        # ==================== MENÚ OPCIONES ====================
+        # NOTA: Aquí solo van las acciones rápidas del día a día.
+        # Lo que ya está en Ajustes (tema, fuente, contraseña, negocio,
+        # vencimiento, respaldo, auto-inicio) NO se duplica aquí.
+        def build_opciones(menu):
+            menu.add_command(label="📜 Exportar Historial de Precios",
+                             command=self.export_price_history)
+            menu.add_command(label="📦 Exportar Inventario a Excel",
+                             command=self.export_inventory_excel)
+            menu.add_separator()
+            menu.add_command(label="🔄 Reiniciar contador de ventas (#) [manual]",
+                             command=self.reset_sales_counter)
+            menu.add_separator()
+            menu.add_command(label="📄 Reporte del Día (TXT)",
+                             command=self.generate_daily_report)
+            menu.add_command(label="📊 Reporte del Mes (Excel)",
+                             command=self.generate_monthly_report)
+            menu.add_separator()
+            menu.add_command(label="📤 Exportar Base de Datos",
+                             command=self.export_db)
+            menu.add_command(label="📥 Importar Base de Datos",
+                             command=self.import_db)
+            menu.add_separator()
+            menu.add_command(label="⚙️ Ajustes...",
+                             command=self.open_settings_view)
+
+        # ==================== MENÚ VENTAS ====================
+        def build_ventas(menu):
+            menu.add_command(label="📊 Resumen de Ventas (agrupado)",
+                             command=self.show_sales_summary)
+            menu.add_command(label="💳 Fiados (agrupado por cliente)",
+                             command=self.show_credit_sales)
+            menu.add_separator()
+            menu.add_command(label="↩️ Devoluciones / Notas crédito",
+                             command=self.open_returns_window)
+            menu.add_separator()
+            menu.add_command(label="💰 Cierre de Caja del día",
+                             command=self.show_cash_closing)
+            menu.add_command(label="💵 Movimiento de Caja (retiro/gasto)",
+                             command=self._open_cash_movement)
+            menu.add_separator()
+            menu.add_command(label="📊 Gráficos y estadísticas",
+                             command=self.open_charts)
+
+        # ==================== MENÚ INVENTARIO ====================
+        # NOTA: Se eliminó "Ver inventario" porque ya está el botón INVENTARIO
+        # en la barra superior.
+        def build_inventario(menu):
+            menu.add_command(label="🖨️ Generar etiquetas PDF",
+                             command=self._open_labels_from_menu)
+            menu.add_command(label="🔔 Alertas de vencimiento",
+                             command=self._open_expiry_alerts_from_menu)
+            menu.add_command(label="💰 Historial de precios global",
+                             command=self._open_price_history_from_menu)
+
+        self.menubar.add_menu("Opciones", build_opciones)
+        self.menubar.add_menu("Ventas", build_ventas)
+        self.menubar.add_menu("Inventario", build_inventario)
+
+        tabs = ttk.Frame(self, bootstyle="dark")
+        tabs.pack(fill="x", padx=10, pady=(6, 0))
+
+        self.btn_pagos = ttk.Button(tabs, text="🛒 PAGOS",
+                                    style="DarkGreen.TButton",
+                                    command=lambda: self.show_page("pagos"),
+                                    width=14)
+        self.btn_pagos.pack(side="left", padx=3, pady=2)
+
+        self.btn_inv = ttk.Button(tabs, text="📦 INVENTARIO",
+                                  style="DarkGreen.TButton",
+                                  command=lambda: self.show_page("inventario"),
+                                  width=14)
+        self.btn_inv.pack(side="left", padx=3, pady=2)
+
+        self.bind('<Control-Key-1>', lambda e: self.show_page("pagos"))
+        self.bind('<Control-Key-2>', lambda e: self.show_page("inventario"))
+
+        self.container = ttk.Frame(self, bootstyle="dark")
+        self.container.pack(fill="both", expand=True, padx=10, pady=6)
+
+        self.payment_view = PaymentView(
+            self.container, self.product_use_case, self.sale_use_case,
+            self.db_manager, lambda: self.current_theme,
+            on_business_click=None)
+        self.inventory_view = InventoryView(
+            self.container, self.product_use_case,
+            self.db_manager, lambda: self.current_theme,
+            on_business_click=None)
+        self.inventory_view._sale_case = self.sale_use_case
+
+        self.current_page = None
+
+    # ============================================================
+    # ACCIONES DE MENÚ
+    # ============================================================
+    def open_settings_view(self):
+        try:
+            from presentation.views.settings_view import SettingsView
+            SettingsView(self, self.db_manager, self.product_use_case,
+                         self.sale_use_case,
+                         on_theme_change=self._on_theme_change,
+                         on_font_change=self._on_font_change,
+                         on_business_change=self._on_business_change,
+                         on_change_password=self._change_password)
+        except Exception as e:
+            MD.show_error(f"Error al abrir Ajustes:\n{e}", "Error", parent=self)
+
+    def _on_theme_change(self, theme):
+        self.current_theme = theme
+        try:
+            self.style.theme_use(theme)
+        except Exception:
+            pass
+        self.configure(bg=self.style.colors.bg)
+        self._setup_dark_green_style()
+        apply_titlebar_theme(self, theme == 'darkly')
+
+    def _on_font_change(self, size):
+        try:
+            self._apply_font_size()
+        except Exception:
+            pass
+
+    def _on_business_change(self):
+        self._update_window_title()
+        self._refresh_business_header()
+
+    def _open_labels_from_menu(self):
+        try:
+            self.inventory_view.print_labels()
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def _open_expiry_alerts_from_menu(self):
+        try:
+            self.inventory_view.open_expiry_alerts()
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def _open_price_history_from_menu(self):
+        try:
+            self.inventory_view.open_price_history_global()
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def open_returns_window(self):
+        try:
+            from presentation.views.widgets import ReturnsWindow
+            ReturnsWindow(self, self.sale_use_case,
+                          on_done=self._refresh_all_views)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def open_charts(self):
+        try:
+            from presentation.views.widgets import ChartsWindow
+            ChartsWindow(self, self.sale_use_case)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def _refresh_all_views(self):
+        try:
+            self.inventory_view.load_products()
+        except Exception:
+            pass
+        try:
+            self.payment_view._load_recent_sales()
+        except Exception:
+            pass
+
+    def reset_sales_counter(self):
+        r1 = MD.yesno(
+            "🔄 ¿Reiniciar el contador de ventas?\n\n"
+            "Las ventas y fiados NO se borran.\n"
+            "Solo el número que aparece como 'Venta #XX' se reiniciará.\n"
+            "La próxima venta aparecerá como #01.\n\n"
+            "¿Deseas continuar?",
+            "Confirmar reinicio", parent=self, default_yes=True)
+        if r1 != "Yes":
+            return
+        pw = self._ask_password_1234(self)
+        if not pw:
+            return
+        try:
+            self.sale_use_case.reset_sale_number_counter()
+            self.sale_use_case.set_last_reset_date(
+                datetime.now().strftime("%Y-%m-%d"))
+            MD.show_info(
+                "✅ Contador reiniciado.\nLa próxima venta será #01.",
+                "Listo", parent=self)
+        except Exception as e:
+            MD.show_error(f"Error al reiniciar: {e}", "Error", parent=self)
+
+    def show_page(self, page):
+        for w in (self.payment_view, self.inventory_view):
+            w.pack_forget()
+        if page == "pagos":
+            self.payment_view.pack(fill="both", expand=True)
+            self.btn_pagos.configure(style="DarkGreen.TButton")
+            self.btn_inv.configure(bootstyle="secondary")
+            self.current_page = "pagos"
+        else:
+            self.inventory_view.load_products()
+            self.inventory_view.pack(fill="both", expand=True)
+            self.btn_pagos.configure(bootstyle="secondary")
+            self.btn_inv.configure(style="DarkGreen.TButton")
+            self.current_page = "inventario"
+
+    def toggle_fullscreen(self):
+        self.is_fullscreen = not self.is_fullscreen
+        self.attributes('-fullscreen', self.is_fullscreen)
+
+    def toggle_theme(self):
+        self.current_theme = 'flatly' if self.current_theme == 'darkly' else 'darkly'
+        self.style.theme_use(self.current_theme)
+        self.configure(bg=self.style.colors.bg)
+        self._setup_dark_green_style()
+        apply_titlebar_theme(self, self.current_theme == 'darkly')
+        self._apply_font_size()
+        try:
+            bg = self.style.colors.bg
+            if hasattr(self, "business_header") and self.business_header:
+                frm = self.business_header["frame"]
+                frm.configure(bg=bg)
+                for child in frm.winfo_children():
+                    try:
+                        child.configure(bg=bg)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # ============================================================
+    # PEDIR CONTRASEÑA 1234
+    # ============================================================
+    def _ask_password_1234(self, parent):
+        pop = tk.Toplevel(parent)
+        pop.title("Contraseña requerida")
+        pop.geometry("340x220")
+        pop.transient(parent)
+        pop.configure(bg=self.style.colors.bg)
+        pop.withdraw()
+        bg = self.style.colors.bg
+        fg = self.style.colors.fg
+
+        tk.Label(pop, text="🔒 Contraseña de administrador:",
+                 font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(pady=15)
+        v = tk.StringVar()
+        e = ttk.Entry(pop, textvariable=v, show="•", width=20,
+                      font=("Arial", 14), justify="center")
+        e.pack(pady=5)
+        ok = {"v": False}
+
+        def ver(ev=None):
+            if v.get() == "1234":
+                ok["v"] = True
+                pop.destroy()
+            else:
+                MD.show_error("Contraseña incorrecta", "Error", parent=pop)
+                v.set("")
+                try:
+                    e.focus_set()
+                    e.select_range(0, tk.END)
+                except Exception:
+                    pass
             return "break"
 
-        ttk.Button(pop, text="Guardar", command=guardar,
-                   style="DarkGreen.TButton").pack(pady=12)
-        e.bind("<Return>", guardar)
-        show_popup_smooth(pop)
-        pop.after(80, lambda: e.focus_set() if pop.winfo_exists() else None)
-
-    def _configure_expiry_alerts(self):
-        dias_warning = self.db_manager.get_setting("expiry_days_warning", "15") or "15"
-        dias_soon = self.db_manager.get_setting("expiry_days_soon", "7") or "7"
-        dias_offer = self.db_manager.get_setting("expiry_days_offer", "2") or "2"
-
-        pop = tk.Toplevel(self)
-        pop.title("📅 Alertas de vencimiento")
-        pop.geometry("500x460")
-        pop.transient(self)
-        pop.configure(bg=self.style.colors.bg)
-        pop.withdraw()
-        bg = self.style.colors.bg
-        fg = self.style.colors.fg
-
-        container = tk.Frame(pop, bg=bg)
-        container.pack(fill="both", expand=True)
-        refs = {}
-
-        def build_content(parent):
-            tk.Label(parent, text="📅 Alertas de vencimiento",
-                     font=("Arial", 14, "bold"), bg=bg, fg=fg).pack(pady=(15, 4))
-            tk.Label(parent,
-                     text="Configura cuántos días antes quieres ver las alertas.",
-                     font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8").pack(pady=(0, 10))
-
-            tk.Label(parent, text="🟠 Alerta temprana (días antes):",
-                     font=("Arial", 11, "bold"), bg=bg, fg=fg,
-                     anchor="w").pack(fill="x", padx=25, pady=(10, 2))
-            tk.Label(parent, text="Aviso amarillo: producto por vencer.",
-                     font=("Arial", 9, "italic"), bg=bg, fg="#888888",
-                     anchor="w").pack(fill="x", padx=25)
-            v_warning = tk.StringVar(value=dias_warning)
-            e_warning = ttk.Entry(parent, textvariable=v_warning, width=15,
-                                   font=("Arial", 12), justify="center")
-            e_warning.pack(pady=4, padx=25, anchor="w")
-            refs["warning"] = v_warning
-
-            tk.Label(parent, text="🟡 Alerta cercana (días antes):",
-                     font=("Arial", 11, "bold"), bg=bg, fg=fg,
-                     anchor="w").pack(fill="x", padx=25, pady=(10, 2))
-            tk.Label(parent,
-                     text="Aviso naranja más fuerte: producto por vencer pronto.",
-                     font=("Arial", 9, "italic"), bg=bg, fg="#888888",
-                     anchor="w").pack(fill="x", padx=25)
-            v_soon = tk.StringVar(value=dias_soon)
-            e_soon = ttk.Entry(parent, textvariable=v_soon, width=15,
-                               font=("Arial", 12), justify="center")
-            e_soon.pack(pady=4, padx=25, anchor="w")
-            refs["soon"] = v_soon
-
-            tk.Label(parent, text="💡 Zona de oferta (días antes):",
-                     font=("Arial", 11, "bold"), bg=bg, fg=fg,
-                     anchor="w").pack(fill="x", padx=25, pady=(10, 2))
-            tk.Label(parent,
-                     text="Cuando falten X días, aparecerá la sugerencia "
-                          "de poner el producto en oferta.",
-                     font=("Arial", 9, "italic"), bg=bg, fg="#888888",
-                     anchor="w", wraplength=440,
-                     justify="left").pack(fill="x", padx=25)
-            v_offer = tk.StringVar(value=dias_offer)
-            e_offer = ttk.Entry(parent, textvariable=v_offer, width=15,
-                                font=("Arial", 12), justify="center")
-            e_offer.pack(pady=4, padx=25, anchor="w")
-            refs["offer"] = v_offer
-
-        def build_bottom(parent):
-            def guardar():
-                try:
-                    w = max(0, int(_parse_float(refs["warning"].get())))
-                    s = max(0, int(_parse_float(refs["soon"].get())))
-                    o = max(0, int(_parse_float(refs["offer"].get())))
-                except Exception:
-                    MD.show_error("Valores inválidos", "Error", parent=pop)
-                    return
-                if not (w >= s >= o):
-                    MD.show_error(
-                        "Los días deben ser: temprana ≥ cercana ≥ oferta.\n"
-                        "Ejemplo: 15 ≥ 7 ≥ 2",
-                        "Orden inválido", parent=pop)
-                    return
-                self.db_manager.set_setting("expiry_days_warning", str(w))
-                self.db_manager.set_setting("expiry_days_soon", str(s))
-                self.db_manager.set_setting("expiry_days_offer", str(o))
-                try:
-                    self.db_manager.set_setting("expiry_warn_days_1", str(w))
-                    self.db_manager.set_setting("expiry_warn_days_2", str(s))
-                    self.db_manager.set_setting("expiry_offer_days", str(o))
-                except Exception:
-                    pass
-                try:
-                    self.inventory_view.load_products()
-                except Exception:
-                    pass
-                pop.destroy()
-                MD.show_info(
-                    f"✅ Alertas configuradas:\n"
-                    f"🟠 Temprana: {w} días\n"
-                    f"🟡 Cercana: {s} días\n"
-                    f"💡 Oferta: {o} días",
-                    "Listo", parent=self)
-
-            ttk.Button(parent, text="💾 Guardar", command=guardar,
-                       style="DarkGreen.TButton").pack(side="right", padx=6)
-            ttk.Button(parent, text="Cancelar",
-                       command=pop.destroy).pack(side="right", padx=6)
-
-        make_scrollable(container, build_content, build_bottom, bg=bg)
-        show_popup_smooth(pop)
-        try:
-            pop.grab_set()
-            pop.focus_force()
-        except Exception:
-            pass
-        pop.after(100, lambda: e_warning.focus_set() if pop.winfo_exists() else None)
-
-    def _configure_backup(self):
-        habilitado = self._is_auto_backup_enabled()
-        pop = tk.Toplevel(self)
-        pop.title("💾 Respaldo automático")
-        pop.geometry("560x400")
-        pop.transient(self)
-        pop.configure(bg=self.style.colors.bg)
-        pop.withdraw()
-        bg = self.style.colors.bg
-        fg = self.style.colors.fg
-
-        tk.Label(pop, text="💾 Respaldo automático diario",
-                 font=("Arial", 13, "bold"), bg=bg, fg=fg).pack(pady=(15, 4))
-        tk.Label(pop,
-                 text="Se crea una copia de la base de datos cada día.\n"
-                      "Se verifica al iniciar la app y cada hora.",
-                 font=("Arial", 9, "italic"), bg=bg, fg="#a8e6a8",
-                 justify="center").pack(pady=(0, 10))
-
-        var_enabled = tk.BooleanVar(value=habilitado)
-        ttk.Checkbutton(pop, text="✅ Activar respaldo automático",
-                        variable=var_enabled,
-                        bootstyle="success-round-toggle").pack(pady=8)
-
-        tk.Label(pop, text="Carpeta de respaldos:",
-                 font=("Arial", 11), bg=bg, fg=fg).pack(pady=(10, 3))
-        carpeta_var = tk.StringVar(value=self._get_backup_folder())
-        entry_frame = tk.Frame(pop, bg=bg)
-        entry_frame.pack(pady=4, fill="x", padx=20)
-        ttk.Entry(entry_frame, textvariable=carpeta_var, width=45,
-                  font=("Arial", 10)).pack(side="left", fill="x", expand=True)
-
-        def elegir_carpeta():
-            folder = filedialog.askdirectory(
-                initialdir=carpeta_var.get() or self.base_dir, parent=pop)
-            if folder:
-                carpeta_var.set(folder)
-
-        ttk.Button(entry_frame, text="📁", command=elegir_carpeta,
-                   bootstyle="info", width=3).pack(side="left", padx=4)
-
-        def guardar():
-            self.db_manager.set_setting("auto_backup_enabled",
-                                        "1" if var_enabled.get() else "0")
-            self.db_manager.set_setting("backup_folder",
-                                         carpeta_var.get().strip())
+        def cancelar(ev=None):
             pop.destroy()
-            MD.show_info("✅ Configuración de respaldo guardada.",
-                         "Listo", parent=self)
+            return "break"
 
-        def respaldar_ahora():
-            folder = carpeta_var.get().strip()
-            try:
-                os.makedirs(folder, exist_ok=True)
-                hoy = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                destino = os.path.join(folder, f"ventas_manual_{hoy}.db")
-                self.db_manager.close_connection()
-                shutil.copy2(self.db_path, destino)
-                self.db_manager.get_connection()
-                MD.show_info(f"✅ Respaldo creado:\n{destino}", "Listo",
-                             parent=pop)
-            except Exception as e:
-                MD.show_error(f"Error: {e}", "Error", parent=pop)
+        e.bind("<Return>", ver)
+        e.bind("<KP_Enter>", ver)
+        pop.bind("<Escape>", cancelar)
 
-        bf = tk.Frame(pop, bg=bg)
-        bf.pack(side="bottom", pady=15)
-        ttk.Button(bf, text="💾 Guardar", command=guardar,
-                   style="DarkGreen.TButton").pack(side="left", padx=5)
-        ttk.Button(bf, text="📥 Respaldar ahora",
-                   command=respaldar_ahora, bootstyle="info").pack(
-                       side="left", padx=5)
-        ttk.Button(bf, text="Cancelar", command=pop.destroy).pack(
-            side="left", padx=5)
+        ttk.Button(pop, text="Aceptar", command=ver,
+                   style="DarkGreen.TButton").pack(pady=15)
 
         show_popup_smooth(pop)
         try:
@@ -1062,6 +1133,19 @@ class MainView(tk.Tk):
             pop.focus_force()
         except Exception:
             pass
+
+        def set_focus():
+            try:
+                if pop.winfo_exists():
+                    e.focus_set()
+                    e.select_range(0, tk.END)
+            except Exception:
+                pass
+        pop.after(50, set_focus)
+        pop.after(250, set_focus)
+
+        parent.wait_window(pop)
+        return ok["v"]
 
     # ============================================================
     # EXPORTAR INVENTARIO A EXCEL
@@ -1095,9 +1179,9 @@ class MainView(tk.Tk):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Inventario"
-        headers = ["ID", "Nombre", "Grupo", "Código",
+        headers = ["ID", "Nombre", "Grupo", "Código", "Código 2",
                    "Costo", "% Gan.", "Precio real", "Precio redondeado",
-                   "Stock", "Vence", "Estado",
+                   "Cantidad", "Vence", "Estado",
                    "Valor costo", "Valor venta"]
         ws.append(headers)
         for c in ws[1]:
@@ -1128,6 +1212,7 @@ class MainView(tk.Tk):
             ws.append([
                 p.product_id, p.name, getattr(p, "group_name", "") or "-",
                 p.barcode or "-",
+                getattr(p, "barcode2", "") or "-",
                 getattr(p, "cost", 0) or 0,
                 getattr(p, "margin_percent", 20) or 20,
                 p.price or 0,
@@ -1138,13 +1223,13 @@ class MainView(tk.Tk):
             ])
 
         ws.append([])
-        ws.append(["", "", "", "", "", "", "", "", "", "", "TOTALES:",
+        ws.append(["", "", "", "", "", "", "", "", "", "", "", "TOTALES:",
                    total_costo, total_venta])
         for c in ws[ws.max_row]:
             c.font = Font(bold=True)
 
-        for col, w in zip("ABCDEFGHIJKLM",
-                          [8, 30, 15, 18, 10, 8, 12, 14, 10, 12, 15, 14, 14]):
+        for col, w in zip("ABCDEFGHIJKLMN",
+                          [8, 30, 15, 18, 18, 10, 8, 12, 14, 10, 12, 15, 14, 14]):
             ws.column_dimensions[col].width = w
 
         try:
@@ -1159,7 +1244,7 @@ class MainView(tk.Tk):
             MD.show_error(f"Error al guardar: {e}", "Error", parent=self)
 
     # ============================================================
-    # EXPORTAR HISTORIAL DE PRECIOS (FASE 5)
+    # EXPORTAR HISTORIAL DE PRECIOS
     # ============================================================
     def export_price_history(self):
         pop = tk.Toplevel(self)
@@ -1408,7 +1493,7 @@ class MainView(tk.Tk):
             MD.show_error(f"Error al generar PDF: {e}", "Error", parent=self)
 
     # ============================================================
-    # MOVIMIENTO DE CAJA (FASE 6)
+    # MOVIMIENTO DE CAJA
     # ============================================================
     def _open_cash_movement(self):
         pop = tk.Toplevel(self)
@@ -1484,387 +1569,7 @@ class MainView(tk.Tk):
         pop.after(80, lambda: e.focus_set() if pop.winfo_exists() else None)
 
     # ============================================================
-    # TAMAÑO DE FUENTE
-    # ============================================================
-    def _apply_font_size(self):
-        size = int(self.db_manager.get_setting("font_size", "11") or 11)
-        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont"):
-            try:
-                tkfont.nametofont(name).configure(size=size)
-            except Exception:
-                pass
-        self.font_size = size
-        self._update_tree_rowheights(size)
-        self._setup_dark_green_style()
-        try:
-            self.style.configure("DarkGreen.TButton",
-                                 font=("Arial", size, "bold"))
-        except Exception:
-            pass
-
-    def _update_tree_rowheights(self, size):
-        row_height = size + 14
-        try:
-            self.style.configure("Treeview", rowheight=row_height,
-                                 font=("Arial", size))
-            self.style.configure("Treeview.Heading",
-                                 font=("Arial", size, "bold"))
-        except Exception:
-            pass
-
-    def _change_font_size(self, delta):
-        new = max(8, min(20, self.font_size + delta))
-        self.db_manager.set_setting("font_size", str(new))
-        self.font_size = new
-        self._apply_font_size()
-        try:
-            self.payment_view.refresh_cart()
-        except Exception:
-            pass
-        try:
-            self.inventory_view.load_products()
-        except Exception:
-            pass
-
-    # ============================================================
-    # UI
-    # ============================================================
-    def create_widgets(self):
-        top_bar = ttk.Frame(self, bootstyle="dark")
-        top_bar.pack(fill="x", side="top")
-
-        menubar_wrap = ttk.Frame(top_bar, bootstyle="dark")
-        menubar_wrap.pack(side="left", fill="y")
-        self.menubar = DarkMenuBar(menubar_wrap,
-                                    lambda: self.current_theme == 'darkly')
-        self.menubar.pack(side="left")
-
-        try:
-            bg = self.style.colors.bg
-        except Exception:
-            bg = "#1a1a1a"
-        right_wrap = tk.Frame(top_bar, bg=bg)
-        right_wrap.pack(side="right", padx=(0, 15))
-        self.business_header = make_inline_business_header(
-            right_wrap, self.db_manager, bg=bg)
-        self.business_header["frame"].pack(side="right", pady=6)
-
-        # ==================== MENÚ OPCIONES ====================
-        def build_opciones(menu):
-            menu.add_command(label="🌓 Cambiar Tema", command=self.toggle_theme)
-            menu.add_command(label="🏪 Datos del negocio",
-                             command=self._open_business_popup)
-            menu.add_separator()
-
-            menu.add_command(label="📈 Margen de ganancia por defecto",
-                             command=self._configure_default_margin)
-            menu.add_command(label="⚠️ Alerta de stock bajo",
-                             command=self._configure_low_stock)
-            menu.add_command(label="📅 Alertas de vencimiento",
-                             command=self._configure_expiry_alerts)
-            menu.add_command(label="💾 Respaldo automático",
-                             command=self._configure_backup)
-            menu.add_separator()
-
-            menu.add_command(label="📜 Exportar Historial de Precios",
-                             command=self.export_price_history)
-            menu.add_command(label="📦 Exportar Inventario a Excel",
-                             command=self.export_inventory_excel)
-            menu.add_separator()
-
-            sub_font = tk.Menu(menu, tearoff=0,
-                               bg=self.style.colors.bg, fg=self.style.colors.fg,
-                               activebackground=self.style.colors.selectbg,
-                               activeforeground=self.style.colors.selectfg,
-                               font=get_menu_font())
-            sub_font.add_command(label="➕ Aumentar letra",
-                                 command=lambda: self._change_font_size(1))
-            sub_font.add_command(label="➖ Reducir letra",
-                                 command=lambda: self._change_font_size(-1))
-            menu.add_cascade(label="🔤 Tamaño de letra", menu=sub_font)
-
-            sub_pwd = tk.Menu(menu, tearoff=0,
-                              bg=self.style.colors.bg, fg=self.style.colors.fg,
-                              activebackground=self.style.colors.selectbg,
-                              activeforeground=self.style.colors.selectfg,
-                              font=get_menu_font())
-            sub_pwd.add_command(label="🆕 Activar/Crear contraseña",
-                                command=self._setup_password_first_time)
-            sub_pwd.add_command(label="🔐 Cambiar contraseña (admin)",
-                                command=self._change_password)
-            menu.add_cascade(label="🔑 Contraseña de inicio", menu=sub_pwd)
-            menu.add_separator()
-
-            self.tray_var = tk.BooleanVar(
-                value=self.db_manager.get_setting("close_to_tray", "0") == "1")
-            menu.add_checkbutton(
-                label="🔽 Al presionar X ocultar en la bandeja",
-                variable=self.tray_var,
-                command=self._toggle_close_to_tray)
-
-            self.autostart_var = tk.BooleanVar(value=self._is_autostart_enabled())
-            menu.add_checkbutton(label="🚀 Ejecutar con el SO",
-                                 variable=self.autostart_var,
-                                 command=self.toggle_autostart)
-            menu.add_separator()
-
-            self.auto_reset_var = tk.BooleanVar(
-                value=self.sale_use_case.is_auto_reset_enabled())
-            menu.add_checkbutton(
-                label="🕛 Reinicio automático a medianoche",
-                variable=self.auto_reset_var,
-                command=self._toggle_auto_reset)
-
-            menu.add_separator()
-            menu.add_command(label="🔄 Reiniciar contador de ventas (#) [manual]",
-                             command=self.reset_sales_counter)
-            menu.add_separator()
-
-            menu.add_command(label="📄 Reporte del Día (TXT)",
-                             command=self.generate_daily_report)
-            menu.add_command(label="📊 Reporte del Mes (Excel)",
-                             command=self.generate_monthly_report)
-            menu.add_separator()
-            menu.add_command(label="📤 Exportar Base de Datos",
-                             command=self.export_db)
-            menu.add_command(label="📥 Importar Base de Datos",
-                             command=self.import_db)
-            menu.add_separator()
-            menu.add_command(label="⚙️ Ajustes...",
-                             command=self.open_settings_view)
-
-        # ==================== MENÚ VENTAS ====================
-        def build_ventas(menu):
-            menu.add_command(label="📊 Resumen de Ventas (agrupado)",
-                             command=self.show_sales_summary)
-            menu.add_command(label="💳 Fiados (agrupado por cliente)",
-                             command=self.show_credit_sales)
-            menu.add_separator()
-            menu.add_command(label="↩️ Devoluciones / Notas crédito",
-                             command=self.open_returns_window)
-            menu.add_separator()
-            menu.add_command(label="💰 Cierre de Caja del día",
-                             command=self.show_cash_closing)
-            menu.add_command(label="💵 Movimiento de Caja (retiro/gasto)",
-                             command=self._open_cash_movement)
-            menu.add_separator()
-            menu.add_command(label="📊 Gráficos y estadísticas",
-                             command=self.open_charts)
-
-        # ==================== MENÚ INVENTARIO ====================
-        def build_inventario(menu):
-            menu.add_command(label="📦 Ver inventario",
-                             command=lambda: self.show_page("inventario"))
-            menu.add_separator()
-            menu.add_command(label="🖨️ Generar etiquetas PDF",
-                             command=self._open_labels_from_menu)
-            menu.add_command(label="🔔 Alertas de vencimiento",
-                             command=self._open_expiry_alerts_from_menu)
-            menu.add_command(label="💰 Historial de precios global",
-                             command=self._open_price_history_from_menu)
-
-        self.menubar.add_menu("Opciones", build_opciones)
-        self.menubar.add_menu("Ventas", build_ventas)
-        self.menubar.add_menu("Inventario", build_inventario)
-
-        tabs = ttk.Frame(self, bootstyle="dark")
-        tabs.pack(fill="x", padx=10, pady=(6, 0))
-
-        self.btn_pagos = ttk.Button(tabs, text="🛒 PAGOS",
-                                    style="DarkGreen.TButton",
-                                    command=lambda: self.show_page("pagos"),
-                                    width=14)
-        self.btn_pagos.pack(side="left", padx=3, pady=2)
-
-        self.btn_inv = ttk.Button(tabs, text="📦 INVENTARIO",
-                                  style="DarkGreen.TButton",
-                                  command=lambda: self.show_page("inventario"),
-                                  width=14)
-        self.btn_inv.pack(side="left", padx=3, pady=2)
-
-        self.bind('<Control-Key-1>', lambda e: self.show_page("pagos"))
-        self.bind('<Control-Key-2>', lambda e: self.show_page("inventario"))
-
-        self.container = ttk.Frame(self, bootstyle="dark")
-        self.container.pack(fill="both", expand=True, padx=10, pady=6)
-
-        self.payment_view = PaymentView(
-            self.container, self.product_use_case, self.sale_use_case,
-            self.db_manager, lambda: self.current_theme,
-            on_business_click=None)
-        self.inventory_view = InventoryView(
-            self.container, self.product_use_case,
-            self.db_manager, lambda: self.current_theme,
-            on_business_click=None)
-        self.inventory_view._sale_case = self.sale_use_case
-
-        self.current_page = None
-
-    # ============================================================
-    # ACCIONES DE MENÚ NUEVAS
-    # ============================================================
-    def open_settings_view(self):
-        try:
-            from presentation.views.settings_view import SettingsView
-            SettingsView(self, self.db_manager, self.product_use_case,
-                         self.sale_use_case,
-                         on_theme_change=self._on_theme_change,
-                         on_font_change=self._on_font_change,
-                         on_business_change=self._on_business_change,
-                         on_change_password=self._change_password)
-        except Exception as e:
-            MD.show_error(f"Error al abrir Ajustes:\n{e}", "Error", parent=self)
-
-    def _on_theme_change(self, theme):
-        self.current_theme = theme
-        try:
-            self.style.theme_use(theme)
-        except Exception:
-            pass
-        self.configure(bg=self.style.colors.bg)
-        self._setup_dark_green_style()
-        apply_titlebar_theme(self, theme == 'darkly')
-
-    def _on_font_change(self, size):
-        try:
-            self._apply_font_size()
-        except Exception:
-            pass
-
-    def _on_business_change(self):
-        self._update_window_title()
-        self._refresh_business_header()
-
-    def _open_labels_from_menu(self):
-        try:
-            self.inventory_view.print_labels()
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def _open_expiry_alerts_from_menu(self):
-        try:
-            self.inventory_view.open_expiry_alerts()
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def _open_price_history_from_menu(self):
-        try:
-            self.inventory_view.open_price_history_global()
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def open_returns_window(self):
-        try:
-            from presentation.views.widgets import ReturnsWindow
-            ReturnsWindow(self, self.sale_use_case,
-                          on_done=self._refresh_all_views)
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def open_charts(self):
-        try:
-            from presentation.views.widgets import ChartsWindow
-            ChartsWindow(self, self.sale_use_case)
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def _refresh_all_views(self):
-        try:
-            self.inventory_view.load_products()
-        except Exception:
-            pass
-        try:
-            self.payment_view._load_recent_sales()
-        except Exception:
-            pass
-
-    def _toggle_auto_reset(self):
-        val = self.auto_reset_var.get()
-        self.sale_use_case.enable_auto_reset(val)
-        if val:
-            MD.show_info("✅ Reinicio automático ACTIVADO.",
-                         "Reinicio automático", parent=self)
-        else:
-            MD.show_info("❌ Reinicio automático DESACTIVADO.",
-                         "Reinicio automático", parent=self)
-
-    def _toggle_close_to_tray(self):
-        val = "1" if self.tray_var.get() else "0"
-        self.db_manager.set_setting("close_to_tray", val)
-        if val == "1":
-            MD.show_info(
-                "✅ Al presionar X la ventana se ocultará en la bandeja del sistema.\n"
-                "Para abrirla, haz clic en el ícono (junto al reloj) y elige "
-                "'Mostrar MiniPOS'.",
-                "Modo bandeja", parent=self)
-        else:
-            MD.show_info("ℹ️ Al presionar X se pedirá confirmación para salir.",
-                         "Modo normal", parent=self)
-
-    def reset_sales_counter(self):
-        r1 = MD.yesno(
-            "🔄 ¿Reiniciar el contador de ventas?\n\n"
-            "Las ventas y fiados NO se borran.\n"
-            "Solo el número que aparece como 'Venta #XX' se reiniciará.\n"
-            "La próxima venta aparecerá como #01.\n\n"
-            "¿Deseas continuar?",
-            "Confirmar reinicio", parent=self, default_yes=True)
-        if r1 != "Yes":
-            return
-        pw = self._ask_password_1234(self)
-        if not pw:
-            return
-        try:
-            self.sale_use_case.reset_sale_number_counter()
-            self.sale_use_case.set_last_reset_date(
-                datetime.now().strftime("%Y-%m-%d"))
-            MD.show_info(
-                "✅ Contador reiniciado.\nLa próxima venta será #01.",
-                "Listo", parent=self)
-        except Exception as e:
-            MD.show_error(f"Error al reiniciar: {e}", "Error", parent=self)
-
-    def show_page(self, page):
-        for w in (self.payment_view, self.inventory_view):
-            w.pack_forget()
-        if page == "pagos":
-            self.payment_view.pack(fill="both", expand=True)
-            self.btn_pagos.configure(style="DarkGreen.TButton")
-            self.btn_inv.configure(bootstyle="secondary")
-            self.current_page = "pagos"
-        else:
-            self.inventory_view.load_products()
-            self.inventory_view.pack(fill="both", expand=True)
-            self.btn_pagos.configure(bootstyle="secondary")
-            self.btn_inv.configure(style="DarkGreen.TButton")
-            self.current_page = "inventario"
-
-    def toggle_fullscreen(self):
-        self.is_fullscreen = not self.is_fullscreen
-        self.attributes('-fullscreen', self.is_fullscreen)
-
-    def toggle_theme(self):
-        self.current_theme = 'flatly' if self.current_theme == 'darkly' else 'darkly'
-        self.style.theme_use(self.current_theme)
-        self.configure(bg=self.style.colors.bg)
-        self._setup_dark_green_style()
-        apply_titlebar_theme(self, self.current_theme == 'darkly')
-        self._apply_font_size()
-        try:
-            bg = self.style.colors.bg
-            if hasattr(self, "business_header") and self.business_header:
-                frm = self.business_header["frame"]
-                frm.configure(bg=bg)
-                for child in frm.winfo_children():
-                    try:
-                        child.configure(bg=bg)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-    # ============================================================
-    # CIERRE DE CAJA (FASE 6)
+    # CIERRE DE CAJA
     # ============================================================
     def show_cash_closing(self):
         win = tk.Toplevel(self)
@@ -2104,7 +1809,7 @@ class MainView(tk.Tk):
             pass
 
     # ============================================================
-    # IMPRIMIR TICKET DE UNA VENTA
+    # IMPRIMIR TICKET
     # ============================================================
     def _print_ticket_for_sale(self, sale_id, parent=None):
         try:
@@ -2133,73 +1838,215 @@ class MainView(tk.Tk):
                           parent=parent or self)
 
     # ============================================================
-    # PEDIR CONTRASEÑA 1234
+    # AUTO-INICIO
     # ============================================================
-    def _ask_password_1234(self, parent):
-        pop = tk.Toplevel(parent)
-        pop.title("Contraseña requerida")
-        pop.geometry("340x220")
-        pop.transient(parent)
-        pop.configure(bg=self.style.colors.bg)
-        pop.withdraw()
-        bg = self.style.colors.bg
-        fg = self.style.colors.fg
+    def _get_startup_bat_path(self):
+        startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
+                               'Start Menu', 'Programs', 'Startup')
+        return os.path.join(startup, 'MiniPOS_Portable.bat')
 
-        tk.Label(pop, text="🔒 Contraseña de administrador:",
-                 font=("Arial", 12, "bold"), bg=bg, fg=fg).pack(pady=15)
-        v = tk.StringVar()
-        e = ttk.Entry(pop, textvariable=v, show="•", width=20,
-                      font=("Arial", 14), justify="center")
-        e.pack(pady=5)
-        ok = {"v": False}
+    def _get_linux_autostart_path(self):
+        autostart = os.path.expanduser("~/.config/autostart")
+        return os.path.join(autostart, "MiniPOS.desktop")
 
-        def ver(ev=None):
-            if v.get() == "1234":
-                ok["v"] = True
-                pop.destroy()
-            else:
-                MD.show_error("Contraseña incorrecta", "Error", parent=pop)
-                v.set("")
-                try:
-                    e.focus_set()
-                    e.select_range(0, tk.END)
-                except Exception:
-                    pass
-            return "break"
-
-        def cancelar(ev=None):
-            pop.destroy()
-            return "break"
-
-        e.bind("<Return>", ver)
-        e.bind("<KP_Enter>", ver)
-        pop.bind("<Escape>", cancelar)
-
-        ttk.Button(pop, text="Aceptar", command=ver,
-                   style="DarkGreen.TButton").pack(pady=15)
-
-        show_popup_smooth(pop)
+    def _is_autostart_enabled(self):
         try:
-            pop.grab_set()
-            pop.focus_force()
+            if platform.system() == "Windows":
+                return os.path.exists(self._get_startup_bat_path())
+            elif platform.system() == "Linux":
+                return os.path.exists(self._get_linux_autostart_path())
         except Exception:
-            pass
+            return False
+        return False
 
-        def set_focus():
-            try:
-                if pop.winfo_exists():
-                    e.focus_set()
-                    e.select_range(0, tk.END)
-            except Exception:
-                pass
-        pop.after(50, set_focus)
-        pop.after(250, set_focus)
-
-        parent.wait_window(pop)
-        return ok["v"]
+    def toggle_autostart(self):
+        sistema = platform.system()
+        if sistema == "Windows":
+            bat = self._get_startup_bat_path()
+            if self.autostart_var.get():
+                try:
+                    with open(bat, 'w', encoding='utf-8') as f:
+                        f.write(f'@echo off\nstart "" "{sys.executable}"\n')
+                    MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
+                                 parent=self)
+                except Exception as e:
+                    self.autostart_var.set(False)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+            else:
+                try:
+                    if os.path.exists(bat):
+                        os.remove(bat)
+                    MD.show_info("❌ Auto-inicio DESACTIVADO.",
+                                 "Auto-inicio", parent=self)
+                except Exception as e:
+                    self.autostart_var.set(True)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+        elif sistema == "Linux":
+            desktop = self._get_linux_autostart_path()
+            if self.autostart_var.get():
+                try:
+                    os.makedirs(os.path.dirname(desktop), exist_ok=True)
+                    if getattr(sys, 'frozen', False):
+                        exe = sys.executable
+                    else:
+                        exe = f"python3 {os.path.abspath(sys.argv[0])}"
+                    contenido = (
+                        "[Desktop Entry]\n"
+                        "Type=Application\n"
+                        "Name=MiniPOS Portable\n"
+                        "Comment=Punto de Venta\n"
+                        f"Exec={exe}\n"
+                        "Terminal=false\n"
+                        "X-GNOME-Autostart-enabled=true\n"
+                    )
+                    with open(desktop, 'w', encoding='utf-8') as f:
+                        f.write(contenido)
+                    os.chmod(desktop, 0o755)
+                    MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
+                                 parent=self)
+                except Exception as e:
+                    self.autostart_var.set(False)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+            else:
+                try:
+                    if os.path.exists(desktop):
+                        os.remove(desktop)
+                    MD.show_info("❌ Auto-inicio DESACTIVADO.",
+                                 "Auto-inicio", parent=self)
+                except Exception as e:
+                    self.autostart_var.set(True)
+                    MD.show_error(f"Error: {e}", "Error", parent=self)
+        else:
+            MD.show_warning(f"Auto-inicio no soportado en {sistema}.",
+                            "No soportado", parent=self)
 
     # ============================================================
-    # RESUMEN DE VENTAS (COMPLETO)
+    # REPORTES
+    # ============================================================
+    def generate_daily_report(self):
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        sales = self.sale_use_case.get_sales_by_day(hoy)
+        if not sales:
+            MD.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
+            return
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            initialfile=f"ventas_{hoy}.txt",
+            filetypes=[("Texto", "*.txt")])
+        if not arch:
+            return
+        total_dia = sum(s.total for s in sales)
+        total_prod = sum(i.quantity for s in sales for i in s.items)
+        L = ["=" * 60, "      REPORTE DE VENTAS DEL DÍA",
+             f"      Fecha: {hoy}",
+             f"      Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+             "=" * 60, ""]
+        for s in sales:
+            hora = s.date.split(" ")[1] if " " in s.date else ""
+            cliente = f" - {s.customer_name}" if s.customer_name else ""
+            fiado = " [FIADO]" if s.is_credit else ""
+            L.append(f"Venta #{s.display_number:02d}  -  {hora}  -  "
+                     f"{s.payment_method}{cliente}{fiado}")
+            L.append(f"  {'Cant.':>8}  {'Producto':<30} "
+                     f"{'P.Unit':>10} {'Subtotal':>12}")
+            for it in s.items:
+                L.append(f"  {it.quantity:>8g}  {it.product_name[:30]:<30} "
+                         f"${it.unit_price:>9,.0f} "
+                         f"${it.subtotal:>11,.0f}".replace(",", "."))
+            if getattr(s, "discount", 0) > 0:
+                L.append(f"  Descuento: -${s.discount:,.0f}".replace(",", "."))
+            L.append(f"  {'':>8}  {'':<30} {'':>10} "
+                     f"${s.total:>11,.0f}".replace(",", "."))
+            L.append("")
+        L += ["=" * 60,
+              f"TOTAL DEL DÍA:      ${total_dia:>12,.0f}".replace(",", "."),
+              f"VENTAS REALIZADAS:  {len(sales)}",
+              f"PRODUCTOS VENDIDOS: {total_prod:g}", "=" * 60]
+        try:
+            with open(arch, "w", encoding="utf-8") as f:
+                f.write("\n".join(L))
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    def generate_monthly_report(self):
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, Alignment, PatternFill
+        except ImportError:
+            MD.show_error("Falta openpyxl.", "Error", parent=self)
+            return
+        ym = datetime.now().strftime("%Y-%m")
+        sales = self.sale_use_case.get_sales_by_month(ym)
+        if not sales:
+            MD.show_info("No hay ventas este mes.", "Reporte vacío",
+                         parent=self)
+            return
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            initialfile=f"ventas_{ym}.xlsx",
+            filetypes=[("Excel", "*.xlsx")])
+        if not arch:
+            return
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Ventas {ym}"
+        ws.append(["Venta #", "Fecha", "Cliente", "Método", "Fiado",
+                   "Producto", "Código", "Cantidad", "Unidad",
+                   "P. Unit.", "Subtotal Item",
+                   "Desc. Venta", "Total Venta"])
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="305496")
+            c.alignment = Alignment(horizontal="center")
+        for s in sales:
+            for i, it in enumerate(s.items):
+                desc_venta = getattr(s, "discount", 0) if i == 0 else ""
+                total_venta = s.total if i == 0 else ""
+                ws.append([
+                    f"#{s.display_number:02d}", s.date, s.customer_name,
+                    s.payment_method, "Sí" if s.is_credit else "No",
+                    it.product_name, it.barcode,
+                    it.quantity, "unidad", it.unit_price, it.subtotal,
+                    desc_venta, total_venta
+                ])
+        total = sum(s.total for s in sales)
+        ws.append([])
+        ws.append(["", "", "", "", "", "", "", "", "", "", "",
+                   "TOTAL:", total])
+        for col, w in zip("ABCDEFGHIJKLM",
+                          [10, 20, 25, 15, 8, 30, 20, 10, 10,
+                           12, 12, 12, 12]):
+            ws.column_dimensions[col].width = w
+        try:
+            wb.save(arch)
+            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
+        except Exception as e:
+            MD.show_error(f"Error: {e}", "Error", parent=self)
+
+    # ============================================================
+    # EXPORTAR / IMPORTAR BD
+    # ============================================================
+    def export_db(self):
+        arch = filedialog.asksaveasfilename(
+            defaultextension=".db",
+            filetypes=[("SQLite", "*.db")])
+        if arch:
+            self.db_manager.close_connection()
+            shutil.copy2(self.db_path, arch)
+            MD.show_info("Base de datos exportada.", "Listo", parent=self)
+
+    def import_db(self):
+        arch = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
+        if arch and MD.yesno("¿Reemplazar datos?", "Confirmar",
+                             parent=self) == "Yes":
+            self.db_manager.close_connection()
+            shutil.copy2(arch, self.db_path)
+            self.inventory_view.load_products()
+            MD.show_info("Importada.", "Listo", parent=self)
+
+    # ============================================================
+    # RESUMEN DE VENTAS
     # ============================================================
     def show_sales_summary(self):
         win = tk.Toplevel(self)
@@ -2716,8 +2563,9 @@ class MainView(tk.Tk):
             win.focus_force()
         except Exception:
             pass
+
     # ============================================================
-    # FIADOS — versión completa con checkboxes y hotkeys
+    # FIADOS
     # ============================================================
     def show_credit_sales(self):
         win = tk.Toplevel(self)
@@ -3312,211 +3160,3 @@ class MainView(tk.Tk):
                 pass
         pop.after(50, set_focus)
         pop.after(250, set_focus)
-
-    # ============================================================
-    # AUTO-INICIO (Windows + Linux)
-    # ============================================================
-    def _get_startup_bat_path(self):
-        startup = os.path.join(os.getenv('APPDATA'), 'Microsoft', 'Windows',
-                               'Start Menu', 'Programs', 'Startup')
-        return os.path.join(startup, 'MiniPOS_Portable.bat')
-
-    def _get_linux_autostart_path(self):
-        autostart = os.path.expanduser("~/.config/autostart")
-        return os.path.join(autostart, "MiniPOS.desktop")
-
-    def _is_autostart_enabled(self):
-        try:
-            if platform.system() == "Windows":
-                return os.path.exists(self._get_startup_bat_path())
-            elif platform.system() == "Linux":
-                return os.path.exists(self._get_linux_autostart_path())
-        except Exception:
-            return False
-        return False
-
-    def toggle_autostart(self):
-        sistema = platform.system()
-        if sistema == "Windows":
-            bat = self._get_startup_bat_path()
-            if self.autostart_var.get():
-                try:
-                    with open(bat, 'w', encoding='utf-8') as f:
-                        f.write(f'@echo off\nstart "" "{sys.executable}"\n')
-                    MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
-                                 parent=self)
-                except Exception as e:
-                    self.autostart_var.set(False)
-                    MD.show_error(f"Error: {e}", "Error", parent=self)
-            else:
-                try:
-                    if os.path.exists(bat):
-                        os.remove(bat)
-                    MD.show_info("❌ Auto-inicio DESACTIVADO.",
-                                 "Auto-inicio", parent=self)
-                except Exception as e:
-                    self.autostart_var.set(True)
-                    MD.show_error(f"Error: {e}", "Error", parent=self)
-        elif sistema == "Linux":
-            desktop = self._get_linux_autostart_path()
-            if self.autostart_var.get():
-                try:
-                    os.makedirs(os.path.dirname(desktop), exist_ok=True)
-                    if getattr(sys, 'frozen', False):
-                        exe = sys.executable
-                    else:
-                        exe = f"python3 {os.path.abspath(sys.argv[0])}"
-                    contenido = (
-                        "[Desktop Entry]\n"
-                        "Type=Application\n"
-                        "Name=MiniPOS Portable\n"
-                        "Comment=Punto de Venta\n"
-                        f"Exec={exe}\n"
-                        "Terminal=false\n"
-                        "X-GNOME-Autostart-enabled=true\n"
-                    )
-                    with open(desktop, 'w', encoding='utf-8') as f:
-                        f.write(contenido)
-                    os.chmod(desktop, 0o755)
-                    MD.show_info("✅ Auto-inicio ACTIVADO.", "Auto-inicio",
-                                 parent=self)
-                except Exception as e:
-                    self.autostart_var.set(False)
-                    MD.show_error(f"Error: {e}", "Error", parent=self)
-            else:
-                try:
-                    if os.path.exists(desktop):
-                        os.remove(desktop)
-                    MD.show_info("❌ Auto-inicio DESACTIVADO.",
-                                 "Auto-inicio", parent=self)
-                except Exception as e:
-                    self.autostart_var.set(True)
-                    MD.show_error(f"Error: {e}", "Error", parent=self)
-        else:
-            MD.show_warning(f"Auto-inicio no soportado en {sistema}.",
-                            "No soportado", parent=self)
-
-    # ============================================================
-    # REPORTES
-    # ============================================================
-    def generate_daily_report(self):
-        hoy = datetime.now().strftime("%Y-%m-%d")
-        sales = self.sale_use_case.get_sales_by_day(hoy)
-        if not sales:
-            MD.show_info("No hay ventas hoy.", "Reporte vacío", parent=self)
-            return
-        arch = filedialog.asksaveasfilename(
-            defaultextension=".txt",
-            initialfile=f"ventas_{hoy}.txt",
-            filetypes=[("Texto", "*.txt")])
-        if not arch:
-            return
-        total_dia = sum(s.total for s in sales)
-        total_prod = sum(i.quantity for s in sales for i in s.items)
-        L = ["=" * 60, "      REPORTE DE VENTAS DEL DÍA",
-             f"      Fecha: {hoy}",
-             f"      Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-             "=" * 60, ""]
-        for s in sales:
-            hora = s.date.split(" ")[1] if " " in s.date else ""
-            cliente = f" - {s.customer_name}" if s.customer_name else ""
-            fiado = " [FIADO]" if s.is_credit else ""
-            L.append(f"Venta #{s.display_number:02d}  -  {hora}  -  "
-                     f"{s.payment_method}{cliente}{fiado}")
-            L.append(f"  {'Cant.':>8}  {'Producto':<30} "
-                     f"{'P.Unit':>10} {'Subtotal':>12}")
-            for it in s.items:
-                L.append(f"  {it.quantity:>8g}  {it.product_name[:30]:<30} "
-                         f"${it.unit_price:>9,.0f} "
-                         f"${it.subtotal:>11,.0f}".replace(",", "."))
-            if getattr(s, "discount", 0) > 0:
-                L.append(f"  Descuento: -${s.discount:,.0f}".replace(",", "."))
-            L.append(f"  {'':>8}  {'':<30} {'':>10} "
-                     f"${s.total:>11,.0f}".replace(",", "."))
-            L.append("")
-        L += ["=" * 60,
-              f"TOTAL DEL DÍA:      ${total_dia:>12,.0f}".replace(",", "."),
-              f"VENTAS REALIZADAS:  {len(sales)}",
-              f"PRODUCTOS VENDIDOS: {total_prod:g}", "=" * 60]
-        try:
-            with open(arch, "w", encoding="utf-8") as f:
-                f.write("\n".join(L))
-            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    def generate_monthly_report(self):
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, Alignment, PatternFill
-        except ImportError:
-            MD.show_error("Falta openpyxl.", "Error", parent=self)
-            return
-        ym = datetime.now().strftime("%Y-%m")
-        sales = self.sale_use_case.get_sales_by_month(ym)
-        if not sales:
-            MD.show_info("No hay ventas este mes.", "Reporte vacío",
-                         parent=self)
-            return
-        arch = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            initialfile=f"ventas_{ym}.xlsx",
-            filetypes=[("Excel", "*.xlsx")])
-        if not arch:
-            return
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = f"Ventas {ym}"
-        ws.append(["Venta #", "Fecha", "Cliente", "Método", "Fiado",
-                   "Producto", "Código", "Cantidad", "Unidad",
-                   "P. Unit.", "Subtotal Item",
-                   "Desc. Venta", "Total Venta"])
-        for c in ws[1]:
-            c.font = Font(bold=True, color="FFFFFF")
-            c.fill = PatternFill("solid", fgColor="305496")
-            c.alignment = Alignment(horizontal="center")
-        for s in sales:
-            for i, it in enumerate(s.items):
-                desc_venta = getattr(s, "discount", 0) if i == 0 else ""
-                total_venta = s.total if i == 0 else ""
-                ws.append([
-                    f"#{s.display_number:02d}", s.date, s.customer_name,
-                    s.payment_method, "Sí" if s.is_credit else "No",
-                    it.product_name, it.barcode,
-                    it.quantity, "unidad", it.unit_price, it.subtotal,
-                    desc_venta, total_venta
-                ])
-        total = sum(s.total for s in sales)
-        ws.append([])
-        ws.append(["", "", "", "", "", "", "", "", "", "", "",
-                   "TOTAL:", total])
-        for col, w in zip("ABCDEFGHIJKLM",
-                          [10, 20, 25, 15, 8, 30, 20, 10, 10,
-                           12, 12, 12, 12]):
-            ws.column_dimensions[col].width = w
-        try:
-            wb.save(arch)
-            MD.show_info(f"Guardado:\n{arch}", "Listo", parent=self)
-        except Exception as e:
-            MD.show_error(f"Error: {e}", "Error", parent=self)
-
-    # ============================================================
-    # EXPORTAR / IMPORTAR BD
-    # ============================================================
-    def export_db(self):
-        arch = filedialog.asksaveasfilename(
-            defaultextension=".db",
-            filetypes=[("SQLite", "*.db")])
-        if arch:
-            self.db_manager.close_connection()
-            shutil.copy2(self.db_path, arch)
-            MD.show_info("Base de datos exportada.", "Listo", parent=self)
-
-    def import_db(self):
-        arch = filedialog.askopenfilename(filetypes=[("SQLite", "*.db")])
-        if arch and MD.yesno("¿Reemplazar datos?", "Confirmar",
-                             parent=self) == "Yes":
-            self.db_manager.close_connection()
-            shutil.copy2(arch, self.db_path)
-            self.inventory_view.load_products()
-            MD.show_info("Importada.", "Listo", parent=self)
