@@ -8,13 +8,45 @@ Incluye:
 - Tooltips (HoverTooltip, TreeviewTooltip, ListboxTooltip)
 - Funciones de negocio (info del negocio, header)
 - Helpers de scroll (make_scrolled_treeview, make_scrollable)
-- NUEVAS: generate_ticket_pdf, generate_labels_pdf, ChartsWindow, ReturnsWindow
+- generate_ticket_pdf, generate_labels_pdf, ChartsWindow, ReturnsWindow
 """
 import os
 import sys
 import tkinter as tk
 import ttkbootstrap as ttk
 from datetime import datetime
+
+
+# =========================================================
+# HELPERS DE TEMA
+# =========================================================
+def get_theme_colors():
+    """Devuelve (bg, fg, selectbg, selectfg) del tema actual."""
+    try:
+        style = ttk.Style()
+        return (
+            style.colors.bg,
+            style.colors.fg,
+            getattr(style.colors, "selectbg", "#0a4d1f"),
+            getattr(style.colors, "selectfg", "#ffffff"),
+        )
+    except Exception:
+        return ("#1a1a1a", "#ffffff", "#0a4d1f", "#ffffff")
+
+
+def is_dark_theme():
+    """True si el tema actual es oscuro."""
+    try:
+        style = ttk.Style()
+        bg = style.colors.bg
+        # Calcular luminosidad
+        bg = bg.lstrip("#")
+        r = int(bg[0:2], 16)
+        g = int(bg[2:4], 16)
+        b = int(bg[4:6], 16)
+        return (r * 0.299 + g * 0.587 + b * 0.114) < 128
+    except Exception:
+        return True
 
 
 # =========================================================
@@ -142,8 +174,8 @@ def show_popup_smooth(popup, is_dark=True):
     popup.after(250, lambda: auto_resize_popup(popup) if popup.winfo_exists() else None)
 
     try:
-        style = ttk.Style()
-        popup.configure(bg=style.colors.bg)
+        bg, _, _, _ = get_theme_colors()
+        popup.configure(bg=bg)
     except Exception:
         pass
 
@@ -232,14 +264,10 @@ def get_business_display_text(db_manager):
 
 
 def make_inline_business_header(parent, db_manager, bg=None):
-    """
-    Header compacto para la barra superior: 'tipo, nombre'
-    tipo en gris, nombre en verde subrayado.
-    Devuelve dict con widgets + refresh().
-    """
+    """Header compacto: 'tipo, nombre' con estilos."""
     if bg is None:
         try:
-            bg = ttk.Style().colors.bg
+            bg, _, _, _ = get_theme_colors()
         except Exception:
             bg = "#1a1a1a"
 
@@ -305,11 +333,7 @@ def apply_dark_red_scrollbar_style():
 
 
 def make_scrolled_treeview(parent, columns, headings, bootstyle="dark"):
-    """
-    Crea un Treeview con scrollbar rojo oscuro.
-    headings: lista de (col_id, texto, ancho, anchor)
-    Devuelve (frame, tree).
-    """
+    """Crea un Treeview con scrollbar rojo oscuro."""
     apply_dark_red_scrollbar_style()
 
     frame = ttk.Frame(parent, bootstyle=bootstyle)
@@ -348,7 +372,7 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     apply_dark_red_scrollbar_style()
     if bg is None:
         try:
-            bg = ttk.Style().colors.bg
+            bg, _, _, _ = get_theme_colors()
         except Exception:
             bg = "#1a1a1a"
 
@@ -407,7 +431,6 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
     result["inner"] = inner
     result["scrollbar"] = scrollbar
 
-    # Ajustar scrollregion al inicio
     try:
         canvas.after(100, lambda: canvas.configure(scrollregion=canvas.bbox("all")))
     except Exception:
@@ -417,7 +440,7 @@ def make_scrollable(container, build_content, build_bottom=None, bg=None):
 
 
 # =========================================================
-# DIÁLOGOS PERSONALIZADOS (con bloqueo anti-doble ejecución)
+# DIÁLOGOS PERSONALIZADOS
 # =========================================================
 def _custom_dialog(parent, title, message, buttons, kind="info",
                    is_dark=True, default_button=0):
@@ -428,9 +451,7 @@ def _custom_dialog(parent, title, message, buttons, kind="info",
     except Exception:
         root = parent
 
-    style = ttk.Style()
-    bg = style.colors.bg
-    fg = style.colors.fg
+    bg, fg, _, _ = get_theme_colors()
 
     pop = tk.Toplevel(root)
     pop.title(title)
@@ -589,12 +610,12 @@ class DarkMenuBar(ttk.Frame):
             mb.configure(width=10)
         except Exception:
             pass
-        style = ttk.Style()
+        bg, fg, sel_bg, sel_fg = get_theme_colors()
         menu = tk.Menu(
             mb, tearoff=0,
-            bg=style.colors.bg, fg=style.colors.fg,
-            activebackground=style.colors.selectbg,
-            activeforeground=style.colors.selectfg,
+            bg=bg, fg=fg,
+            activebackground=sel_bg,
+            activeforeground=sel_fg,
             bd=1, relief="solid",
             font=get_menu_font())
         build_fn(menu)
@@ -652,9 +673,7 @@ class HoverTooltip:
         self._show(self._pending_x, self._pending_y, self._last_text)
 
     def _show(self, x, y, text):
-        style = ttk.Style()
-        bg = style.colors.bg
-        fg = style.colors.fg
+        bg, fg, _, _ = get_theme_colors()
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)
         try:
@@ -804,7 +823,7 @@ class AutoCompleteEntry(ttk.Entry):
         self._show(filtered)
 
     def _show(self, values):
-        style = ttk.Style()
+        bg, fg, _, _ = get_theme_colors()
         if self.popup is None:
             self.popup = tk.Toplevel(self)
             self.popup.wm_overrideredirect(True)
@@ -812,9 +831,9 @@ class AutoCompleteEntry(ttk.Entry):
                 self.popup.attributes('-topmost', True)
             except Exception:
                 pass
-            self.popup.configure(bg=style.colors.bg)
+            self.popup.configure(bg=bg)
 
-            container = tk.Frame(self.popup, bg=style.colors.bg)
+            container = tk.Frame(self.popup, bg=bg)
             container.pack(fill='both', expand=True)
 
             sb = tk.Scrollbar(container, orient="vertical",
@@ -828,7 +847,7 @@ class AutoCompleteEntry(ttk.Entry):
 
             self.listbox = tk.Listbox(
                 container, activestyle='none', exportselection=False,
-                bg=style.colors.bg, fg=style.colors.fg,
+                bg=bg, fg=fg,
                 selectbackground="#0a4d1f", selectforeground="#ffffff",
                 font=("Arial", 11), borderwidth=0, relief="flat",
                 highlightthickness=0, yscrollcommand=sb.set)
@@ -848,7 +867,7 @@ class AutoCompleteEntry(ttk.Entry):
             self.listbox.bind('<Double-Button-1>', self._on_select)
             self._listbox_tooltip = ListboxTooltip(self.listbox, font_size=11)
         else:
-            self.listbox.configure(bg=style.colors.bg, fg=style.colors.fg)
+            self.listbox.configure(bg=bg, fg=fg)
 
         self.listbox.delete(0, tk.END)
         for v in values:
@@ -921,12 +940,7 @@ class AutoCompleteEntry(ttk.Entry):
 def generate_ticket_pdf(sale, items, payments=None, business_name="MI NEGOCIO",
                         business_info="", output_path=None, is_copy=False,
                         cashier_name="", business_phone="", business_address=""):
-    """
-    Genera un PDF con el ticket de venta.
-    - sale: objeto Sale
-    - items: lista de SaleItem o dicts
-    - payments: lista de dicts [{"method":..., "amount":...}] o None
-    """
+    """Genera un PDF con el ticket de venta."""
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.pdfgen import canvas
@@ -1079,11 +1093,7 @@ def generate_ticket_pdf(sale, items, payments=None, business_name="MI NEGOCIO",
 # IDEA 5: ETIQUETAS PDF (Avery 5160, 30 por hoja)
 # =========================================================
 def generate_labels_pdf(products, output_path, copies=1):
-    """
-    Genera un PDF de etiquetas tamaño carta, 3 columnas x 10 filas = 30 por hoja.
-    Formato Avery 5160 (2.625" x 1").
-    Cada etiqueta: código de barras + nombre + precio redondeado.
-    """
+    """Genera un PDF de etiquetas tamaño carta, 3 columnas x 10 filas."""
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.pdfgen import canvas
@@ -1102,8 +1112,7 @@ def generate_labels_pdf(products, output_path, copies=1):
     MARGIN_LEFT = 0.1875 * inch
     MARGIN_TOP = 0.5 * inch
     COLS = 3
-    ROWS = 10
-    LABELS_PER_PAGE = COLS * ROWS
+    LABELS_PER_PAGE = 30
 
     c = canvas.Canvas(output_path, pagesize=letter)
 
@@ -1152,7 +1161,7 @@ def generate_labels_pdf(products, output_path, copies=1):
 
 
 # =========================================================
-# IDEA 11: VENTANA DE GRÁFICOS
+# IDEA 11: VENTANA DE GRÁFICOS — con tema aplicado
 # =========================================================
 class ChartsWindow(tk.Toplevel):
     def __init__(self, master, sale_case):
@@ -1162,6 +1171,10 @@ class ChartsWindow(tk.Toplevel):
         self.title("📊 Gráficos y estadísticas")
         self.geometry("1100x750")
         self.transient(master)
+
+        # Colores del tema actual
+        self.bg, self.fg, self.sel_bg, self.sel_fg = get_theme_colors()
+        self.is_dark = is_dark_theme()
 
         try:
             import matplotlib
@@ -1174,10 +1187,12 @@ class ChartsWindow(tk.Toplevel):
         except ImportError:
             self.HAS_MPL = False
 
-        top = tk.Frame(self, bg="#f0f0f0")
+        self.configure(bg=self.bg)
+
+        top = tk.Frame(self, bg=self.bg)
         top.pack(fill="x")
 
-        tk.Label(top, text="Rango:", bg="#f0f0f0",
+        tk.Label(top, text="Rango:", bg=self.bg, fg=self.fg,
                  font=("Arial", 9, "bold")).pack(side="left", padx=6, pady=8)
         self.var_range = tk.StringVar(value="7 días")
         ttk.Combobox(top, textvariable=self.var_range, state="readonly",
@@ -1190,13 +1205,14 @@ class ChartsWindow(tk.Toplevel):
         ttk.Button(top, text="📕 Exportar PDF", command=self.export_pdf,
                    bootstyle="danger").pack(side="right", padx=8, pady=6)
 
+        # Notebook con estilo oscuro
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
-        self.tab_profit = tk.Frame(self.notebook)
-        self.tab_top = tk.Frame(self.notebook)
-        self.tab_days = tk.Frame(self.notebook)
-        self.tab_hours = tk.Frame(self.notebook)
+        self.tab_profit = tk.Frame(self.notebook, bg=self.bg)
+        self.tab_top = tk.Frame(self.notebook, bg=self.bg)
+        self.tab_days = tk.Frame(self.notebook, bg=self.bg)
+        self.tab_hours = tk.Frame(self.notebook, bg=self.bg)
 
         self.notebook.add(self.tab_profit, text="💰 Ganancias reales")
         self.notebook.add(self.tab_top, text="🏆 Top 10 productos")
@@ -1206,7 +1222,8 @@ class ChartsWindow(tk.Toplevel):
         if not self.HAS_MPL:
             tk.Label(self, text="⚠️ matplotlib no está instalado.\n"
                                 "Ejecuta: pip install matplotlib",
-                     fg="#c62828", font=("Arial", 12, "bold")).pack(pady=20)
+                     bg=self.bg, fg="#c62828",
+                     font=("Arial", 12, "bold")).pack(pady=20)
 
         self.reload()
         show_popup_smooth(self)
@@ -1228,6 +1245,11 @@ class ChartsWindow(tk.Toplevel):
     def reload(self):
         if not self.HAS_MPL:
             return
+        # Actualizar colores por si cambió el tema
+        self.bg, self.fg, self.sel_bg, self.sel_fg = get_theme_colors()
+        self.is_dark = is_dark_theme()
+        self.configure(bg=self.bg)
+
         for tab in (self.tab_profit, self.tab_top, self.tab_days, self.tab_hours):
             for w in tab.winfo_children():
                 w.destroy()
@@ -1244,6 +1266,22 @@ class ChartsWindow(tk.Toplevel):
         canvas.get_tk_widget().pack(fill="both", expand=True)
         return canvas
 
+    def _apply_theme_to_fig(self, fig, ax):
+        """Aplica los colores del tema al gráfico."""
+        try:
+            fig.patch.set_facecolor(self.bg)
+            ax.set_facecolor(self.bg)
+            ax.tick_params(colors=self.fg, which="both")
+            ax.xaxis.label.set_color(self.fg)
+            ax.yaxis.label.set_color(self.fg)
+            ax.title.set_color(self.fg)
+            for spine in ax.spines.values():
+                spine.set_color(self.fg)
+            # Colores de las líneas de grid
+            ax.grid(color="#555555" if self.is_dark else "#cccccc", alpha=0.3)
+        except Exception:
+            pass
+
     def _draw_profit(self, parent, start, end):
         res = self.sale_case.get_profit_summary(start, end)
         fig = self.Figure(figsize=(10, 5), dpi=90)
@@ -1256,10 +1294,10 @@ class ChartsWindow(tk.Toplevel):
         for b, v in zip(bars, values):
             ax.text(b.get_x() + b.get_width() / 2, b.get_height(),
                     f"${v:,.0f}", ha="center", va="bottom",
-                    fontsize=9, fontweight="bold")
+                    fontsize=9, fontweight="bold", color=self.fg)
         ax.set_title("Ganancias reales del periodo", fontsize=12, fontweight="bold")
         ax.set_ylabel("$ Pesos")
-        ax.grid(axis="y", alpha=0.3)
+        self._apply_theme_to_fig(fig, ax)
         fig.tight_layout()
         self._canvas(parent, fig)
 
@@ -1269,7 +1307,7 @@ class ChartsWindow(tk.Toplevel):
         ax = fig.add_subplot(111)
         if not data:
             ax.text(0.5, 0.5, "Sin datos en el periodo",
-                    ha="center", va="center", fontsize=14)
+                    ha="center", va="center", fontsize=14, color=self.fg)
         else:
             names = [(d["product_name"][:20]) for d in reversed(data)]
             qtys = [d["quantity"] for d in reversed(data)]
@@ -1277,10 +1315,10 @@ class ChartsWindow(tk.Toplevel):
             for b, d in zip(bars, reversed(data)):
                 ax.text(b.get_width(), b.get_y() + b.get_height() / 2,
                         f" {d['quantity']:g} u / ${d['total']:,.0f}",
-                        va="center", fontsize=8)
+                        va="center", fontsize=8, color=self.fg)
             ax.set_title("Top 10 productos más vendidos", fontsize=12, fontweight="bold")
             ax.set_xlabel("Cantidad")
-            ax.grid(axis="x", alpha=0.3)
+        self._apply_theme_to_fig(fig, ax)
         fig.tight_layout()
         self._canvas(parent, fig)
 
@@ -1294,12 +1332,12 @@ class ChartsWindow(tk.Toplevel):
         ax.fill_between(range(len(fechas)), totales, alpha=0.2, color="#2196F3")
         ax.set_title("Ventas de los últimos 30 días", fontsize=12, fontweight="bold")
         ax.set_ylabel("$ Pesos")
-        ax.grid(alpha=0.3)
         if len(fechas) > 10:
             step = max(1, len(fechas) // 10)
             ax.set_xticks(range(0, len(fechas), step))
             ax.set_xticklabels([fechas[i] for i in range(0, len(fechas), step)],
                                rotation=45)
+        self._apply_theme_to_fig(fig, ax)
         fig.tight_layout()
         self._canvas(parent, fig)
 
@@ -1312,7 +1350,7 @@ class ChartsWindow(tk.Toplevel):
         ax.bar(horas, totales, color="#FF9800")
         ax.set_title("Ventas por hora del día", fontsize=12, fontweight="bold")
         ax.set_ylabel("$ Pesos")
-        ax.grid(axis="y", alpha=0.3)
+        self._apply_theme_to_fig(fig, ax)
         fig.tight_layout()
         self._canvas(parent, fig)
 
@@ -1337,6 +1375,24 @@ class ChartsWindow(tk.Toplevel):
 
         start, end = self._get_range_dates()
 
+        # En el PDF exportado, usamos fondo BLANCO (mejor para imprimir)
+        white_bg = "#ffffff"
+        black_fg = "#000000"
+
+        def _theme_white(fig, ax):
+            try:
+                fig.patch.set_facecolor(white_bg)
+                ax.set_facecolor(white_bg)
+                ax.tick_params(colors=black_fg, which="both")
+                ax.xaxis.label.set_color(black_fg)
+                ax.yaxis.label.set_color(black_fg)
+                ax.title.set_color(black_fg)
+                for spine in ax.spines.values():
+                    spine.set_color(black_fg)
+                ax.grid(color="#cccccc", alpha=0.4)
+            except Exception:
+                pass
+
         try:
             with PdfPages(ruta) as pdf:
                 # Página 1: ganancias
@@ -1352,7 +1408,7 @@ class ChartsWindow(tk.Toplevel):
                     ax1.text(b.get_x() + b.get_width() / 2, b.get_height(),
                              f"${v:,.0f}", ha="center", va="bottom", fontsize=10)
                 ax1.set_title("Ganancias reales", fontsize=14, fontweight="bold")
-                ax1.grid(axis="y", alpha=0.3)
+                _theme_white(fig1, ax1)
                 fig1.tight_layout()
                 pdf.savefig(fig1)
 
@@ -1368,6 +1424,7 @@ class ChartsWindow(tk.Toplevel):
                                   fontsize=14, fontweight="bold")
                 else:
                     ax2.text(0.5, 0.5, "Sin datos", ha="center", va="center")
+                _theme_white(fig2, ax2)
                 fig2.tight_layout()
                 pdf.savefig(fig2)
 
@@ -1380,7 +1437,7 @@ class ChartsWindow(tk.Toplevel):
                          marker="o", color="#2196F3")
                 ax3.set_title("Ventas últimos 30 días",
                               fontsize=14, fontweight="bold")
-                ax3.grid(alpha=0.3)
+                _theme_white(fig3, ax3)
                 fig3.tight_layout()
                 pdf.savefig(fig3)
 
@@ -1391,7 +1448,7 @@ class ChartsWindow(tk.Toplevel):
                 ax4.bar([f"{d['hour']:02d}h" for d in data],
                         [d["total"] for d in data], color="#FF9800")
                 ax4.set_title("Ventas por hora", fontsize=14, fontweight="bold")
-                ax4.grid(axis="y", alpha=0.3)
+                _theme_white(fig4, ax4)
                 fig4.tight_layout()
                 pdf.savefig(fig4)
 
@@ -1413,20 +1470,24 @@ class ReturnsWindow(tk.Toplevel):
         self.geometry("1100x700")
         self.transient(master)
 
-        top = tk.Frame(self, bg="#f0f0f0")
+        bg, fg, _, _ = get_theme_colors()
+        self.configure(bg=bg)
+
+        top = tk.Frame(self, bg=bg)
         top.pack(fill="x")
 
         tk.Label(top, text="🔍 Buscar venta (cliente / # / fecha):",
-                 bg="#f0f0f0", font=("Arial", 10, "bold")).pack(side="left", padx=8, pady=8)
+                 bg=bg, fg=fg,
+                 font=("Arial", 10, "bold")).pack(side="left", padx=8, pady=8)
         self.var_search = tk.StringVar()
         self.var_search.trace_add("write", lambda *a: self.load())
         tk.Entry(top, textvariable=self.var_search, width=30,
+                 bg=bg, fg=fg, insertbackground=fg,
                  font=("Arial", 11)).pack(side="left", padx=6)
 
         ttk.Button(top, text="🔄 Refrescar", command=self.load,
                    bootstyle="secondary").pack(side="right", padx=8)
 
-        # Lista de ventas
         self.frame_tree, self.tree = make_scrolled_treeview(
             self,
             columns=("ID", "Fecha", "Cliente", "Método", "Total", "Estado"),
@@ -1443,7 +1504,7 @@ class ReturnsWindow(tk.Toplevel):
 
         self.tree.bind("<Double-1>", lambda e: self.open_return_dialog())
 
-        bf = tk.Frame(self, bg="#f0f0f0")
+        bf = tk.Frame(self, bg=bg)
         bf.pack(fill="x", pady=8)
         ttk.Button(bf, text="↩️ Registrar devolución",
                    command=self.open_return_dialog,
@@ -1491,7 +1552,10 @@ class ReturnsWindow(tk.Toplevel):
     def _after_return(self):
         self.load()
         if self.on_done:
-            self.on_done()
+            try:
+                self.on_done()
+            except Exception:
+                pass
 
 
 class ReturnDialog(tk.Toplevel):
@@ -1505,13 +1569,16 @@ class ReturnDialog(tk.Toplevel):
         self.geometry("700x600")
         self.transient(master)
 
+        bg, fg, _, _ = get_theme_colors()
+        self.configure(bg=bg)
+
         tk.Label(self, text=f"Venta #{sale.display_number:02d} - {sale.date}",
-                 font=("Arial", 13, "bold")).pack(pady=8)
+                 bg=bg, fg=fg, font=("Arial", 13, "bold")).pack(pady=8)
         tk.Label(self, text=f"Cliente: {sale.customer_name or '(sin nombre)'}",
-                 font=("Arial", 10)).pack()
+                 bg=bg, fg=fg, font=("Arial", 10)).pack()
 
         tk.Label(self, text="Selecciona los productos a devolver:",
-                 font=("Arial", 10, "bold")).pack(pady=(10, 4))
+                 bg=bg, fg=fg, font=("Arial", 10, "bold")).pack(pady=(10, 4))
 
         self.frame_tree, self.tree = make_scrolled_treeview(
             self,
@@ -1544,30 +1611,31 @@ class ReturnDialog(tk.Toplevel):
 
         self.tree.bind("<Button-1>", self._on_click)
 
-        # Cantidad
         tk.Label(self, text="Cantidades a devolver (uno por uno o 'todo'):",
-                 font=("Arial", 10, "bold")).pack(pady=(8, 4))
-        self.frame_qty = tk.Frame(self)
+                 bg=bg, fg=fg, font=("Arial", 10, "bold")).pack(pady=(8, 4))
+        self.frame_qty = tk.Frame(self, bg=bg)
         self.frame_qty.pack(fill="x", padx=10)
         self.qty_vars = {}
         for it in sale.items:
             pendiente = it.pending_qty if hasattr(it, "pending_qty") else it.quantity
             if pendiente <= 0:
                 continue
-            f = tk.Frame(self.frame_qty)
+            f = tk.Frame(self.frame_qty, bg=bg)
             f.pack(fill="x", pady=2)
-            tk.Label(f, text=f"{it.product_name[:40]}", width=40, anchor="w").pack(side="left")
+            tk.Label(f, text=f"{it.product_name[:40]}", width=40, anchor="w",
+                     bg=bg, fg=fg).pack(side="left")
             v = tk.StringVar(value="0")
             self.qty_vars[it.item_id] = v
-            tk.Entry(f, textvariable=v, width=8, justify="center").pack(side="left", padx=6)
-            tk.Label(f, text=f"/ {pendiente:g}").pack(side="left")
+            ttk.Entry(f, textvariable=v, width=8,
+                      justify="center").pack(side="left", padx=6)
+            tk.Label(f, text=f"/ {pendiente:g}", bg=bg, fg=fg).pack(side="left")
 
-        # Motivo
-        tk.Label(self, text="Motivo (opcional):", font=("Arial", 10)).pack(pady=(10, 2))
+        tk.Label(self, text="Motivo (opcional):", bg=bg, fg=fg,
+                 font=("Arial", 10)).pack(pady=(10, 2))
         self.var_reason = tk.StringVar()
-        tk.Entry(self, textvariable=self.var_reason, width=60).pack(pady=4)
+        ttk.Entry(self, textvariable=self.var_reason, width=60).pack(pady=4)
 
-        bf = tk.Frame(self)
+        bf = tk.Frame(self, bg=bg)
         bf.pack(pady=12)
         ttk.Button(bf, text="↩️ Registrar devolución",
                    command=self._do_return,
